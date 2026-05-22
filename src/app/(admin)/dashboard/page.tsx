@@ -58,27 +58,29 @@ export default async function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* 顶部信息 */}
       <div className="card">
-        <div className="card-body flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <div className="text-sm text-slate-500">今日日期</div>
-            <div className="text-lg font-semibold mt-0.5">
-              {formatDateCN(today)}
+        <div className="card-body flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex flex-col sm:flex-row sm:gap-8 gap-2 min-w-0 flex-1">
+            <div>
+              <div className="text-xs sm:text-sm text-slate-500">今日日期</div>
+              <div className="text-base sm:text-lg font-semibold mt-0.5">
+                {formatDateCN(today)}
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs sm:text-sm text-slate-500">今日主推类目</div>
+              <div className="text-base sm:text-lg font-semibold text-brand-700 mt-0.5 truncate">
+                {schedule?.theme ?? '未配置'}
+              </div>
             </div>
           </div>
-          <div>
-            <div className="text-sm text-slate-500">今日主推类目</div>
-            <div className="text-lg font-semibold text-brand-700 mt-0.5">
-              {schedule?.theme ?? '未配置'}
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Link href="/today" className="btn-primary">
+          <div className="flex gap-2 shrink-0">
+            <Link href="/today" className="btn-primary flex-1 sm:flex-none">
               查看今日任务
             </Link>
-            <Link href="/calendar" className="btn-secondary">
+            <Link href="/calendar" className="btn-secondary flex-1 sm:flex-none">
               发布日历
             </Link>
           </div>
@@ -86,7 +88,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* 数据卡片 */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
         <StatCard label="今日小红书" value={xhsCount} suffix="条" tone="red" />
         <StatCard label="今日闲鱼" value={xyCount} suffix="条" tone="yellow" />
         <StatCard label="待生成" value={pendingCount} suffix="条" tone="gray" />
@@ -100,24 +102,24 @@ export default async function DashboardPage() {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* 快捷按钮 */}
         <div className="card">
           <div className="card-header">
             <h2 className="font-semibold">快捷操作</h2>
           </div>
-          <div className="card-body grid grid-cols-2 gap-3">
-            <Link href="/content" className="btn-secondary justify-center">
+          <div className="card-body grid grid-cols-2 gap-2 sm:gap-3">
+            <Link href="/content" className="btn-secondary justify-center text-xs sm:text-sm">
               生成今日文案
             </Link>
-            <Link href="/image" className="btn-secondary justify-center">
-              生成今日图片
+            <Link href="/image" className="btn-secondary justify-center text-xs sm:text-sm">
+              生成图片提示词
             </Link>
-            <Link href="/compliance" className="btn-secondary justify-center">
-              执行合规检查
-            </Link>
-            <Link href="/analytics" className="btn-secondary justify-center">
+            <Link href="/analytics" className="btn-secondary justify-center text-xs sm:text-sm">
               记录今日数据
+            </Link>
+            <Link href="/suggestions" className="btn-secondary justify-center text-xs sm:text-sm">
+              查看 AI 复盘
             </Link>
           </div>
         </div>
@@ -126,7 +128,7 @@ export default async function DashboardPage() {
         <div className="card">
           <div className="card-header">
             <h2 className="font-semibold">今日 AI 运营建议</h2>
-            <Link href="/suggestions" className="text-sm text-brand-600">
+            <Link href="/suggestions" className="text-sm text-brand-600 shrink-0">
               更多 →
             </Link>
           </div>
@@ -141,7 +143,7 @@ export default async function DashboardPage() {
         <div className="card-header">
           <h2 className="font-semibold">最近 7 天数据概览</h2>
         </div>
-        <div className="card-body grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="card-body grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4">
           <StatCard label="总曝光" value={totalImpressions} tone="gray" />
           <StatCard label="私信" value={totalMessages} tone="gray" />
           <StatCard label="咨询" value={totalConsult} tone="gray" />
@@ -159,12 +161,12 @@ export default async function DashboardPage() {
       <div className="card">
         <div className="card-header">
           <h2 className="font-semibold">今日发布计划速览</h2>
-          <Link href="/today" className="text-sm text-brand-600">
+          <Link href="/today" className="text-sm text-brand-600 shrink-0">
             进入今日任务 →
           </Link>
         </div>
-        <div className="card-body">
-          <table className="table">
+        <div className="card-body overflow-x-auto">
+          <table className="table min-w-[640px]">
             <thead>
               <tr>
                 <th>时间</th>
@@ -178,11 +180,11 @@ export default async function DashboardPage() {
             <tbody>
               {tasks.map((t) => (
                 <tr key={t.id}>
-                  <td>{t.publishTime}</td>
+                  <td className="font-mono">{t.publishTime}</td>
                   <td>{PLATFORM_LABEL[t.platform] ?? t.platform}</td>
                   <td>{t.category}</td>
                   <td>{t.contentType}</td>
-                  <td>{t.title}</td>
+                  <td className="max-w-[200px] truncate" title={t.title}>{t.title}</td>
                   <td>{t.status}</td>
                 </tr>
               ))}
@@ -221,11 +223,11 @@ function StatCard({
     brand: 'text-brand-700',
   };
   return (
-    <div className="rounded-md bg-white border border-slate-200 p-4">
+    <div className="rounded-md bg-white border border-slate-200 p-3 sm:p-4">
       <div className="text-xs text-slate-500">{label}</div>
-      <div className={`text-2xl font-semibold mt-1 ${toneCls[tone]}`}>
+      <div className={`text-xl sm:text-2xl font-semibold mt-1 ${toneCls[tone]}`}>
         {value}
-        {suffix && <span className="text-sm ml-1">{suffix}</span>}
+        {suffix && <span className="text-xs sm:text-sm ml-1">{suffix}</span>}
       </div>
     </div>
   );

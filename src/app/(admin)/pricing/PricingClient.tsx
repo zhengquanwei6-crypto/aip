@@ -100,7 +100,7 @@ export default function PricingClient({ initial }: { initial: Pkg[] }) {
         <div className="card-header">
           <h2 className="font-semibold">新增套餐</h2>
         </div>
-        <div className="card-body grid grid-cols-1 md:grid-cols-[140px_140px_1fr_180px_120px] gap-3 items-end">
+        <div className="card-body grid grid-cols-1 sm:grid-cols-[140px_140px_1fr_180px_120px] gap-3 items-end">
           <div>
             <label className="label">类目</label>
             <select
@@ -203,7 +203,8 @@ export default function PricingClient({ initial }: { initial: Pkg[] }) {
 
       {/* 列表 */}
       <div className="card overflow-hidden">
-        <table className="table">
+        <div className="overflow-x-auto">
+        <table className="table min-w-[760px]">
           <thead>
             <tr>
               <th className="w-32">类目</th>
@@ -327,6 +328,7 @@ export default function PricingClient({ initial }: { initial: Pkg[] }) {
             )}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

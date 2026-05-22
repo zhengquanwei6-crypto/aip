@@ -134,11 +134,11 @@ export default function TodayTasksClient({
                   <span className="badge-gray">{t.contentType}</span>
                   <StatusBadge status={t.status} />
                 </div>
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     onClick={() => generateContent(t.id)}
                     disabled={isLoading}
-                    className="btn-secondary text-xs"
+                    className="btn-secondary text-xs px-2 py-1"
                   >
                     {isLoading && loadingAction === 'content'
                       ? '生成中...'
@@ -147,7 +147,7 @@ export default function TodayTasksClient({
                   <button
                     onClick={() => generateImage(t.id)}
                     disabled={isLoading}
-                    className="btn-secondary text-xs"
+                    className="btn-secondary text-xs px-2 py-1"
                   >
                     {isLoading && loadingAction === 'image'
                       ? '生成图片中...'
@@ -157,7 +157,7 @@ export default function TodayTasksClient({
                     value={t.status}
                     disabled={isLoading}
                     onChange={(e) => setStatus(t.id, e.target.value)}
-                    className="input text-xs py-1 w-28"
+                    className="input text-xs py-1 w-24"
                   >
                     {TASK_STATUSES.map((s) => (
                       <option key={s.value} value={s.value}>
@@ -168,8 +168,8 @@ export default function TodayTasksClient({
                 </div>
               </div>
 
-              <div className="mt-3 grid grid-cols-1 md:grid-cols-[1fr_160px] gap-4">
-                <div className="min-w-0">
+              <div className="mt-3 grid grid-cols-[80px_1fr] sm:grid-cols-[1fr_160px] gap-3 sm:gap-4">
+                <div className="order-2 sm:order-1 min-w-0 col-span-2 sm:col-span-1">
                   <div className="text-base font-medium text-slate-800">
                     {t.title}
                   </div>
@@ -189,7 +189,7 @@ export default function TodayTasksClient({
                     </div>
                   )}
                 </div>
-                <div>
+                <div className="order-1 sm:order-2">
                   {t.imageUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img
@@ -198,7 +198,7 @@ export default function TodayTasksClient({
                       className="w-full aspect-square object-cover rounded border border-slate-200"
                     />
                   ) : (
-                    <div className="w-full aspect-square rounded border border-dashed border-slate-300 flex items-center justify-center text-xs text-slate-400">
+                    <div className="w-full aspect-square rounded border border-dashed border-slate-300 flex items-center justify-center text-[10px] sm:text-xs text-slate-400">
                       暂无图片
                     </div>
                   )}

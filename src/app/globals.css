@@ -12,6 +12,16 @@ body {
   background: var(--background);
   color: var(--foreground);
   -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* iOS 输入框获取焦点时不要自动放大页面：font-size >= 16px 即可 */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 @layer components {
@@ -20,11 +30,11 @@ body {
   }
 
   .card-header {
-    @apply px-5 py-4 border-b border-slate-200 flex items-center justify-between;
+    @apply px-4 sm:px-5 py-3 sm:py-4 border-b border-slate-200 flex items-center justify-between gap-2;
   }
 
   .card-body {
-    @apply p-5;
+    @apply p-4 sm:p-5;
   }
 
   .btn {
@@ -84,10 +94,30 @@ body {
   }
 
   .table th {
-    @apply px-4 py-3 bg-slate-50 text-slate-600 font-medium border-b border-slate-200;
+    @apply px-3 sm:px-4 py-2 sm:py-3 bg-slate-50 text-slate-600 font-medium border-b border-slate-200 whitespace-nowrap;
   }
 
   .table td {
-    @apply px-4 py-3 border-b border-slate-100 text-slate-700;
+    @apply px-3 sm:px-4 py-2 sm:py-3 border-b border-slate-100 text-slate-700;
+  }
+}
+
+/* 桌面端强制展开 details 卡片（Calendar 页面用） */
+@media (min-width: 640px) {
+  details.calendar-day-card[data-force-open] {
+    pointer-events: auto;
+  }
+  details.calendar-day-card[data-force-open] > summary {
+    cursor: default;
+    list-style: none;
+  }
+  details.calendar-day-card[data-force-open] > summary::-webkit-details-marker {
+    display: none;
+  }
+  details.calendar-day-card[data-force-open] .calendar-chevron {
+    display: none;
+  }
+  details.calendar-day-card[data-force-open] > .calendar-day-body {
+    display: block !important;
   }
 }

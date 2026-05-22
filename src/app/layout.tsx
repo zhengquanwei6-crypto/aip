@@ -1,9 +1,16 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
   title: '平面设计接单 AI 运营工作台',
   description: '小红书 + 闲鱼平面设计接单内部运营工作台',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: '#2563eb',
 };
 
 export default function RootLayout({
