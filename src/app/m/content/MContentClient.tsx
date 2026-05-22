@@ -10,6 +10,7 @@ import {
 } from '@/lib/constants';
 import { useToast } from '@/components/m/Toast';
 import { copyAll, buildXhsBundle, buildXianyuBundle } from '@/lib/clipboard';
+import PhonePreview from '@/components/PhonePreview';
 
 type Platform = 'xiaohongshu' | 'xianyu';
 
@@ -199,6 +200,32 @@ export default function MContentClient() {
             >
               📋 一键复制完整发布包
             </button>
+          </div>
+
+          <div className="rounded-xl bg-white border border-slate-200 p-3">
+            <div className="text-xs text-slate-500 mb-3 text-center">
+              手机预览
+            </div>
+            {result.platform === 'xiaohongshu' ? (
+              <PhonePreview
+                platform="xiaohongshu"
+                title={result.output.titles?.[0] ?? form.topic}
+                body={result.output.body}
+                coverText={result.output.coverText}
+                tags={result.output.tags}
+              />
+            ) : (
+              <PhonePreview
+                platform="xianyu"
+                title={result.output.title ?? form.topic}
+                description={result.output.description}
+                coverText={result.output.coverText}
+                priceRange={
+                  result.output.tiers?.[1]?.priceRange ??
+                  result.output.tiers?.[0]?.priceRange
+                }
+              />
+            )}
           </div>
 
           {result.platform === 'xiaohongshu' ? (

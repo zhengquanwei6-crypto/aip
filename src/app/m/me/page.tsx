@@ -24,6 +24,11 @@ export default async function MMePage() {
         </div>
       </div>
 
+      <Group title="客户与报价">
+        <Item href="/m/clients" label="👥 客户档案" hint="跟进记录" />
+        <Item href="/m/calculator" label="💰 报价计算器" hint="一键报价话术" />
+      </Group>
+
       <Group title="内容">
         <Item href="/m/contents" label="📚 内容仓库" hint="生成历史" />
         <Item href="/m/calendar" label="📅 发布日历" hint="一周计划" />
@@ -37,8 +42,9 @@ export default async function MMePage() {
 
       <Group title="资料库">
         <Item href="/m/keywords" label="🔑 关键词库" />
-        <Item href="/m/pricing" label="💰 价格套餐" />
+        <Item href="/m/pricing" label="💵 价格套餐" />
         <Item href="/m/scripts" label="💬 私信话术" />
+        <Item href="/m/presets" label="🎨 图片预设" hint="风格管理" />
       </Group>
 
       <Group title="系统">

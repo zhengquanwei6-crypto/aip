@@ -9,6 +9,7 @@ import {
   TONES,
 } from '@/lib/constants';
 import { copyAll, buildXhsBundle, buildXianyuBundle } from '@/lib/clipboard';
+import PhonePreview from '@/components/PhonePreview';
 
 type Platform = 'xiaohongshu' | 'xianyu';
 
@@ -229,6 +230,40 @@ export default function ContentGeneratorClient() {
               >
                 📋 一键复制完整发布包
               </button>
+            </div>
+          </div>
+        )}
+        {result && (
+          <div className="card">
+            <div className="card-header">
+              <h3 className="font-semibold">手机预览</h3>
+              <span className="text-xs text-slate-400">
+                所见即所得（仅参考）
+              </span>
+            </div>
+            <div className="card-body">
+              {result.platform === 'xiaohongshu' ? (
+                <PhonePreview
+                  platform="xiaohongshu"
+                  title={
+                    (result.output as XHSOutput).titles?.[0] ?? form.topic
+                  }
+                  body={(result.output as XHSOutput).body}
+                  coverText={(result.output as XHSOutput).coverText}
+                  tags={(result.output as XHSOutput).tags}
+                />
+              ) : (
+                <PhonePreview
+                  platform="xianyu"
+                  title={(result.output as XYOutput).title ?? form.topic}
+                  description={(result.output as XYOutput).description}
+                  coverText={(result.output as XYOutput).coverText}
+                  priceRange={
+                    (result.output as XYOutput).tiers?.[1]?.priceRange ??
+                    (result.output as XYOutput).tiers?.[0]?.priceRange
+                  }
+                />
+              )}
             </div>
           </div>
         )}

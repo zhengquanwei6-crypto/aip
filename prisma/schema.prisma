@@ -180,3 +180,44 @@ model Setting {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+
+// ============= 客户档案 =============
+model Client {
+  id          String       @id @default(cuid())
+  nickname    String       // 客户昵称（小红书或闲鱼ID）
+  platform    String       // xiaohongshu / xianyu / other
+  category    String?      // 偏好类目
+  tags        String?      // 标签，逗号分隔
+  status      String       @default("lead") // lead/negotiating/customer/lost
+  totalOrders Int          @default(0)
+  totalRevenue Float       @default(0)
+  lastContact DateTime?    // 上次接触时间
+  notes       ClientNote[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+// ============= 客户跟进记录 =============
+model ClientNote {
+  id         String   @id @default(cuid())
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  type       String   @default("note") // note/quote/order/feedback
+  content    String
+  amount     Float?   // 报价或成交金额
+  createdAt  DateTime @default(now())
+}
+
+// ============= 图片样式预设 =============
+model ImagePreset {
+  id             String   @id @default(cuid())
+  name           String
+  styleKeywords  String   // 正向风格关键词
+  negativePrompt String?  // 负向词
+  size           String   @default("1024x1536")
+  imageType      String   @default("封面图")
+  isDefault      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}

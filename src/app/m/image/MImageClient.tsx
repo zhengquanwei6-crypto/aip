@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PLATFORMS, CATEGORIES, IMAGE_TYPES } from '@/lib/constants';
 import { useToast } from '@/components/m/Toast';
 import { copyAll } from '@/lib/clipboard';
@@ -8,17 +8,20 @@ import { copyAll } from '@/lib/clipboard';
 type Platform = 'xiaohongshu' | 'xianyu';
 type Ratio = '3:4' | '1:1';
 
-const STYLE_PRESETS = [
-  '简约现代、高级感、清爽白底',
-  '小红书ins风、马卡龙色、可爱治愈',
-  '商务专业、稳重、深蓝灰',
-  '多巴胺色、年轻活力、新消费',
-  '复古中式、东方美学、留白',
-];
+interface ImagePreset {
+  id: string;
+  name: string;
+  styleKeywords: string;
+  negativePrompt: string | null;
+  size: string;
+  imageType: string;
+  isDefault: boolean;
+}
 
 export default function MImageClient() {
   const toast = useToast();
   const [step, setStep] = useState<1 | 2>(1);
+  const [presets, setPresets] = useState<ImagePreset[]>([]);
   const [form, setForm] = useState({
     platform: 'xiaohongshu' as Platform,
     ratio: '3:4' as Ratio,
@@ -33,6 +36,26 @@ export default function MImageClient() {
   const [loading1, setLoading1] = useState(false);
   const [loading2, setLoading2] = useState(false);
 
+  useEffect(() => {
+    fetch('/api/image-presets')
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok) {
+          setPresets(j.list);
+          const def = j.list.find((p: ImagePreset) => p.isDefault);
+          if (def) {
+            setForm((f) => ({
+              ...f,
+              styleKeywords: def.styleKeywords,
+              imageType: def.imageType,
+            }));
+            setSize(def.size);
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   function up<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
     setForm((f) => {
       const next = { ...f, [k]: v };
@@ -41,6 +64,16 @@ export default function MImageClient() {
       }
       return next;
     });
+  }
+
+  function applyPreset(p: ImagePreset) {
+    setForm((f) => ({
+      ...f,
+      styleKeywords: p.styleKeywords,
+      imageType: p.imageType,
+    }));
+    setSize(p.size);
+    toast.show(`已套用「${p.name}」`, 'success');
   }
 
   async function buildPrompt() {
@@ -167,19 +200,24 @@ export default function MImageClient() {
           </Field>
           <Field label="风格预设">
             <div className="flex flex-wrap gap-1.5">
-              {STYLE_PRESETS.map((s) => (
+              {presets.length === 0 && (
+                <span className="text-xs text-slate-400">
+                  尚未配置预设，去「我的 → 设置」管理
+                </span>
+              )}
+              {presets.map((p) => (
                 <button
-                  key={s}
+                  key={p.id}
                   type="button"
-                  onClick={() => up('styleKeywords', s)}
+                  onClick={() => applyPreset(p)}
                   className={
                     'px-2.5 py-1 rounded-full text-xs border ' +
-                    (form.styleKeywords === s
+                    (form.styleKeywords === p.styleKeywords
                       ? 'bg-brand-600 text-white border-brand-600'
                       : 'bg-white text-slate-600 border-slate-300')
                   }
                 >
-                  {s.split('、')[0]}
+                  {p.name}
                 </button>
               ))}
             </div>

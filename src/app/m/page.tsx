@@ -69,21 +69,21 @@ export default async function MHomePage() {
           color="bg-rose-50 text-rose-700 border-rose-200"
         />
         <ActionCard
-          href="/m/content"
-          title="生成文案"
-          desc="小红书/闲鱼一键出稿"
+          href="/m/calculator"
+          title="💰 报价计算器"
+          desc="客户问价 5 秒回复"
           color="bg-blue-50 text-blue-700 border-blue-200"
         />
         <ActionCard
-          href="/m/image"
-          title="生成图片"
-          desc="GPT IMG 2 出图"
+          href="/m/content"
+          title="生成文案"
+          desc="小红书/闲鱼一键出稿"
           color="bg-emerald-50 text-emerald-700 border-emerald-200"
         />
         <ActionCard
-          href="/m/analytics"
-          title="录入数据"
-          desc="发布后回填指标"
+          href="/m/clients"
+          title="👥 客户档案"
+          desc="跟进与成交记录"
           color="bg-amber-50 text-amber-700 border-amber-200"
         />
       </div>

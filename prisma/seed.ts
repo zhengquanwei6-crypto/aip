@@ -226,6 +226,53 @@ async function main() {
   for (const s of scripts) await prisma.script.create({ data: s });
   console.log(`✅ 私信话术 ${scripts.length} 条`);
 
+  // 图片样式预设
+  const imagePresets = [
+    {
+      name: '小红书简约白底',
+      styleKeywords: '简约现代、高级感、清爽白底、留白构图、莫兰迪色、专业排版',
+      negativePrompt: 'low quality, blurry, watermark, text logo, cluttered',
+      size: '1024x1536',
+      imageType: '封面图',
+      isDefault: true,
+    },
+    {
+      name: '多巴胺色',
+      styleKeywords: '多巴胺色、年轻活力、新消费、马卡龙渐变、ins风、可爱治愈',
+      negativePrompt: 'dark, dull, low quality',
+      size: '1024x1536',
+      imageType: '封面图',
+      isDefault: false,
+    },
+    {
+      name: '商务专业',
+      styleKeywords: '商务专业、稳重、深蓝灰、几何排版、金色点缀、知性',
+      negativePrompt: 'cute, childish, cartoon',
+      size: '1024x1536',
+      imageType: '封面图',
+      isDefault: false,
+    },
+    {
+      name: '闲鱼商品方图',
+      styleKeywords: '电商主图、白底突出、产品居中、卖点文字清晰、转化率高',
+      negativePrompt: 'low quality, blurry, text overflow',
+      size: '1024x1024',
+      imageType: '商品首图',
+      isDefault: false,
+    },
+    {
+      name: '复古中式',
+      styleKeywords: '复古中式、东方美学、留白、墨色、宣纸纹理、古风字体',
+      negativePrompt: 'modern, neon, western',
+      size: '1024x1536',
+      imageType: '封面图',
+      isDefault: false,
+    },
+  ];
+  await prisma.imagePreset.deleteMany({});
+  for (const p of imagePresets) await prisma.imagePreset.create({ data: p });
+  console.log(`✅ 图片预设 ${imagePresets.length} 条`);
+
   console.log('🎉 Seed 完成');
 }
 

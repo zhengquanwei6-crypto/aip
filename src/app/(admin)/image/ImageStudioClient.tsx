@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   PLATFORMS,
   CATEGORIES,
@@ -19,6 +19,16 @@ interface FormState {
   styleKeywords: string;
 }
 
+interface ImagePreset {
+  id: string;
+  name: string;
+  styleKeywords: string;
+  negativePrompt: string | null;
+  size: string;
+  imageType: string;
+  isDefault: boolean;
+}
+
 const DEFAULT: FormState = {
   platform: 'xiaohongshu',
   ratio: '3:4',
@@ -30,6 +40,7 @@ const DEFAULT: FormState = {
 
 export default function ImageStudioClient() {
   const [form, setForm] = useState<FormState>(DEFAULT);
+  const [presets, setPresets] = useState<ImagePreset[]>([]);
   const [prompt, setPrompt] = useState('');
   const [negativePrompt, setNegativePrompt] = useState('');
   const [size, setSize] = useState('1024x1536');
@@ -37,6 +48,27 @@ export default function ImageStudioClient() {
   const [step1Loading, setStep1Loading] = useState(false);
   const [step2Loading, setStep2Loading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/image-presets')
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok) {
+          setPresets(j.list);
+          const def = j.list.find((p: ImagePreset) => p.isDefault);
+          if (def) {
+            setForm((f) => ({
+              ...f,
+              styleKeywords: def.styleKeywords,
+              imageType: def.imageType,
+            }));
+            setSize(def.size);
+            setNegativePrompt(def.negativePrompt || '');
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   function up<K extends keyof FormState>(k: K, v: FormState[K]) {
     setForm((f) => {
@@ -46,6 +78,16 @@ export default function ImageStudioClient() {
       }
       return next;
     });
+  }
+
+  function applyPreset(p: ImagePreset) {
+    setForm((f) => ({
+      ...f,
+      styleKeywords: p.styleKeywords,
+      imageType: p.imageType,
+    }));
+    setSize(p.size);
+    setNegativePrompt(p.negativePrompt || '');
   }
 
   async function buildPrompt() {
@@ -169,6 +211,26 @@ export default function ImageStudioClient() {
               value={form.styleKeywords}
               onChange={(e) => up('styleKeywords', e.target.value)}
             />
+            {presets.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                <span className="text-xs text-slate-400 mr-1">预设:</span>
+                {presets.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => applyPreset(p)}
+                    className={
+                      'px-2 py-0.5 rounded-full text-xs border ' +
+                      (form.styleKeywords === p.styleKeywords
+                        ? 'bg-brand-600 text-white border-brand-600'
+                        : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50')
+                    }
+                  >
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </Field>
           <button
             onClick={buildPrompt}
