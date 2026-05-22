@@ -11,6 +11,7 @@ import {
 import { useToast } from '@/components/m/Toast';
 import { copyAll, buildXhsBundle, buildXianyuBundle } from '@/lib/clipboard';
 import PhonePreview from '@/components/PhonePreview';
+import TitleRefiner from '@/components/TitleRefiner';
 
 type Platform = 'xiaohongshu' | 'xianyu';
 
@@ -300,6 +301,7 @@ function XHSResult({
               >
                 复制
               </button>
+              <TitleRefiner title={t} platform="xiaohongshu" />
             </li>
           ))}
         </ol>
@@ -353,7 +355,12 @@ function XYResult({
   return (
     <div className="space-y-3">
       <Block title="商品标题" copyText={output.title} onCopy={onCopy}>
-        <div className="font-medium">{output.title}</div>
+        <div className="font-medium flex items-center gap-2 flex-wrap">
+          <span>{output.title}</span>
+          {output.title && (
+            <TitleRefiner title={output.title} platform="xianyu" />
+          )}
+        </div>
       </Block>
       <Block title="商品详情" copyText={output.description} onCopy={onCopy}>
         <div className="whitespace-pre-wrap leading-relaxed">

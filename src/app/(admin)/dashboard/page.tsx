@@ -118,8 +118,8 @@ export default async function DashboardPage() {
             <Link href="/analytics" className="btn-secondary justify-center text-xs sm:text-sm">
               记录今日数据
             </Link>
-            <Link href="/suggestions" className="btn-secondary justify-center text-xs sm:text-sm">
-              查看 AI 复盘
+            <Link href="/weekly-report" className="btn-secondary justify-center text-xs sm:text-sm">
+              本周复盘
             </Link>
           </div>
         </div>

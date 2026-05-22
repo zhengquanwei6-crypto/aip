@@ -97,6 +97,7 @@ export const NAV_ITEMS: { href: string; label: string }[] = [
   { href: '/scripts', label: '私信话术' },
   { href: '/presets', label: '图片预设' },
   { href: '/analytics', label: '数据复盘' },
+  { href: '/weekly-report', label: '周复盘报告' },
   { href: '/suggestions', label: 'AI 建议' },
   { href: '/settings', label: '设置' },
 ];

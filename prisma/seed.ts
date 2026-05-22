@@ -189,42 +189,83 @@ async function main() {
   }
   console.log(`✅ 周计划 ${schedules.length} 天`);
 
-  // 任务（每天 10 条）
-  await prisma.task.deleteMany({});
+  // 任务（每天 10 条）：用 (scheduleId, publishTime, platform) 三元组找已有的
+  // 没有则创建；有则保留用户改过的内容（不动）
+  let taskCreated = 0;
   for (const s of schedules) {
     for (let i = 0; i < dailyTaskTemplate.length; i++) {
       const t = dailyTaskTemplate[i];
       const themeKeyword = s.theme.split('/')[0].trim();
-      await prisma.task.create({
-        data: {
+      const existing = await prisma.task.findFirst({
+        where: {
           scheduleId: scheduleMap[s.dayOfWeek],
-          platform: t.platform,
           publishTime: t.time,
-          category: themeKeyword,
-          contentType: t.contentType,
-          title: `${themeKeyword} - ${t.title}`,
-          status: 'pending',
-          priority: i,
+          platform: t.platform,
         },
       });
+      if (!existing) {
+        await prisma.task.create({
+          data: {
+            scheduleId: scheduleMap[s.dayOfWeek],
+            platform: t.platform,
+            publishTime: t.time,
+            category: themeKeyword,
+            contentType: t.contentType,
+            title: `${themeKeyword} - ${t.title}`,
+            status: 'pending',
+            priority: i,
+          },
+        });
+        taskCreated++;
+      }
     }
   }
-  console.log(`✅ 任务 ${schedules.length * dailyTaskTemplate.length} 条`);
+  console.log(
+    `✅ 任务 ${schedules.length * dailyTaskTemplate.length} 条（新增 ${taskCreated}，保留已有）`,
+  );
 
-  // 关键词
-  await prisma.keyword.deleteMany({});
-  for (const k of keywords) await prisma.keyword.create({ data: k });
-  console.log(`✅ 关键词 ${keywords.length} 条`);
+  // 关键词：用 (category, platform, keyword) 三元组判断
+  let kwCreated = 0;
+  for (const k of keywords) {
+    const exists = await prisma.keyword.findFirst({
+      where: { category: k.category, platform: k.platform, keyword: k.keyword },
+    });
+    if (!exists) {
+      await prisma.keyword.create({ data: k });
+      kwCreated++;
+    }
+  }
+  console.log(`✅ 关键词 ${keywords.length} 条（新增 ${kwCreated}，保留已有）`);
 
-  // 价格套餐
-  await prisma.pricePackage.deleteMany({});
-  for (const p of pricePackages) await prisma.pricePackage.create({ data: p });
-  console.log(`✅ 价格套餐 ${pricePackages.length} 条`);
+  // 价格套餐：用 (category, tier, name) 判断
+  let pkgCreated = 0;
+  for (const p of pricePackages) {
+    const exists = await prisma.pricePackage.findFirst({
+      where: { category: p.category, tier: p.tier, name: p.name },
+    });
+    if (!exists) {
+      await prisma.pricePackage.create({ data: p });
+      pkgCreated++;
+    }
+  }
+  console.log(
+    `✅ 价格套餐 ${pricePackages.length} 条（新增 ${pkgCreated}，保留已有）`,
+  );
 
-  // 私信话术
-  await prisma.script.deleteMany({});
-  for (const s of scripts) await prisma.script.create({ data: s });
-  console.log(`✅ 私信话术 ${scripts.length} 条`);
+  // 私信话术：用 (type, title) 判断
+  let scriptCreated = 0;
+  for (const s of scripts) {
+    const exists = await prisma.script.findFirst({
+      where: { type: s.type, title: s.title },
+    });
+    if (!exists) {
+      await prisma.script.create({ data: s });
+      scriptCreated++;
+    }
+  }
+  console.log(
+    `✅ 私信话术 ${scripts.length} 条（新增 ${scriptCreated}，保留已有）`,
+  );
 
   // 图片样式预设
   const imagePresets = [
@@ -269,9 +310,18 @@ async function main() {
       isDefault: false,
     },
   ];
-  await prisma.imagePreset.deleteMany({});
-  for (const p of imagePresets) await prisma.imagePreset.create({ data: p });
-  console.log(`✅ 图片预设 ${imagePresets.length} 条`);
+  // 图片预设：按 name 判断，已有则跳过（保留用户改过的设置）
+  let presetCreated = 0;
+  for (const p of imagePresets) {
+    const exists = await prisma.imagePreset.findFirst({
+      where: { name: p.name },
+    });
+    if (!exists) {
+      await prisma.imagePreset.create({ data: p });
+      presetCreated++;
+    }
+  }
+  console.log(`✅ 图片预设 ${imagePresets.length} 条（新增 ${presetCreated}，保留已有）`);
 
   console.log('🎉 Seed 完成');
 }

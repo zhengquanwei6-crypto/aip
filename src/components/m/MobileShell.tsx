@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import clsx from 'clsx';
 import ToastProvider from './Toast';
+import ThemeToggle from '../ThemeToggle';
 
 const TABS = [
   { href: '/m', label: '首页', icon: 'home' },
@@ -53,9 +54,9 @@ export default function MobileShell({
 
   return (
     <ToastProvider>
-      <div className="min-h-screen bg-slate-50 flex flex-col pb-16">
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col pb-16">
         {/* 顶栏 */}
-        <header className="h-12 bg-white border-b border-slate-200 px-3 flex items-center sticky top-0 z-30">
+        <header className="h-12 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 flex items-center sticky top-0 z-30">
           {showBack ? (
             <button
               onClick={() => router.back()}
@@ -69,9 +70,10 @@ export default function MobileShell({
           ) : (
             <div className="w-9" />
           )}
-          <h1 className="flex-1 text-base font-semibold text-slate-800 text-center">
+          <h1 className="flex-1 text-base font-semibold text-slate-800 dark:text-slate-100 text-center">
             {title}
           </h1>
+          <ThemeToggle className="mr-1" />
           <Link
             href="?desktop=1"
             prefetch={false}
@@ -87,7 +89,7 @@ export default function MobileShell({
         </main>
 
         {/* 底部 Tab Bar */}
-        <nav className="fixed bottom-0 left-0 right-0 h-14 bg-white border-t border-slate-200 grid grid-cols-5 z-30">
+        <nav className="fixed bottom-0 left-0 right-0 h-14 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 grid grid-cols-5 z-30">
           {TABS.map((t) => {
             const active = pathname === t.href || (t.href !== '/m' && pathname.startsWith(t.href));
             return (
@@ -96,7 +98,9 @@ export default function MobileShell({
                 href={t.href}
                 className={clsx(
                   'flex flex-col items-center justify-center gap-0.5 text-[11px]',
-                  active ? 'text-brand-600' : 'text-slate-500',
+                  active
+                    ? 'text-brand-600 dark:text-brand-400'
+                    : 'text-slate-500 dark:text-slate-400',
                 )}
               >
                 <TabIcon name={t.icon} active={active} />

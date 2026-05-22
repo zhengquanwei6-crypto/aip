@@ -10,6 +10,7 @@ import {
 } from '@/lib/constants';
 import { copyAll, buildXhsBundle, buildXianyuBundle } from '@/lib/clipboard';
 import PhonePreview from '@/components/PhonePreview';
+import TitleRefiner from '@/components/TitleRefiner';
 
 type Platform = 'xiaohongshu' | 'xianyu';
 
@@ -333,7 +334,7 @@ function XHSResult({
   return (
     <div className="space-y-4">
       <Section title="5个标题备选">
-        <ol className="list-decimal pl-5 space-y-1">
+        <ol className="list-decimal pl-5 space-y-1.5">
           {(output.titles ?? []).map((t, i) => (
             <li key={i}>
               <span className="mr-2">{t}</span>
@@ -343,6 +344,7 @@ function XHSResult({
               >
                 复制
               </button>
+              <TitleRefiner title={t} platform="xiaohongshu" />
             </li>
           ))}
         </ol>
@@ -392,7 +394,12 @@ function XYResult({
   return (
     <div className="space-y-4">
       <Section title="商品标题" copyText={output.title} onCopy={onCopy}>
-        <div className="text-base font-medium">{output.title}</div>
+        <div className="text-base font-medium flex items-center gap-2">
+          <span>{output.title}</span>
+          {output.title && (
+            <TitleRefiner title={output.title} platform="xianyu" />
+          )}
+        </div>
       </Section>
 
       <Section title="商品详情" copyText={output.description} onCopy={onCopy}>

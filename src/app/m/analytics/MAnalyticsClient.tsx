@@ -129,6 +129,12 @@ export default function MAnalyticsClient({
       >
         ➕ 录入数据
       </button>
+      <a
+        href="/analytics/import"
+        className="block w-full text-center rounded-lg border border-slate-300 text-slate-700 font-medium py-2.5 active:bg-slate-50 text-sm"
+      >
+        📥 批量导入（粘贴 Excel）
+      </a>
 
       <div className="text-xs text-slate-500 px-1">最近记录</div>
 

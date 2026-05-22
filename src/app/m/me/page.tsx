@@ -37,6 +37,7 @@ export default async function MMePage() {
 
       <Group title="数据">
         <Item href="/m/analytics" label="📊 数据复盘" hint="录入与统计" />
+        <Item href="/m/weekly-report" label="📈 周复盘报告" hint="一键 AI 总结" />
         <Item href="/m/suggestions" label="🤖 AI 建议" hint="基于数据" />
       </Group>
 

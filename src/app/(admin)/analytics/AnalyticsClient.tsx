@@ -131,6 +131,12 @@ export default function AnalyticsClient({
         <form onSubmit={submit} className="card h-fit">
           <div className="card-header">
             <h2 className="font-semibold">录入数据</h2>
+            <a
+              href="/analytics/import"
+              className="text-xs text-brand-600 hover:underline"
+            >
+              📥 批量导入
+            </a>
           </div>
           <div className="card-body grid grid-cols-2 gap-3">
             <div>

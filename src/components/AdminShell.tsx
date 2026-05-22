@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
 import { NAV_ITEMS } from '@/lib/constants';
+import ThemeToggle from './ThemeToggle';
 
 export default function AdminShell({
   children,
@@ -14,12 +15,10 @@ export default function AdminShell({
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
-  // 路由切换时自动收起抽屉
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
 
-  // 打开抽屉时禁止 body 滚动
   useEffect(() => {
     if (open) {
       document.body.style.overflow = 'hidden';
@@ -37,14 +36,12 @@ export default function AdminShell({
   const title = currentNav?.label ?? '平面设计接单 AI 运营工作台';
 
   return (
-    <div className="min-h-screen bg-slate-50 lg:flex">
-      {/* 桌面端固定侧栏 */}
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 lg:flex">
       <SidebarContent
         pathname={pathname}
-        className="hidden lg:flex lg:flex-col lg:w-56 lg:flex-shrink-0 lg:border-r lg:border-slate-200 lg:bg-white"
+        className="hidden lg:flex lg:flex-col lg:w-56 lg:flex-shrink-0 lg:border-r lg:border-slate-200 lg:bg-white dark:lg:bg-slate-900 dark:lg:border-slate-800"
       />
 
-      {/* 移动端抽屉 */}
       <div
         className={clsx(
           'lg:hidden fixed inset-0 z-40 transition-opacity duration-200',
@@ -58,7 +55,7 @@ export default function AdminShell({
         <SidebarContent
           pathname={pathname}
           className={clsx(
-            'absolute left-0 top-0 h-full w-64 bg-white shadow-xl flex flex-col transform transition-transform duration-200',
+            'absolute left-0 top-0 h-full w-64 bg-white dark:bg-slate-900 shadow-xl flex flex-col transform transition-transform duration-200',
             open ? 'translate-x-0' : '-translate-x-full',
           )}
           onClickClose={() => setOpen(false)}
@@ -66,13 +63,11 @@ export default function AdminShell({
       </div>
 
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Topbar */}
-        <header className="h-14 bg-white border-b border-slate-200 px-3 sm:px-6 flex items-center gap-3 sticky top-0 z-30">
-          {/* 移动端汉堡 */}
+        <header className="h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 sm:px-6 flex items-center gap-3 sticky top-0 z-30">
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="lg:hidden -ml-1 inline-flex items-center justify-center w-9 h-9 rounded text-slate-700 hover:bg-slate-100"
+            className="lg:hidden -ml-1 inline-flex items-center justify-center w-9 h-9 rounded text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
             aria-label="打开菜单"
           >
             <svg
@@ -91,9 +86,10 @@ export default function AdminShell({
               <line x1="3" y1="18" x2="21" y2="18" />
             </svg>
           </button>
-          <h1 className="text-base font-semibold text-slate-800 truncate flex-1">
+          <h1 className="text-base font-semibold text-slate-800 dark:text-slate-100 truncate flex-1">
             {title}
           </h1>
+          <ThemeToggle />
           <div className="hidden sm:block text-xs text-slate-400 shrink-0">
             个人本地工作台
           </div>
@@ -116,10 +112,10 @@ function SidebarContent({
 }) {
   return (
     <aside className={className}>
-      <div className="px-5 py-5 border-b border-slate-200 flex items-start justify-between">
+      <div className="px-5 py-5 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between">
         <div>
           <div className="text-sm text-slate-400">design-ai-ops</div>
-          <div className="text-base font-semibold text-slate-800 leading-snug mt-1">
+          <div className="text-base font-semibold text-slate-800 dark:text-slate-100 leading-snug mt-1">
             平面设计接单
             <br />
             AI 运营工作台
@@ -160,8 +156,8 @@ function SidebarContent({
               className={clsx(
                 'block px-5 py-2.5 text-sm border-l-2',
                 active
-                  ? 'bg-brand-50 text-brand-700 border-brand-600 font-medium'
-                  : 'text-slate-600 border-transparent hover:bg-slate-50',
+                  ? 'bg-brand-50 text-brand-700 border-brand-600 font-medium dark:bg-brand-900/30 dark:text-brand-300'
+                  : 'text-slate-600 dark:text-slate-300 border-transparent hover:bg-slate-50 dark:hover:bg-slate-800',
               )}
             >
               {it.label}
