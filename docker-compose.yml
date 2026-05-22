@@ -1,0 +1,32 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: design-ai-ops:latest
+    container_name: design-ai-ops
+    restart: unless-stopped
+    # 默认只对外暴露在本机 127.0.0.1，再用 Nginx 反代
+    # 如果你想直接公网访问，把下一行改成 "0.0.0.0:3000:3000"
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NODE_ENV: production
+      # 数据库放在 /data 挂载卷里
+      DATABASE_URL: "file:/data/dev.db"
+      # 这些可以留空，启动后在 /settings 页面配置
+      LLM_API_BASE_URL: "${LLM_API_BASE_URL:-https://api.openai.com/v1}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-gpt-4o-mini}"
+      IMAGE_API_BASE_URL: "${IMAGE_API_BASE_URL:-https://api.openai.com/v1}"
+      IMAGE_API_KEY: "${IMAGE_API_KEY:-}"
+      IMAGE_MODEL: "${IMAGE_MODEL:-gpt-img-2}"
+    volumes:
+      # SQLite 数据库
+      - app_data:/data
+      # 上传/AI 生成的图片
+      - app_uploads:/app/public/uploads
+
+volumes:
+  app_data:
+  app_uploads:

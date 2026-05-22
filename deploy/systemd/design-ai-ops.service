@@ -1,0 +1,43 @@
+# =============================================================
+# systemd 服务模板：design-ai-ops
+# 适用于：不想用 Docker、直接用宿主 Node.js 运行的场景
+#
+# 使用步骤：
+# 1) 把代码克隆到 /opt/design-ai-ops
+# 2) 在 /opt/design-ai-ops 内 npm ci && npm run build
+# 3) 创建 /etc/design-ai-ops.env（参考 .env.example）
+# 4) 复制本文件到 /etc/systemd/system/design-ai-ops.service
+# 5) systemctl daemon-reload && systemctl enable --now design-ai-ops
+# =============================================================
+
+[Unit]
+Description=design-ai-ops · 平面设计接单 AI 运营工作台
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/design-ai-ops
+EnvironmentFile=/etc/design-ai-ops.env
+
+# 启动前同步数据库
+ExecStartPre=/usr/bin/npx prisma db push --skip-generate
+
+# 启动 Next.js
+ExecStart=/usr/bin/npm run start
+
+Restart=always
+RestartSec=5
+
+# 资源限制（视 VPS 规格调整）
+MemoryMax=1G
+TasksMax=200
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=design-ai-ops
+
+[Install]
+WantedBy=multi-user.target
