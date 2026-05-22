@@ -1,0 +1,182 @@
+// Prisma schema for design-ai-ops
+// 数据库：SQLite（个人本地使用）
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============= 类目 =============
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ============= 周计划 =============
+model Schedule {
+  id          String   @id @default(cuid())
+  dayOfWeek   Int      @unique // 1-7 表示周一到周日
+  theme       String
+  description String?
+  tasks       Task[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ============= 发布任务 =============
+model Task {
+  id          String    @id @default(cuid())
+  scheduleId  String?
+  schedule    Schedule? @relation(fields: [scheduleId], references: [id])
+  platform    String    // xiaohongshu / xianyu
+  publishTime String    // HH:mm
+  category    String
+  contentType String    // 案例/避坑/报价/流程/商品/包月/复盘
+  title       String
+  body        String?
+  coverText   String?
+  imageUrl    String?
+  status      String    @default("pending") // pending/generated/published/recapped
+  priority    Int       @default(0)
+  posts       Post[]
+  products    Product[]
+  metrics     Metric[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ============= 小红书帖子 =============
+model Post {
+  id        String   @id @default(cuid())
+  taskId    String?
+  task      Task?    @relation(fields: [taskId], references: [id])
+  platform  String
+  title     String
+  body      String
+  tags      String?
+  coverText String?
+  cta       String?
+  status    String   @default("draft")
+  metrics   Metric[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============= 闲鱼商品 =============
+model Product {
+  id            String   @id @default(cuid())
+  taskId        String?
+  task          Task?    @relation(fields: [taskId], references: [id])
+  title         String
+  description   String
+  coverText     String?
+  priceTier     String?  // 引流/标准/利润
+  deliveryScope String?
+  revisionRule  String?
+  status        String   @default("draft")
+  metrics       Metric[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// ============= 素材 =============
+model Asset {
+  id        String   @id @default(cuid())
+  type      String   // 封面图/商品首图/案例图/样机图/背景图...
+  source    String   // ai_generated / manual_upload
+  platform  String?
+  category  String?
+  url       String
+  prompt    String?
+  fileName  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============= 关键词库 =============
+model Keyword {
+  id        String   @id @default(cuid())
+  category  String
+  platform  String
+  keyword   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============= 价格套餐 =============
+model PricePackage {
+  id          String   @id @default(cuid())
+  category    String
+  tier        String   // 引流款/标准款/利润款
+  name        String
+  priceRange  String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ============= 私信话术 =============
+model Script {
+  id        String   @id @default(cuid())
+  type      String
+  title     String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============= 数据指标 =============
+model Metric {
+  id                String   @id @default(cuid())
+  taskId            String?
+  task              Task?    @relation(fields: [taskId], references: [id])
+  postId            String?
+  post              Post?    @relation(fields: [postId], references: [id])
+  productId         String?
+  product           Product? @relation(fields: [productId], references: [id])
+  platform          String
+  date              DateTime
+  title             String?
+  category          String?
+  impressions       Int      @default(0)
+  clicks            Int      @default(0)
+  likes             Int      @default(0)
+  favorites         Int      @default(0)
+  comments          Int      @default(0)
+  messages          Int      @default(0)
+  views             Int      @default(0)
+  consultations     Int      @default(0)
+  orders            Int      @default(0)
+  revenue           Float    @default(0)
+  averageOrderValue Float    @default(0)
+  subscriptionLeads Int      @default(0)
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ============= AI 输出历史 =============
+model AIOutput {
+  id        String   @id @default(cuid())
+  type      String   // text/image/suggestion
+  input     String
+  output    String
+  model     String?
+  createdAt DateTime @default(now())
+}
+
+// ============= 设置 =============
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
