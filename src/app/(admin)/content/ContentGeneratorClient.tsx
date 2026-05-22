@@ -8,6 +8,7 @@ import {
   TARGET_AUDIENCES,
   TONES,
 } from '@/lib/constants';
+import { copyAll, buildXhsBundle, buildXianyuBundle } from '@/lib/clipboard';
 
 type Platform = 'xiaohongshu' | 'xianyu';
 
@@ -85,7 +86,27 @@ export default function ContentGeneratorClient() {
   }
 
   function copy(s: string) {
-    navigator.clipboard?.writeText(s).catch(() => {});
+    copyAll(s);
+  }
+
+  async function copyBundle() {
+    if (!result) return;
+    const text =
+      result.platform === 'xiaohongshu'
+        ? buildXhsBundle({
+            title: (result.output as XHSOutput).titles?.[0] ?? form.topic ?? '',
+            body: (result.output as XHSOutput).body ?? '',
+            tags: (result.output as XHSOutput).tags,
+            coverText: (result.output as XHSOutput).coverText,
+            cta: (result.output as XHSOutput).cta,
+          })
+        : buildXianyuBundle({
+            title: (result.output as XYOutput).title ?? '',
+            description: (result.output as XYOutput).description ?? '',
+            coverText: (result.output as XYOutput).coverText,
+            preOrderNotes: (result.output as XYOutput).preOrderNotes,
+          });
+    await copyAll(text);
   }
 
   return (
@@ -193,6 +214,21 @@ export default function ContentGeneratorClient() {
           <div className="card">
             <div className="card-body text-sm text-slate-400 text-center py-12">
               填写左侧参数，点击生成文案。
+            </div>
+          </div>
+        )}
+        {result && (
+          <div className="card border-emerald-200 bg-emerald-50">
+            <div className="card-body flex items-center justify-between gap-3">
+              <div className="text-sm text-emerald-700 font-medium">
+                ✨ 已生成 · 自动保存到「内容仓库」
+              </div>
+              <button
+                onClick={copyBundle}
+                className="rounded-md bg-emerald-600 text-white text-sm font-medium px-4 py-2 hover:bg-emerald-700"
+              >
+                📋 一键复制完整发布包
+              </button>
             </div>
           </div>
         )}

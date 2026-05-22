@@ -88,6 +88,7 @@ export const NAV_ITEMS: { href: string; label: string }[] = [
   { href: '/calendar', label: '发布日历' },
   { href: '/content', label: '文案生成' },
   { href: '/image', label: '图片生成' },
+  { href: '/contents', label: '内容仓库' },
   { href: '/assets', label: '素材库' },
   { href: '/keywords', label: '关键词库' },
   { href: '/pricing', label: '价格套餐' },
