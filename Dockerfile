@@ -28,6 +28,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN npx prisma generate
 RUN npm run build
+# 确保 public 目录存在（即便项目里没有静态资源）
+RUN mkdir -p public
 
 # ---------- 3) 运行阶段 ----------
 FROM node:20-alpine AS runner
