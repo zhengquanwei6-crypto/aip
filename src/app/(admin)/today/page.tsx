@@ -24,17 +24,26 @@ export default async function TodayPage() {
               今日主推：{schedule?.theme ?? '未配置'}
             </div>
           </div>
-          <div className="text-sm text-slate-500">
-            共 {tasks.length} 条 · 小红书{' '}
-            {tasks.filter((t) => t.platform === 'xiaohongshu').length} · 闲鱼{' '}
-            {tasks.filter((t) => t.platform === 'xianyu').length}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="text-sm text-slate-500">
+              共 {tasks.length} 条 · 小红书{' '}
+              {tasks.filter((t) => t.platform === 'xiaohongshu').length} · 闲鱼{' '}
+              {tasks.filter((t) => t.platform === 'xianyu').length}
+            </div>
+            {/* 🎯 v0.9 b1：发布导演入口（inline 内嵌按钮） */}
+            <AgentLauncher
+              slug="publish-director"
+              variant="inline"
+              label="🎯 全流程发布"
+            />
           </div>
         </div>
       </div>
 
       <TodayTasksClient initialTasks={tasks.map(serialize)} />
-          <AgentLauncher slug="day-coach" />
-      </div>
+      {/* 浮动的「今日合规」agent 保留 */}
+      <AgentLauncher slug="day-coach" />
+    </div>
   );
 }
 

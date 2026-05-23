@@ -16,6 +16,7 @@ import ProgressBar from '@/components/ProgressBar';
 import { toast } from '@/lib/toast';
 import { usePromptHistory } from '@/hooks/usePromptHistory';
 import { GenerateImageForPostDrawer } from '@/components/agents/GenerateImageForPostDrawer';
+import { PublishDirectorDrawer } from '@/components/agents/PublishDirectorDrawer';
 
 type Platform = 'xiaohongshu' | 'xianyu';
 
@@ -74,8 +75,10 @@ export default function ContentGeneratorClient() {
   const [elapsed, setElapsed] = useState(0);
   const [versions, setVersions] = useState<ContentVersion[]>([]);
   const [compareMode, setCompareMode] = useState(false);
-  // 为这篇生图抽屉状态
+  // 为这篇生图抽屉状态（photo-director 路径，向后兼容）
   const [imgDrawerOpen, setImgDrawerOpen] = useState(false);
+  // publish-director 抽屉状态（v0.9 b1）
+  const [pubDrawerOpen, setPubDrawerOpen] = useState(false);
 
   // B6.4：主题（topic）历史
   const { history: topicHistory, push: pushTopicHistory, clear: clearTopicHistory } =
@@ -168,246 +171,305 @@ export default function ContentGeneratorClient() {
   const recentTopics = topicHistory.slice(0, 5);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-6">
-      {/* 输入 */}
-      <form onSubmit={submit} className="card h-fit sticky top-4">
-        <div className="card-header">
-          <h2 className="font-semibold">生成参数</h2>
+    <>
+      {/* v0.9 b1: 顶部 sticky 入口 */}
+      <div className="sticky top-0 z-30 -mx-2 sm:mx-0 mb-3 px-3 py-2 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-sm">
+          <span className="font-medium">🎯 全流程发布</span>
+          <span className="text-xs text-slate-600 dark:text-slate-300 ml-2">
+            用 publish-director 一次性产出文案 + 风格 prompt + 图片
+          </span>
         </div>
-        <div className="card-body space-y-3">
-          <Field label="平台">
-            <select
-              className="input"
-              value={form.platform}
-              onChange={(e) => up('platform', e.target.value as Platform)}
-            >
-              {PLATFORMS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="类目">
-            <select
-              className="input"
-              value={form.category}
-              onChange={(e) => up('category', e.target.value)}
-            >
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="内容类型">
-            <select
-              className="input"
-              value={form.contentType}
-              onChange={(e) => up('contentType', e.target.value)}
-            >
-              {CONTENT_TYPES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="目标客户">
-            <select
-              className="input"
-              value={form.audience}
-              onChange={(e) => up('audience', e.target.value)}
-            >
-              {TARGET_AUDIENCES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="文案风格">
-            <select
-              className="input"
-              value={form.tone}
-              onChange={(e) => up('tone', e.target.value)}
-            >
-              {TONES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="本次主题（可选）">
-            {recentTopics.length > 0 && (
-              <div
-                data-topic-recent
-                className="flex flex-wrap items-center gap-1 mb-1.5"
-              >
-                <span className="text-[11px] text-slate-400">最近用过:</span>
-                {recentTopics.map((t, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => up('topic', t)}
-                    className="text-[11px] px-1.5 py-0.5 rounded-full border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-brand-50 hover:border-brand-300 dark:hover:bg-brand-900/30 truncate max-w-[200px]"
-                    title={t}
-                  >
-                    {t}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => {
-                    clearTopicHistory();
-                    toast.info('已清空主题历史');
-                  }}
-                  className="text-[11px] text-slate-400 hover:text-rose-500 inline-flex items-center"
-                  title="清空"
-                  aria-label="清空主题历史"
-                >
-                  <Trash2 size={11} />
-                </button>
-              </div>
-            )}
-            <input
-              className="input"
-              value={form.topic}
-              onChange={(e) => up('topic', e.target.value)}
-              placeholder="例：奶茶店开业菜单升级"
-            />
-          </Field>
-          <button type="submit" disabled={loading} className="btn-primary w-full">
-            {loading ? '生成中...' : versions.length === 0 ? '生成文案' : '重新生成（替换当前）'}
-          </button>
-          {result && !loading && (
-            <button
-              type="button"
-              onClick={doGenerate}
-              disabled={loading}
-              className="btn-secondary w-full inline-flex items-center justify-center gap-2"
-            >
-              <RefreshCw size={14} />
-              再来一版（保留当前作为上一版）
-            </button>
-          )}
-          {loading && (
-            <ProgressBar
-              mode="indeterminate"
-              label="正在生成文案…"
-              elapsed={elapsed}
-            />
-          )}
-          {versions.length >= 2 && !loading && (
-            <button
-              type="button"
-              onClick={() => setCompareMode((v) => !v)}
-              className="w-full text-xs px-3 py-2 rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 inline-flex items-center justify-center gap-2"
-            >
-              {compareMode ? (
-                <>
-                  <ArrowLeft size={14} />
-                  退出对比
-                </>
-              ) : (
-                <>
-                  <GitCompare size={14} />
-                  对比上一版
-                </>
-              )}
-            </button>
-          )}
-          {versions.length > 0 && (
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              已生成 {versions.length} 版。最新一版在右侧显示，
-              {versions.length >= 2 ? '可点击「对比上一版」查看差异。' : '再来一版可触发对比。'}
-            </p>
-          )}
-          <p className="text-xs text-slate-400 leading-relaxed">
-            提示：会自动引用关键词库和价格套餐。生成结果会自动保存到 AI 输出历史与帖子/商品库。
-          </p>
-        </div>
-      </form>
-
-      {/* 输出 */}
-      <div className="space-y-4">
-        {!result && !loading && (
-          <div className="card">
-            <div className="card-body text-sm text-slate-400 text-center py-12">
-              填写左侧参数，点击生成文案。
-            </div>
-          </div>
-        )}
-
-        {result && compareMode && previousVersion && (
-          <CompareView prev={previousVersion} curr={result} />
-        )}
-
-        {result && !compareMode && (
-          <>
-            <div className="card border-emerald-200 bg-emerald-50">
-              <div className="card-body flex items-center justify-between gap-3 flex-wrap">
-                <div className="text-sm text-emerald-700 font-medium">
-                  ✨ 已生成 · 自动保存到「内容仓库」
-                  {versions.length >= 2 ? `（第 ${versions.length} 版）` : ''}
-                </div>
-                <button
-                  onClick={copyBundle}
-                  className="rounded-md bg-emerald-600 text-white text-sm font-medium px-4 py-2 hover:bg-emerald-700"
-                >
-                  📋 一键复制完整发布包
-                </button>
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-header">
-                <h3 className="font-semibold">手机预览</h3>
-                <span className="text-xs text-slate-400">所见即所得（仅参考）</span>
-              </div>
-              <div className="card-body">
-                {result.platform === 'xiaohongshu' ? (
-                  <PhonePreview
-                    platform="xiaohongshu"
-                    title={
-                      (result.output as XHSOutput).titles?.[0] ?? result.topic
-                    }
-                    body={(result.output as XHSOutput).body}
-                    coverText={(result.output as XHSOutput).coverText}
-                    tags={(result.output as XHSOutput).tags}
-                  />
-                ) : (
-                  <PhonePreview
-                    platform="xianyu"
-                    title={(result.output as XYOutput).title ?? result.topic}
-                    description={(result.output as XYOutput).description}
-                    coverText={(result.output as XYOutput).coverText}
-                    priceRange={
-                      (result.output as XYOutput).tiers?.[1]?.priceRange ??
-                      (result.output as XYOutput).tiers?.[0]?.priceRange
-                    }
-                  />
-                )}
-              </div>
-            </div>
-            {result.platform === 'xiaohongshu' ? (
-              <XHSResult output={result.output as XHSOutput} onCopy={copy} />
-            ) : (
-              <XYResult output={result.output as XYOutput} onCopy={copy} />
-            )}
-            <div className="mt-4 flex justify-end">
-              <button
-                onClick={() => setImgDrawerOpen(true)}
-                className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded px-4 py-2 inline-flex items-center gap-2"
-              >
-                🎬 为这篇生图
-              </button>
-            </div>
-          </>
-        )}
+        <button
+          type="button"
+          onClick={() => setPubDrawerOpen(true)}
+          className="text-sm bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 inline-flex items-center gap-1"
+        >
+          🎯 打开 publish-director
+        </button>
       </div>
-    </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-6">
+        {/* 输入 */}
+        <form onSubmit={submit} className="card h-fit sticky top-4">
+          <div className="card-header">
+            <h2 className="font-semibold">生成参数</h2>
+          </div>
+          <div className="card-body space-y-3">
+            <Field label="平台">
+              <select
+                className="input"
+                value={form.platform}
+                onChange={(e) => up('platform', e.target.value as Platform)}
+              >
+                {PLATFORMS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="类目">
+              <select
+                className="input"
+                value={form.category}
+                onChange={(e) => up('category', e.target.value)}
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="内容类型">
+              <select
+                className="input"
+                value={form.contentType}
+                onChange={(e) => up('contentType', e.target.value)}
+              >
+                {CONTENT_TYPES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="目标客户">
+              <select
+                className="input"
+                value={form.audience}
+                onChange={(e) => up('audience', e.target.value)}
+              >
+                {TARGET_AUDIENCES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="文案风格">
+              <select
+                className="input"
+                value={form.tone}
+                onChange={(e) => up('tone', e.target.value)}
+              >
+                {TONES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="本次主题（可选）">
+              {recentTopics.length > 0 && (
+                <div
+                  data-topic-recent
+                  className="flex flex-wrap items-center gap-1 mb-1.5"
+                >
+                  <span className="text-[11px] text-slate-400">最近用过:</span>
+                  {recentTopics.map((t, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => up('topic', t)}
+                      className="text-[11px] px-1.5 py-0.5 rounded-full border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-brand-50 hover:border-brand-300 dark:hover:bg-brand-900/30 truncate max-w-[200px]"
+                      title={t}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearTopicHistory();
+                      toast.info('已清空主题历史');
+                    }}
+                    className="text-[11px] text-slate-400 hover:text-rose-500 inline-flex items-center"
+                    title="清空"
+                    aria-label="清空主题历史"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              )}
+              <input
+                className="input"
+                value={form.topic}
+                onChange={(e) => up('topic', e.target.value)}
+                placeholder="例：奶茶店开业菜单升级"
+              />
+            </Field>
+            <button type="submit" disabled={loading} className="btn-primary w-full">
+              {loading ? '生成中...' : versions.length === 0 ? '生成文案' : '重新生成（替换当前）'}
+            </button>
+            {result && !loading && (
+              <button
+                type="button"
+                onClick={doGenerate}
+                disabled={loading}
+                className="btn-secondary w-full inline-flex items-center justify-center gap-2"
+              >
+                <RefreshCw size={14} />
+                再来一版（保留当前作为上一版）
+              </button>
+            )}
+            {loading && (
+              <ProgressBar
+                mode="indeterminate"
+                label="正在生成文案…"
+                elapsed={elapsed}
+              />
+            )}
+            {versions.length >= 2 && !loading && (
+              <button
+                type="button"
+                onClick={() => setCompareMode((v) => !v)}
+                className="w-full text-xs px-3 py-2 rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 inline-flex items-center justify-center gap-2"
+              >
+                {compareMode ? (
+                  <>
+                    <ArrowLeft size={14} />
+                    退出对比
+                  </>
+                ) : (
+                  <>
+                    <GitCompare size={14} />
+                    对比上一版
+                  </>
+                )}
+              </button>
+            )}
+            {versions.length > 0 && (
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                已生成 {versions.length} 版。最新一版在右侧显示，
+                {versions.length >= 2 ? '可点击「对比上一版」查看差异。' : '再来一版可触发对比。'}
+              </p>
+            )}
+            <p className="text-xs text-slate-400 leading-relaxed">
+              提示：会自动引用关键词库和价格套餐。生成结果会自动保存到 AI 输出历史与帖子/商品库。
+            </p>
+          </div>
+        </form>
+
+        {/* 输出 */}
+        <div className="space-y-4">
+          {!result && !loading && (
+            <div className="card">
+              <div className="card-body text-sm text-slate-400 text-center py-12">
+                填写左侧参数，点击生成文案。
+              </div>
+            </div>
+          )}
+
+          {result && compareMode && previousVersion && (
+            <CompareView prev={previousVersion} curr={result} />
+          )}
+
+          {result && !compareMode && (
+            <>
+              <div className="card border-emerald-200 bg-emerald-50">
+                <div className="card-body flex items-center justify-between gap-3 flex-wrap">
+                  <div className="text-sm text-emerald-700 font-medium">
+                    ✨ 已生成 · 自动保存到「内容仓库」
+                    {versions.length >= 2 ? `（第 ${versions.length} 版）` : ''}
+                  </div>
+                  <button
+                    onClick={copyBundle}
+                    className="rounded-md bg-emerald-600 text-white text-sm font-medium px-4 py-2 hover:bg-emerald-700"
+                  >
+                    📋 一键复制完整发布包
+                  </button>
+                </div>
+              </div>
+              <div className="card">
+                <div className="card-header">
+                  <h3 className="font-semibold">手机预览</h3>
+                  <span className="text-xs text-slate-400">所见即所得（仅参考）</span>
+                </div>
+                <div className="card-body">
+                  {result.platform === 'xiaohongshu' ? (
+                    <PhonePreview
+                      platform="xiaohongshu"
+                      title={
+                        (result.output as XHSOutput).titles?.[0] ?? result.topic
+                      }
+                      body={(result.output as XHSOutput).body}
+                      coverText={(result.output as XHSOutput).coverText}
+                      tags={(result.output as XHSOutput).tags}
+                    />
+                  ) : (
+                    <PhonePreview
+                      platform="xianyu"
+                      title={(result.output as XYOutput).title ?? result.topic}
+                      description={(result.output as XYOutput).description}
+                      coverText={(result.output as XYOutput).coverText}
+                      priceRange={
+                        (result.output as XYOutput).tiers?.[1]?.priceRange ??
+                        (result.output as XYOutput).tiers?.[0]?.priceRange
+                      }
+                    />
+                  )}
+                </div>
+              </div>
+              {result.platform === 'xiaohongshu' ? (
+                <XHSResult output={result.output as XHSOutput} onCopy={copy} />
+              ) : (
+                <XYResult output={result.output as XYOutput} onCopy={copy} />
+              )}
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={() => setImgDrawerOpen(true)}
+                  className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded px-4 py-2 inline-flex items-center gap-2"
+                >
+                  🎬 为这篇生图（photo-director）
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* photo-director 抽屉（向后兼容） */}
+      {result && (
+        <GenerateImageForPostDrawer
+          open={imgDrawerOpen}
+          onClose={() => setImgDrawerOpen(false)}
+          platform={result.platform}
+          category={form.category}
+          imageType={result.platform === 'xianyu' ? '商品首图' : '封面图'}
+          notes={
+            result.platform === 'xiaohongshu'
+              ? {
+                  title: (result.output as XHSOutput).titles?.[0],
+                  body: (result.output as XHSOutput).body,
+                  coverText: (result.output as XHSOutput).coverText,
+                  tags: (result.output as XHSOutput).tags?.join(','),
+                }
+              : {
+                  title: (result.output as XYOutput).title,
+                  description: (result.output as XYOutput).description,
+                  coverText: (result.output as XYOutput).coverText,
+                  tiers: (result.output as XYOutput).tiers,
+                }
+          }
+        />
+      )}
+
+      {/* publish-director 抽屉（v0.9 b1，与 photo-director 共存） */}
+      <PublishDirectorDrawer
+        open={pubDrawerOpen}
+        onClose={() => setPubDrawerOpen(false)}
+        initialForm={{
+          platform: form.platform,
+          category: form.category,
+          contentType: form.contentType,
+          audience: form.audience,
+          tone: form.tone,
+          topic: form.topic,
+        }}
+      />
+    </>
   );
 }
 
@@ -452,31 +514,7 @@ function Section({
         )}
       </div>
       <div className="card-body text-sm text-slate-700">{children}</div>
-          {result && (
-        <GenerateImageForPostDrawer
-          open={imgDrawerOpen}
-          onClose={() => setImgDrawerOpen(false)}
-          platform={result.platform}
-          category={form.category}
-          imageType={result.platform === 'xianyu' ? '商品首图' : '封面图'}
-          notes={
-            result.platform === 'xiaohongshu'
-              ? {
-                  title: (result.output as XHSOutput).titles?.[0],
-                  body: (result.output as XHSOutput).body,
-                  coverText: (result.output as XHSOutput).coverText,
-                  tags: (result.output as XHSOutput).tags?.join(','),
-                }
-              : {
-                  title: (result.output as XYOutput).title,
-                  description: (result.output as XYOutput).description,
-                  coverText: (result.output as XYOutput).coverText,
-                  tiers: (result.output as XYOutput).tiers,
-                }
-          }
-        />
-      )}
-      </div>
+    </div>
   );
 }
 
@@ -710,7 +748,6 @@ function CompareView({
 }) {
   const fields = useMemo(() => {
     if (prev.platform !== curr.platform) {
-      // 不同平台不对比，回退展示当前版
       return flattenForCompare(curr.platform, curr.output).map((f) => ({
         label: f.label,
         prev: '',
@@ -797,6 +834,6 @@ function DiffSide({
           })
         )}
       </div>
-          </div>
+    </div>
   );
 }
