@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generateText, extractJSON } from '@/lib/ai/text';
-import { buildContentMessages } from '@/lib/ai/prompts';
+import { buildContentMessagesAsync } from '@/lib/ai/prompts';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,7 +23,8 @@ export async function POST(
       where: { category: task.category },
     });
 
-    const messages = buildContentMessages({
+    // v0.9.2 b1：async builder 接通模板编辑器
+    const messages = await buildContentMessagesAsync({
       platform: task.platform as 'xiaohongshu' | 'xianyu',
       category: task.category,
       contentType: task.contentType,

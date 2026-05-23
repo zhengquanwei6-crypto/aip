@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generateText, extractJSON } from '@/lib/ai/text';
-import { buildContentMessages } from '@/lib/ai/prompts';
+import { buildContentMessagesAsync } from '@/lib/ai/prompts';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,7 +24,8 @@ export async function POST(req: NextRequest) {
       where: { category },
     });
 
-    const messages = buildContentMessages({
+    // v0.9.2 b1：走 async builder 接通 /prompts 模板编辑器
+    const messages = await buildContentMessagesAsync({
       platform,
       category,
       contentType,

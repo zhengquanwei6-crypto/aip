@@ -1,10 +1,6 @@
 // /api/health · 轻量健康检查
-// - 测 SQLite 是否可写：count 一下任意一张已存在的表
-// - 不暴露任何密钥 / 配置
-// - 用作 docker healthcheck
 //
-// v0.8 Batch 6 (B6.7) 增强：
-//   返回 { ok, db, version, startedAt, uptimeMs }
+// v0.8 b6 增强：含 version / startedAt / uptime
 //
 // v0.9 Batch 3 (B5) 增强：
 //   - agentRoutes: number  // findAgent 里注册的 agent 总数（含 publish-director / photo-director）
@@ -12,7 +8,10 @@
 //   - recentFailures: { llm: string | null, image: string | null }  // 最近 1 条 LLM/IMAGE 错误的 input 摘要（不含 key）
 //   - publishDirectorStats: { total, success, fail }  // 最近 24h via:'publish-director' AIOutput 统计
 //
-// 所有新字段都是可选信息，任何失败都用 null 兜底，不影响 HTTP 200/503
+// v0.9.2 Batch 1 增强：
+//   - customPromptCount: number  // 当前 Setting 表里 prompt:* 前缀条目数（即用户在 /prompts 编辑保存了多少条）
+//
+// 所有新字段都是可选信息，任何失败都用 null/0 兜底，不影响 HTTP 200/503
 
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
@@ -108,16 +107,29 @@ async function readPublishDirectorStats(): Promise<{ total: number; success: num
   return out;
 }
 
+/**
+ * v0.9.2 b1：统计 Setting 表 prompt:* 前缀的条目数。
+ * 用户每在 /prompts 编辑器保存一次模板，这里 +1；恢复默认即删除自定义条目，相应 -1。
+ */
+async function readCustomPromptCount(): Promise<number> {
+  try {
+    return await prisma.setting.count({ where: { key: { startsWith: "prompt:" } } });
+  } catch {
+    return 0;
+  }
+}
+
 export async function GET() {
   const t0 = Date.now();
   try {
     await prisma.setting.count();
 
     // 并行读 4 路扩展字段（任何失败都用 null/空对象兜底，不阻塞 health）
-    const [imageDefaultAdapter, recentFailures, publishDirectorStats] = await Promise.all([
+    const [imageDefaultAdapter, recentFailures, publishDirectorStats, customPromptCount] = await Promise.all([
       readImageDefaultAdapter(),
       readRecentFailures(),
       readPublishDirectorStats(),
+      readCustomPromptCount(),
     ]);
 
     return NextResponse.json(
@@ -133,6 +145,8 @@ export async function GET() {
         imageDefaultAdapter,
         recentFailures,
         publishDirectorStats,
+        // v0.9.2 b1
+        customPromptCount,
       },
       { status: 200 },
     );

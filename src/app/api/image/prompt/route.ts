@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generateText, extractJSON } from '@/lib/ai/text';
-import { buildImagePromptMessages } from '@/lib/ai/prompts';
+import { buildImagePromptMessagesAsync } from '@/lib/ai/prompts';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,7 +11,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const platform = body.platform as 'xiaohongshu' | 'xianyu';
     const ratio = (body.ratio as '3:4' | '1:1') ?? (platform === 'xiaohongshu' ? '3:4' : '1:1');
-    const messages = buildImagePromptMessages({
+    // v0.9.2 b1：async builder 接通模板编辑器
+    const messages = await buildImagePromptMessagesAsync({
       platform,
       imageType: body.imageType || '封面图',
       coverTitle: body.coverTitle,

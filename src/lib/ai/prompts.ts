@@ -2,9 +2,11 @@
  * 文案 / 图片提示词 - prompt 构造
  *
  * v0.8 Batch 4：新增可编辑模板基础设施（DEFAULT_PROMPTS / getPromptTemplate）
- * 现有 build*Messages 函数保持 sync，行为不变（保证 Batch 1-3 调用方不破坏）。
- * /prompts 页编辑的内容暂作"模板库知识"展示与备份，正式启用 override
- * 留待 v0.9 渐进式整合。
+ * v0.9.2 Batch 1：新增 *Async 系列 build 函数，真正接通 /prompts 编辑器到 generate 链路。
+ *   - buildContentMessagesAsync(input)        -> 路由 xiaohongshu:case / xiaohongshu:tutorial / xianyu:product
+ *   - buildImagePromptMessagesAsync(input)    -> image:suggest
+ *   - buildSuggestionMessagesAsync(input)     -> suggestion:weekly（本批新增默认条目）
+ *   旧 sync builder 全部保留作 fallback：getPromptTemplate 找不到时仍回退 sync 实现。
  */
 
 import type { ChatMessage } from './text';
@@ -259,6 +261,19 @@ export const DEFAULT_PROMPTS: Record<string, PromptTemplate> = {
       { key: 'styleKeywords', label: '风格', example: '极简, 暖色调' },
     ],
   },
+  // v0.9.2 b1：把 buildSuggestionMessages 的 system 文本搬进默认条目
+  'suggestion:weekly': {
+    name: '周度运营复盘建议',
+    description: '基于近 7 天 / 近 30 天的 metrics 输出下一周运营建议（标题/封面/价格/订阅/重点）。',
+    system:
+      '你是平面设计接单的运营复盘顾问。\n基于给定的近 7 天 / 近 30 天数据，输出严格 JSON：\n{\n  "summary": "总体一段话总结（不超过 200 字）",\n  "amplifyCategories": ["下周继续放大的类目"],\n  "reduceCategories": ["下周减少发布的类目"],\n  "rewriteTitles": ["需要重写标题的内容（直接列标题）"],\n  "redoCovers": ["需要重做首图的商品（标题）"],\n  "raisePrice": ["可以适度提高价格的服务"],\n  "pushSubscription": ["适合主推包月的服务"],\n  "weekFocus": ["下周发布重点（3-5 条）"],\n  "nextWeek10": [\n    { "platform": "xiaohongshu/xianyu", "time": "HH:mm", "category": "...", "title": "..." }\n  ]\n}\nnextWeek10 必须给出 10 条建议，覆盖小红书 6 条 + 闲鱼 4 条。',
+    user:
+      '近7天数据：\n{{weeklyMetrics}}\n\n近30天数据：\n{{monthlyMetrics}}\n\n请输出严格 JSON。',
+    vars: [
+      { key: 'weeklyMetrics', label: '近 7 天 metrics', example: '[]' },
+      { key: 'monthlyMetrics', label: '近 30 天 metrics', example: '[]' },
+    ],
+  },
 };
 
 const PROMPT_KEY_RE = /^[a-z0-9:_-]+$/;
@@ -345,3 +360,120 @@ export async function listPromptTemplates(): Promise<
 }
 
 export const PROMPT_KEY_PREFIX = PROMPT_PREFIX;
+
+/* ---------------- v0.9.2 b1 · 真接入 generate ---------------- */
+
+/**
+ * 安全的 {{var}} 模板替换。
+ * - 未定义的 var 保留 `{{xxx}}` 原样（不 throw）
+ * - null/undefined 替换成空串
+ * - Array → join(', ')
+ * - object → JSON.stringify
+ * - 其他用 String(v)
+ */
+export function renderTemplate(tmpl: string, vars: Record<string, unknown>): string {
+  if (typeof tmpl !== 'string' || !tmpl) return '';
+  return tmpl.replace(/\{\{\s*([a-zA-Z0-9_:.\-]+)\s*\}\}/g, (full, key) => {
+    if (!(key in vars)) return full;
+    const v = vars[key];
+    if (v === null || v === undefined) return '';
+    if (Array.isArray(v)) return v.join(', ');
+    if (typeof v === 'object') {
+      try {
+        return JSON.stringify(v);
+      } catch {
+        return String(v);
+      }
+    }
+    return String(v);
+  });
+}
+
+/**
+ * v0.9.2 b1：异步版 buildContentMessages
+ * - 路由 platform + contentType → key:
+ *     xiaohongshu + 教程型/干货型           → xiaohongshu:tutorial
+ *     xiaohongshu + 其他（含案例型）         → xiaohongshu:case
+ *     xianyu + *                             → xianyu:product
+ *     其他平台                                → xiaohongshu:case 兜底
+ * - 命中模板 → 用 tpl.system + renderTemplate(tpl.user, varsMap)
+ * - 未命中 → 回退旧 sync buildContentMessages(input)
+ */
+export async function buildContentMessagesAsync(input: ContentInput): Promise<ChatMessage[]> {
+  let key = 'xiaohongshu:case';
+  if (input.platform === 'xiaohongshu') {
+    const ct = input.contentType || '';
+    if (/教程|干货/.test(ct)) key = 'xiaohongshu:tutorial';
+    else key = 'xiaohongshu:case';
+  } else if (input.platform === 'xianyu') {
+    key = 'xianyu:product';
+  }
+  const tpl = await getPromptTemplate(key);
+  if (!tpl) {
+    return buildContentMessages(input);
+  }
+  const vars: Record<string, unknown> = {
+    platform: input.platform,
+    category: input.category,
+    contentType: input.contentType,
+    audience: input.audience ?? '',
+    tone: input.tone ?? '',
+    topic: input.topic ?? '',
+    keywords: input.keywords ?? [],
+    pricePackages: input.pricePackages ?? [],
+  };
+  const userMsg = renderTemplate(tpl.user, vars);
+  return [
+    { role: 'system', content: tpl.system },
+    { role: 'user', content: userMsg.replace(/\n{3,}/g, '\n\n') },
+  ];
+}
+
+/**
+ * v0.9.2 b1：异步版 buildImagePromptMessages
+ * - key=image:suggest
+ * - varsMap：platform / imageType / coverTitle / styleKeywords / category / ratio
+ * - 未命中 → 回退 sync buildImagePromptMessages
+ */
+export async function buildImagePromptMessagesAsync(input: ImagePromptInput): Promise<ChatMessage[]> {
+  const tpl = await getPromptTemplate('image:suggest');
+  if (!tpl) {
+    return buildImagePromptMessages(input);
+  }
+  const vars: Record<string, unknown> = {
+    platform: input.platform,
+    imageType: input.imageType,
+    coverTitle: input.coverTitle ?? '',
+    styleKeywords: input.styleKeywords ?? '',
+    category: input.category ?? '',
+    ratio: input.ratio,
+  };
+  const userMsg = renderTemplate(tpl.user, vars);
+  return [
+    { role: 'system', content: tpl.system },
+    { role: 'user', content: userMsg.replace(/\n{3,}/g, '\n\n') },
+  ];
+}
+
+/**
+ * v0.9.2 b1：异步版 buildSuggestionMessages
+ * - key=suggestion:weekly
+ * - varsMap：weeklyMetrics / monthlyMetrics
+ * - 未命中 → 回退 sync buildSuggestionMessages
+ */
+export async function buildSuggestionMessagesAsync(input: SuggestionInput): Promise<ChatMessage[]> {
+  const tpl = await getPromptTemplate('suggestion:weekly');
+  if (!tpl) {
+    return buildSuggestionMessages(input);
+  }
+  // 渲染时把 metrics JSON 化成可读字符串，与原 sync 行为一致
+  const vars: Record<string, unknown> = {
+    weeklyMetrics: JSON.stringify(input.weeklyMetrics ?? [], null, 2),
+    monthlyMetrics: JSON.stringify(input.monthlyMetrics ?? [], null, 2),
+  };
+  const userMsg = renderTemplate(tpl.user, vars);
+  return [
+    { role: 'system', content: tpl.system },
+    { role: 'user', content: userMsg },
+  ];
+}

@@ -1,5 +1,5 @@
 /**
- * /api/agents/publish-director/build · v0.9 b3
+ * /api/agents/publish-director/build · v0.9 b3 (+ v0.9.2 b1 async builders)
  *
  * v0.9 b3 (B1)：
  *   - 新增 body.taskId：由 /today 任务卡触发时传入
@@ -8,8 +8,12 @@
  *       status='generated', title=titles[0]/title, body, coverText, imageUrl=assets[0]?.url
  *   - 失败容忍：task.update 失败不影响整体响应（会写到响应里 taskUpdateError 字段）
  *
+ * v0.9.2 b1：
+ *   - step1 改用 buildContentMessagesAsync，让 /prompts 编辑器编辑的
+ *     xiaohongshu:case / xiaohongshu:tutorial / xianyu:product 真正影响下一次生成。
+ *
  * "先文案再图片"链式编排（含图片选项扩展）：
- *   step 1: buildContentMessages → generateText(json) → content（小红书/闲鱼 schema）
+ *   step 1: buildContentMessagesAsync → generateText(json) → content（小红书/闲鱼 schema）
  *   step 2: 用 photo-director systemPrompt + step1 的 title/coverText/body
  *           + imageOptions (风格/色调/语言/数量/系列) → generateText(json)
  *           → stylePrompt（单图）或 series（N 条 promptEn）
@@ -60,7 +64,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { findAgent } from '@/lib/agent-types';
 import { generateText, extractJSON, type ChatMessage } from '@/lib/ai/text';
-import { buildContentMessages } from '@/lib/ai/prompts';
+import { buildContentMessagesAsync } from '@/lib/ai/prompts';
 import { runImageGenerate } from '@/lib/image-runner';
 
 export const runtime = 'nodejs';
@@ -584,7 +588,8 @@ export async function POST(req: NextRequest) {
       const pricePackages = await prisma.pricePackage.findMany({
         where: { category: body.category || 'Logo' },
       });
-      const messages = buildContentMessages({
+      // v0.9.2 b1：async builder 接通 /prompts 模板编辑器
+      const messages = await buildContentMessagesAsync({
         platform: body.platform,
         category: body.category || 'Logo',
         contentType: body.contentType || '案例型',

@@ -1,10 +1,12 @@
 /**
  * /api/prompts/[key] - 单个 Prompt 模板
- * GET    返回（custom 优先，否则 default）
+ * GET    返回（默认 custom 优先；?source=default 强制返回 DEFAULT_PROMPTS[key]）
  * POST   保存自定义模板（写入 Setting 表 `prompt:<key>`）
  * DELETE 删除自定义模板（Setting 行删除，下次读自动回退默认）
  *
  * key 必须满足 ^[a-z0-9:_-]+$ 防注入
+ *
+ * v0.9.2 b1：GET 新增 ?source=default 支持 PromptsClient 的"vs 默认"对比按钮。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
@@ -24,12 +26,28 @@ function bad(msg: string, code = 400) {
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { key: string } },
 ) {
   const key = params.key;
   if (!isValidPromptKey(key)) return bad('key 不合法');
   try {
+    const url = new URL(req.url);
+    const sourceQuery = url.searchParams.get('source');
+
+    // v0.9.2 b1：?source=default 强制返回 DEFAULT_PROMPTS[key]
+    if (sourceQuery === 'default') {
+      const def = DEFAULT_PROMPTS[key];
+      if (!def) return bad('该 key 没有内置默认模板', 404);
+      return NextResponse.json({
+        ok: true,
+        key,
+        source: 'default',
+        isDefault: true,
+        tpl: def,
+      });
+    }
+
     const tpl = await getPromptTemplate(key);
     if (!tpl) return bad('模板不存在', 404);
     const isDefault = !!DEFAULT_PROMPTS[key];

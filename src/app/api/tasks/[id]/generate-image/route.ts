@@ -7,12 +7,13 @@
  *   3) 写素材库 + 更新 task.imageUrl
  *
  * v0.8 Batch 5：fail 时把 trace 透传（含 adapter / baseUrl / lastError / pollHistory）
+ * v0.9.2 b1：走 async builder 接通 /prompts 模板编辑器
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generateText, extractJSON } from '@/lib/ai/text';
-import { buildImagePromptMessages } from '@/lib/ai/prompts';
+import { buildImagePromptMessagesAsync } from '@/lib/ai/prompts';
 import { runImageGenerate } from '@/lib/image-runner';
 
 export const runtime = 'nodejs';
@@ -33,8 +34,8 @@ export async function POST(
     const ratio = platform === 'xiaohongshu' ? '3:4' : '1:1';
     const size = platform === 'xiaohongshu' ? '1024x1536' : '1024x1024';
 
-    // 1) 让 LLM 生成图片提示词
-    const messages = buildImagePromptMessages({
+    // 1) 让 LLM 生成图片提示词（v0.9.2 b1：async builder 路由 image:suggest）
+    const messages = await buildImagePromptMessagesAsync({
       platform,
       imageType: platform === 'xiaohongshu' ? '封面图' : '商品首图',
       coverTitle: task.coverText || task.title,

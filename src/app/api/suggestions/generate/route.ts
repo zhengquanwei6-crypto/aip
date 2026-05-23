@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generateText, extractJSON } from '@/lib/ai/text';
-import { buildSuggestionMessages } from '@/lib/ai/prompts';
+import { buildSuggestionMessagesAsync } from '@/lib/ai/prompts';
 import { daysAgo, startOfDay, endOfDay } from '@/lib/date';
 
 export const runtime = 'nodejs';
@@ -55,7 +55,8 @@ export async function POST() {
     const weekly = summarize(w);
     const monthly = summarize(m);
 
-    const messages = buildSuggestionMessages({
+    // v0.9.2 b1：async builder 接通模板编辑器（key=suggestion:weekly）
+    const messages = await buildSuggestionMessagesAsync({
       weeklyMetrics: weekly,
       monthlyMetrics: monthly,
     });
