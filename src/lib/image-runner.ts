@@ -254,7 +254,10 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
       }
     }
   } catch (e) {
-    console.warn('[image-runner] adapter path failed, falling back:', (e as Error).message);
+    // v0.11 B4: dev-only（生产环境静默；adapter 失败时已经会通过 trace 暴露给前端）
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[image-runner] adapter path failed, falling back:', (e as Error).message);
+    }
   }
 
   // 2) Legacy 路径（generateImage 内部已含池 + setting 回退 + recordImageResult）

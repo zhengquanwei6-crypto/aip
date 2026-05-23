@@ -317,6 +317,7 @@ function SidebarContent({
               'w-full inline-flex items-center justify-center gap-1.5 rounded text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 dark:text-slate-400 transition-colors',
               collapsed ? 'h-9' : 'h-8 px-2',
             )}
+            aria-pressed={collapsed}
             aria-label={collapsed ? '展开侧栏' : '折叠侧栏'}
             title={collapsed ? '展开侧栏' : '折叠侧栏'}
           >

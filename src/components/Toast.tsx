@@ -87,6 +87,9 @@ function ToastRow({
 }
 
 /* ── 容器 + Provider ── */
+const MAX_QUEUE = 3; // v0.11 B4: 同时显示的 toast 上限
+const DEDUPE_WINDOW_MS = 800; // v0.11 B4: 同 message+kind 在窗口内被视为重复
+
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const [active, setActive] = useState(false);
@@ -101,8 +104,34 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     w.__TOAST_PROVIDER_ACTIVE__ = true;
     setActive(true);
 
+    // v0.11 B4: 维护「最近一条相同 (kind|message) 的入队时间」用于 dedupe
+    const recent = new Map<string, number>();
+
     const offAdd = __subscribeToast((item) => {
-      setItems((arr) => [...arr, item]);
+      const dedupeKey = item.kind + '|' + item.message;
+      const now = Date.now();
+      const last = recent.get(dedupeKey) ?? 0;
+      if (now - last < DEDUPE_WINDOW_MS) {
+        // dedupe：极短时间内的重复 toast 直接丢弃
+        return;
+      }
+      recent.set(dedupeKey, now);
+
+      setItems((arr) => {
+        // v0.11 B4: 队列上限 3 条；超出时优先舍弃「最早的非 sticky 那条」
+        // 把 duration<=0 视为 sticky（永不自动消失）
+        if (arr.length >= MAX_QUEUE) {
+          const idx = arr.findIndex((t) => t.duration > 0);
+          if (idx >= 0) {
+            const next = arr.slice();
+            next.splice(idx, 1);
+            return [...next, item];
+          }
+          // 全是 sticky 时，只丢 head
+          return [...arr.slice(1), item];
+        }
+        return [...arr, item];
+      });
     });
     const offDismiss = __subscribeDismiss((id) => {
       setItems((arr) => arr.filter((t) => t.id !== id));

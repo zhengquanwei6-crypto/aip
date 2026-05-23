@@ -111,7 +111,10 @@ export default function AssetsClient({
           zip.file(safeFileName, blob);
           success++;
         } catch (e) {
-          console.warn('zip skip', a.id, e);
+          // v0.11 B4: dev-only console.warn（生产环境静默）
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('zip skip', a.id, e);
+          }
         }
         if (i < list.length - 1) {
           await new Promise((r) => setTimeout(r, 80));

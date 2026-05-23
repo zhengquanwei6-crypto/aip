@@ -202,7 +202,8 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
   const [busy, setBusy] = useState(false);
   const [busyIdx, setBusyIdx] = useState<number | null>(null); // 单张重生时的索引
   const [stage, setStage] = useState<string>('');
-  const [error, setError] = useState<string | null>(null);
+  // v0.11 B4: setError 移除（保留 stylePromptErr，因为它是 step ② 的状态展示而非错误提示）；
+  // 失败统一走 toast.error，不再显示红色错误块。
 
   const [content, setContent] = useState<AnyContent | null>(null);
   const [stylePrompt, setStylePrompt] = useState<StylePrompt | null>(null);
@@ -261,7 +262,6 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
     setEditedSummary('');
     setAssets([]);
     setImageFallbackNote(null);
-    setError(null);
   }
 
   function stageLabelFor(reg: Regenerate): string {
@@ -296,7 +296,6 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
         return;
       }
       setBusy(true);
-      setError(null);
       setStage(stageLabelFor(regenerate));
       if (typeof opts?.regenSingleIdx === 'number') setBusyIdx(opts.regenSingleIdx);
 
@@ -339,7 +338,6 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
         const j: BuildResp = await r.json();
         if (!j.ok) {
           const msg = j.error || `HTTP ${r.status}`;
-          setError(msg);
           toast.error(msg);
           return;
         }
@@ -414,7 +412,6 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
           toast.error(`task 反写失败：${j.taskUpdateError}`);
         }
       } catch (e) {
-        setError((e as Error).message);
         toast.error((e as Error).message);
       } finally {
         setBusy(false);
@@ -744,11 +741,7 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
               )}
             </div>
             {busy && <ProgressBar mode="indeterminate" label={stage || '处理中…'} />}
-            {error && (
-              <div className="text-xs bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 rounded p-2">
-                {error}
-              </div>
-            )}
+            {/* v0.11 B4: 红色错误块移除，错误统一走全局 toast.error；保留 stylePromptErr 因其为 ② 步状态展示 */}
           </div>
 
           {/* ① 文案预览 */}

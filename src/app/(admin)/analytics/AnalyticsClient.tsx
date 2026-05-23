@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CATEGORIES, PLATFORMS, PLATFORM_LABEL } from '@/lib/constants';
+import { toast } from '@/lib/toast';
 
 interface MetricRow {
   id: string;
@@ -77,7 +78,6 @@ export default function AnalyticsClient({
   const router = useRouter();
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   function up<K extends keyof FormState>(k: K, v: FormState[K]) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -86,7 +86,6 @@ export default function AnalyticsClient({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    setError(null);
     try {
       const res = await fetch('/api/metrics', {
         method: 'POST',
@@ -96,9 +95,11 @@ export default function AnalyticsClient({
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || '保存失败');
       setForm({ ...EMPTY_FORM, date: form.date, platform: form.platform });
+      toast.success('已保存');
       router.refresh();
     } catch (e) {
-      setError((e as Error).message);
+      // v0.11 B4: setError → toast.error 统一错误展示
+      toast.error((e as Error).message);
     } finally {
       setSaving(false);
     }
@@ -106,13 +107,15 @@ export default function AnalyticsClient({
 
   async function del(id: string) {
     if (!confirm('确定删除该条数据？')) return;
-    const res = await fetch(`/api/metrics/${id}`, { method: 'DELETE' });
-    const j = await res.json();
-    if (!res.ok || !j.ok) {
-      alert(j.error || '删除失败');
-      return;
+    try {
+      const res = await fetch(`/api/metrics/${id}`, { method: 'DELETE' });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '删除失败');
+      toast.success('已删除');
+      router.refresh();
+    } catch (e) {
+      toast.error((e as Error).message);
     }
-    router.refresh();
   }
 
   return (
@@ -205,11 +208,6 @@ export default function AnalyticsClient({
                 onChange={(e) => up('notes', e.target.value)}
               />
             </div>
-            {error && (
-              <div className="col-span-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
-                {error}
-              </div>
-            )}
             <div className="col-span-2">
               <button type="submit" disabled={saving} className="btn-primary w-full">
                 {saving ? '保存中...' : '保存数据'}
@@ -376,11 +374,13 @@ function Stat({
   tone?: 'gray' | 'green';
 }) {
   return (
-    <div className="rounded-md bg-white border border-slate-200 p-4">
-      <div className="text-xs text-slate-500">{label}</div>
+    <div className="rounded-md bg-white border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
+      <div className="text-xs text-slate-500 dark:text-slate-400">{label}</div>
       <div
         className={`text-2xl font-semibold mt-1 ${
-          tone === 'green' ? 'text-emerald-600' : 'text-slate-700'
+          tone === 'green'
+            ? 'text-emerald-600 dark:text-emerald-400'
+            : 'text-slate-700 dark:text-slate-200'
         }`}
       >
         {value}
@@ -432,7 +432,13 @@ function TitleList({
         <ol className="list-decimal pl-5 space-y-1 text-sm">
           {rows.map((r, i) => (
             <li key={i}>
-              <span className={tone === 'green' ? 'text-emerald-700' : 'text-red-700'}>
+              <span
+                className={
+                  tone === 'green'
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : 'text-red-700 dark:text-red-400'
+                }
+              >
                 {r.title}
               </span>
               <span className="ml-2 text-xs text-slate-400">

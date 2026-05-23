@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { copyAll } from '@/lib/clipboard';
+import { toast } from '@/lib/toast';
 
 interface RefinedItem {
   style: string;
@@ -21,14 +22,12 @@ export default function TitleRefiner({ title, platform, onSelect }: Props) {
   const [loading, setLoading] = useState(false);
   const [versions, setVersions] = useState<Version[]>([]);
   const [compareMode, setCompareMode] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const current = versions.length > 0 ? versions[versions.length - 1] : [];
   const previous = versions.length >= 2 ? versions[versions.length - 2] : null;
 
   async function refine() {
     setLoading(true);
-    setError(null);
     try {
       const res = await fetch('/api/title/refine', {
         method: 'POST',
@@ -40,16 +39,11 @@ export default function TitleRefiner({ title, platform, onSelect }: Props) {
       setVersions((arr) => [...arr, j.refined as Version]);
       setCompareMode(false);
     } catch (e) {
-      setError((e as Error).message);
+      // v0.11 B4: setError → toast.error 统一错误展示
+      toast.error((e as Error).message);
     } finally {
       setLoading(false);
     }
-  }
-
-  function styleToCurr(items: Version): Map<string, string> {
-    const m = new Map<string, string>();
-    for (const r of items) m.set(r.style, r.title);
-    return m;
   }
 
   return (
@@ -75,27 +69,21 @@ export default function TitleRefiner({ title, platform, onSelect }: Props) {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="font-semibold">✨ 标题打磨器</h3>
-            <div className="text-xs text-slate-500">原标题：</div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">原标题：</div>
             <div className="text-sm bg-slate-50 dark:bg-slate-800 p-2.5 rounded">
               {title}
             </div>
 
             {loading && (
-              <div className="text-center py-6 text-sm text-slate-500">
+              <div className="text-center py-6 text-sm text-slate-500 dark:text-slate-400">
                 AI 改写中...
-              </div>
-            )}
-
-            {error && (
-              <div className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 rounded p-2">
-                {error}
               </div>
             )}
 
             {!loading && current.length > 0 && !compareMode && (
               <div className="space-y-2">
                 {versions.length >= 2 && (
-                  <div className="text-xs text-slate-500">
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
                     已生成 {versions.length} 版，可点击「对比上一版」。
                   </div>
                 )}

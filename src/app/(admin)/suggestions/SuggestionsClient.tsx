@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { PLATFORM_LABEL } from '@/lib/constants';
+import { toast } from '@/lib/toast';
 
 interface Suggestion {
   summary?: string;
@@ -25,19 +26,19 @@ export default function SuggestionsClient({
     initial?.createdAt ?? null,
   );
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   async function regenerate() {
     setLoading(true);
-    setError(null);
     try {
       const res = await fetch('/api/suggestions/generate', { method: 'POST' });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || '生成失败');
       setData(j.suggestion);
       setCreatedAt(new Date().toISOString());
+      toast.success('AI 建议已生成');
     } catch (e) {
-      setError((e as Error).message);
+      // v0.11 B4: setError → toast.error 统一错误展示
+      toast.error((e as Error).message);
     } finally {
       setLoading(false);
     }
@@ -49,7 +50,7 @@ export default function SuggestionsClient({
         <div className="card-body flex items-center justify-between flex-wrap gap-3">
           <div>
             <h2 className="font-semibold">AI 复盘建议</h2>
-            <div className="text-xs text-slate-500 mt-0.5">
+            <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
               基于最近 7 天 / 30 天的数据。每次重新生成会调用 LLM API。
             </div>
             {createdAt && (
@@ -67,12 +68,6 @@ export default function SuggestionsClient({
           </button>
         </div>
       </div>
-
-      {error && (
-        <div className="card border-red-200 bg-red-50">
-          <div className="card-body text-sm text-red-700">{error}</div>
-        </div>
-      )}
 
       {!data && !loading && (
         <div className="card">
@@ -180,7 +175,7 @@ function ListCard({
             {items.map((it, i) => (
               <li key={i} className="flex items-start gap-2">
                 <span className={cls[tone] + ' mt-0.5'}>{i + 1}</span>
-                <span className="text-slate-700 flex-1">{it}</span>
+                <span className="text-slate-700 dark:text-slate-200 flex-1">{it}</span>
               </li>
             ))}
           </ul>

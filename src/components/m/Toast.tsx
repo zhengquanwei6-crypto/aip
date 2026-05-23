@@ -18,8 +18,9 @@ export function useToast() {
   const c = useContext(Ctx);
   if (!c) {
     return {
-      show: (text: string) => {
-        if (typeof window !== 'undefined') console.log('[toast]', text);
+      // v0.11 B4: 移除 console.log debug 输出，回退仅记忆调用（不阻塞功能，前端可用全局 toast 接管）
+      show: (_text: string) => {
+        /* 无 Provider 时的安全空实现 */
       },
     };
   }

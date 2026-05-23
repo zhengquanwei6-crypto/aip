@@ -12,11 +12,12 @@
  *   - 右侧滑出抽屉，宽度 420px（移动端全屏）
  *   - 简单 user/assistant 气泡，不做流式
  *   - 第一条消息可以是 prefill（用 prefill prop）
- *   - 错误用 inline error block 显示
+ *   - 错误用全局 toast（v0.11 B4 起统一），不再用 inline error block
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { X, Send, Loader2 } from 'lucide-react';
+import { toast } from '@/lib/toast';
 
 interface ChatTurn {
   role: 'user' | 'assistant';
@@ -53,7 +54,6 @@ export function AgentDrawer({
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState(prefill ?? '');
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentAuto = useRef(false);
 
@@ -83,7 +83,6 @@ export function AgentDrawer({
     setTurns(newTurns);
     setInput('');
     setPending(true);
-    setError(null);
     try {
       const r = await fetch(`/api/agents/${slug}/chat`, {
         method: 'POST',
@@ -97,7 +96,8 @@ export function AgentDrawer({
       if (!j.ok) throw new Error(j.error || `HTTP ${r.status}`);
       setTurns([...newTurns, { role: 'assistant', content: j.content, model: j.model }]);
     } catch (e) {
-      setError((e as Error).message);
+      // v0.11 B4: setError → toast.error 统一错误展示
+      toast.error(`请求失败：${(e as Error).message}`);
     } finally {
       setPending(false);
     }
@@ -125,7 +125,7 @@ export function AgentDrawer({
             <span className="text-xl">{icon ?? '🤖'}</span>
             <div>
               <div className="font-semibold">{title ?? slug}</div>
-              <div className="text-xs text-slate-500">DO router · 实时回答</div>
+              <div className="text-xs text-slate-500 dark:text-slate-400">DO router · 实时回答</div>
             </div>
           </div>
           <button
@@ -139,7 +139,7 @@ export function AgentDrawer({
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
           {turns.length === 0 && !pending && (
-            <div className="text-sm text-slate-500 text-center mt-12 px-6">
+            <div className="text-sm text-slate-500 dark:text-slate-400 text-center mt-12 px-6">
               直接提问吧。比如：
               <ul className="mt-2 space-y-1 text-left text-xs list-disc list-inside">
                 <li>「为什么我的 4router-gpt-image-2 报渠道不存在？」</li>
@@ -162,13 +162,8 @@ export function AgentDrawer({
             </div>
           ))}
           {pending && (
-            <div className="mr-8 bg-slate-50 dark:bg-slate-800/60 rounded-lg px-3 py-2 text-sm text-slate-500 inline-flex items-center gap-2">
+            <div className="mr-8 bg-slate-50 dark:bg-slate-800/60 rounded-lg px-3 py-2 text-sm text-slate-500 dark:text-slate-400 inline-flex items-center gap-2">
               <Loader2 size={14} className="animate-spin" /> 思考中…
-            </div>
-          )}
-          {error && (
-            <div className="text-xs bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 rounded p-2">
-              请求失败：{error}
             </div>
           )}
         </div>
