@@ -1,0 +1,337 @@
+/**
+ * v0.11 B3 · /dashboard 单 fetch 聚合器（共享 SSR 与 HTTP 路由）
+ *
+ * 同一份逻辑被 /api/dashboard/summary 路由 + (admin)/dashboard/page.tsx (server component) 共用：
+ *   - SSR 时直接 await buildDashboardSummary()，避免内部 HTTP 自调用
+ *   - HTTP 路由薄封装一层，给 Chrome 扩展 / 外部脚本 / 未来 Agent 用
+ *
+ * 0 LLM/IMAGE 消耗：仅 prisma 计数 + AIOutput 历史扫描 + 文件 stat。
+ * 不修改任何已有 schema / setting / route 行为。
+ */
+
+import { prisma } from '@/lib/db';
+import { summarizePool } from '@/lib/ai/keys';
+import { stat } from 'node:fs/promises';
+import { AGENTS } from '@/lib/agent-types';
+
+export interface DashboardSummaryToday {
+  /** YYYY-MM-DD（Asia/Shanghai） */
+  date: string;
+  /** 周X（中文短写，如 "周六"） */
+  weekday: string;
+  /** 1..7（周一=1，与 Schedule.dayOfWeek 一致） */
+  dayOfWeek: number;
+  /** 今日待办（schedule.tasks where status=pending）的数量 */
+  pendingTasksCount: number;
+}
+
+export interface DashboardSummaryKpi {
+  pendingTasks: number;
+  generatedTasks: number;
+  publishedTasks: number;
+  aioutputs: number;
+  assets: number;
+  clients: number;
+}
+
+export interface TodayTaskItem {
+  id: string;
+  title: string;
+  platform: string;
+  status: string;
+  publishTime: string;
+  contentType: string;
+  category: string;
+}
+
+export interface RecentAIOutputItem {
+  id: string;
+  type: string;
+  platform: string | null;
+  summary: string;
+  createdAt: string;
+}
+
+export interface DashboardSummarySystem {
+  uptimeMs: number;
+  version: string;
+  containerStatus: 'running' | 'unknown';
+  /** SQLite 文件大小（字节）；读不到时 null */
+  dbSize: number | null;
+  apiKeyPool: {
+    llm: { total: number; active: number; lastError: string | null };
+    image: { total: number; active: number; lastError: string | null };
+  };
+  agentRoutes: number;
+  publishDirectorStats: { total: number; success: number; fail: number };
+  recentFailures: { llm: string | null; image: string | null };
+}
+
+export interface DashboardSummary {
+  ok: true;
+  today: DashboardSummaryToday;
+  kpi: DashboardSummaryKpi;
+  todayTasks: TodayTaskItem[];
+  recentAIOutputs: RecentAIOutputItem[];
+  system: DashboardSummarySystem;
+}
+
+const APP_VERSION = process.env.APP_VERSION || 'v0.11';
+const DB_PATH =
+  (process.env.DATABASE_URL || '').replace(/^file:/, '').trim() || '/data/dev.db';
+
+/** Asia/Shanghai 今日信息（容器一般跑 UTC，按用户实际时区显示） */
+function getShanghaiTodayInfo(): {
+  date: string;
+  weekday: string;
+  dayOfWeek: number;
+} {
+  const now = new Date();
+  // YYYY-MM-DD（en-CA 输出 ISO 格式）
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+
+  // 周X（中文短）
+  const longWk = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    weekday: 'long',
+  }).format(now);
+  const weekday = longWk.replace(/^星期/, '周');
+
+  // dayOfWeek 1..7（周一=1）
+  const enWk = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    weekday: 'short',
+  }).format(now);
+  const map: Record<string, number> = {
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+    Sun: 7,
+  };
+  const dayOfWeek = map[enWk] ?? 1;
+
+  return { date, weekday, dayOfWeek };
+}
+
+function shortFailure(
+  input: string | null | undefined,
+  output: string | null | undefined,
+): string | null {
+  if (!output) return null;
+  const merged = (output || input || '').slice(0, 240);
+  return merged.replace(/sk-[A-Za-z0-9_-]{6,}/g, 'sk-***').slice(0, 120);
+}
+
+async function readRecentFailures(): Promise<{
+  llm: string | null;
+  image: string | null;
+}> {
+  const out = { llm: null as string | null, image: null as string | null };
+  try {
+    const rows = await prisma.aIOutput.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    for (const r of rows) {
+      try {
+        const o = JSON.parse(r.output);
+        const looksFail =
+          !!o?.error ||
+          (Array.isArray(o?.urls) && o.urls.length === 0);
+        if (!looksFail) continue;
+        if (r.type === 'text' && !out.llm) out.llm = shortFailure(r.input, r.output);
+        else if (r.type === 'image' && !out.image)
+          out.image = shortFailure(r.input, r.output);
+        if (out.llm && out.image) break;
+      } catch {
+        // not JSON → treat as success
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return out;
+}
+
+async function readPublishDirectorStats(): Promise<{
+  total: number;
+  success: number;
+  fail: number;
+}> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const out = { total: 0, success: 0, fail: 0 };
+  try {
+    const rows = await prisma.aIOutput.findMany({
+      where: { createdAt: { gte: since } },
+      select: { input: true, output: true },
+      take: 500,
+    });
+    for (const r of rows) {
+      if (!r.input || !r.input.includes('"via":"publish-director"')) continue;
+      out.total++;
+      let isFail = false;
+      try {
+        const o = JSON.parse(r.output);
+        if (o?.error) isFail = true;
+        if (
+          Array.isArray(o?.imageErrors) &&
+          o.imageErrors.length > 0 &&
+          (!Array.isArray(o?.assets) || o.assets.every((a: any) => !a?.url))
+        ) {
+          isFail = true;
+        }
+      } catch {
+        isFail = true;
+      }
+      if (isFail) out.fail++;
+      else out.success++;
+    }
+  } catch {
+    // ignore
+  }
+  return out;
+}
+
+async function readDbSize(): Promise<number | null> {
+  try {
+    const s = await stat(DB_PATH);
+    return s.size;
+  } catch {
+    return null;
+  }
+}
+
+/** 把 AIOutput 一行变成卡片用的 platform + summary（兼容多种历史 output 形态） */
+function summarizeAIOutput(aio: {
+  type: string;
+  input: string | null;
+  output: string | null;
+}): { platform: string | null; summary: string } {
+  let platform: string | null = null;
+  let summary = '';
+  try {
+    const inp = JSON.parse(aio.input ?? '');
+    if (typeof inp?.platform === 'string') platform = inp.platform;
+  } catch {
+    /* ignore */
+  }
+  try {
+    const out = JSON.parse(aio.output ?? '');
+    if (typeof out?.summary === 'string') summary = out.summary;
+    else if (Array.isArray(out?.titles) && typeof out.titles[0] === 'string')
+      summary = out.titles[0];
+    else if (typeof out?.coverText === 'string') summary = out.coverText;
+    else if (typeof out?.body === 'string') summary = out.body.slice(0, 80);
+    else if (typeof out?.prompt === 'string') summary = out.prompt;
+    else if (Array.isArray(out?.urls) && typeof out.urls[0] === 'string')
+      summary = `🖼️ ${out.urls.length} 张图片`;
+  } catch {
+    summary = (aio.output ?? '').slice(0, 80);
+  }
+  if (!summary) summary = `${aio.type} 输出`;
+  return { platform, summary: summary.slice(0, 120) };
+}
+
+export async function buildDashboardSummary(): Promise<DashboardSummary> {
+  const todayInfo = getShanghaiTodayInfo();
+
+  // schedule.tasks（按 publishTime asc）→ 今日待办
+  const schedule = await prisma.schedule.findUnique({
+    where: { dayOfWeek: todayInfo.dayOfWeek },
+    include: { tasks: { orderBy: { publishTime: 'asc' } } },
+  });
+  const todayTasksAll = schedule?.tasks ?? [];
+  const todayPendingCount = todayTasksAll.filter((t) => t.status === 'pending')
+    .length;
+
+  const [
+    pendingTasks,
+    generatedTasks,
+    publishedTasks,
+    aioutputs,
+    assets,
+    clients,
+    recentAioRows,
+    apiKeyPoolLlm,
+    apiKeyPoolImage,
+    publishDirectorStats,
+    recentFailures,
+    dbSize,
+  ] = await Promise.all([
+    prisma.task.count({ where: { status: 'pending' } }),
+    prisma.task.count({ where: { status: 'generated' } }),
+    prisma.task.count({ where: { status: 'published' } }),
+    prisma.aIOutput.count(),
+    prisma.asset.count(),
+    prisma.client.count(),
+    prisma.aIOutput.findMany({ orderBy: { createdAt: 'desc' }, take: 5 }),
+    summarizePool('llm'),
+    summarizePool('image'),
+    readPublishDirectorStats(),
+    readRecentFailures(),
+    readDbSize(),
+  ]);
+
+  const todayTasks: TodayTaskItem[] = todayTasksAll.slice(0, 5).map((t) => ({
+    id: t.id,
+    title: t.title,
+    platform: t.platform,
+    status: t.status,
+    publishTime: t.publishTime,
+    contentType: t.contentType,
+    category: t.category,
+  }));
+
+  const recentAIOutputs: RecentAIOutputItem[] = recentAioRows.map((r) => {
+    const s = summarizeAIOutput({
+      type: r.type,
+      input: r.input ?? null,
+      output: r.output ?? null,
+    });
+    return {
+      id: r.id,
+      type: r.type,
+      platform: s.platform,
+      summary: s.summary,
+      createdAt: r.createdAt.toISOString(),
+    };
+  });
+
+  return {
+    ok: true,
+    today: {
+      date: todayInfo.date,
+      weekday: todayInfo.weekday,
+      dayOfWeek: todayInfo.dayOfWeek,
+      pendingTasksCount: todayPendingCount,
+    },
+    kpi: {
+      pendingTasks,
+      generatedTasks,
+      publishedTasks,
+      aioutputs,
+      assets,
+      clients,
+    },
+    todayTasks,
+    recentAIOutputs,
+    system: {
+      uptimeMs: Math.round(process.uptime() * 1000),
+      version: APP_VERSION,
+      containerStatus: 'running',
+      dbSize,
+      apiKeyPool: { llm: apiKeyPoolLlm, image: apiKeyPoolImage },
+      agentRoutes: AGENTS.length,
+      publishDirectorStats,
+      recentFailures,
+    },
+  };
+}
