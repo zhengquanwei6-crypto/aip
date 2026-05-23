@@ -9,6 +9,10 @@ import { NextRequest, NextResponse } from 'next/server';
  * - cookie view_mode=desktop 优先级最高：即使是 /m/* 也会跳出去到对应桌面路径
  * - cookie view_mode=mobile 同样优先于 UA：桌面 UA 仍会被强制带到 /m
  * - 这样 /m 页面的"桌面版"按钮（写 cookie 后跳 /...）才不会被中间件再拽回 /m
+ *
+ * v0.11 B2 清理：
+ * - 移除 §九 #5 中标记的 `(REMAP_TO_MOBILE_HOME.has(pathname) ? '/m' : (REMAP_TO_MOBILE_HOME.has(pathname) ? '/m' : `/m${pathname}`))`
+ *   死代码嵌套（两层条件相同，外层 false 时内层永远 false），简化为单层三元，行为等价。
  */
 
 const MOBILE_RE =
@@ -27,6 +31,11 @@ function stripMobilePrefix(p: string): string {
   if (p === '/m') return '/dashboard';
   if (p.startsWith('/m/')) return p.slice(2); // /m/today -> /today
   return p;
+}
+
+/** v0.11 B2: 单点判断"桌面路径 → 对应移动端路径"，替换原来的双层三元嵌套 */
+function toMobileTarget(pathname: string): string {
+  return REMAP_TO_MOBILE_HOME.has(pathname) ? '/m' : `/m${pathname}`;
 }
 
 export function middleware(req: NextRequest) {
@@ -67,7 +76,7 @@ export function middleware(req: NextRequest) {
   }
   // ?mobile=1 -> 写 cookie 并跳到 /m
   if (searchParams.get('mobile') === '1') {
-    const target = isMobilePath(pathname) ? pathname : (REMAP_TO_MOBILE_HOME.has(pathname) ? '/m' : `/m${pathname}`);
+    const target = isMobilePath(pathname) ? pathname : toMobileTarget(pathname);
     const res = NextResponse.redirect(new URL(target, req.url));
     res.cookies.set('view_mode', 'mobile', {
       maxAge: 60 * 60 * 24 * 365,
@@ -90,9 +99,7 @@ export function middleware(req: NextRequest) {
   // cookie=mobile 时：保持 /m 路径或跳过去
   if (cookieMode === 'mobile') {
     if (isMobilePath(pathname)) return NextResponse.next();
-    return NextResponse.redirect(
-      new URL((REMAP_TO_MOBILE_HOME.has(pathname) ? '/m' : (REMAP_TO_MOBILE_HOME.has(pathname) ? '/m' : `/m${pathname}`)), req.url),
-    );
+    return NextResponse.redirect(new URL(toMobileTarget(pathname), req.url));
   }
 
   // 已经在 /m 下且没有 cookie -> 放行
@@ -102,9 +109,7 @@ export function middleware(req: NextRequest) {
 
   // 自动按 UA 判断
   if (MOBILE_RE.test(ua)) {
-    return NextResponse.redirect(
-      new URL((REMAP_TO_MOBILE_HOME.has(pathname) ? '/m' : (REMAP_TO_MOBILE_HOME.has(pathname) ? '/m' : `/m${pathname}`)), req.url),
-    );
+    return NextResponse.redirect(new URL(toMobileTarget(pathname), req.url));
   }
   return NextResponse.next();
 }

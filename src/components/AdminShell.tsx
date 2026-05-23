@@ -142,13 +142,16 @@ export default function AdminShell({
   const title = currentNav?.label ?? '平面设计接单 AI 运营工作台';
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 lg:flex">
+    // v0.11 B2: lg:items-start lets sticky aside align to top of flex container
+    // (without explicit alignment, default `stretch` interferes with sticky positioning).
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 lg:flex lg:items-start">
+      {/* v0.11 B2: 桌面 sidebar 自身 sticky+独立 scroll，修 22/22 sidebar drift */}
       <SidebarContent
         pathname={pathname}
         collapsed={collapsed}
         onToggleCollapsed={toggleCollapsed}
         className={clsx(
-          'hidden lg:flex lg:flex-col lg:flex-shrink-0 lg:border-r lg:border-slate-200 lg:bg-white dark:lg:bg-slate-900 dark:lg:border-slate-800 transition-[width] duration-200',
+          'hidden lg:sticky lg:top-0 lg:h-dvh lg:flex lg:flex-col lg:flex-shrink-0 lg:overflow-y-auto lg:border-r lg:border-slate-200 lg:bg-white dark:lg:bg-slate-900 dark:lg:border-slate-800 transition-[width] duration-200',
           collapsed ? 'lg:w-14' : 'lg:w-56',
         )}
       />
@@ -176,8 +179,8 @@ export default function AdminShell({
         />
       </div>
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 sm:px-6 flex items-center gap-3 sticky top-0 z-30">
+      <div className="flex-1 flex flex-col min-w-0 w-full">
+        <header className="h-14 bg-white/90 dark:bg-slate-900/90 backdrop-blur border-b border-slate-200 dark:border-slate-800 px-3 sm:px-6 flex items-center gap-3 sticky top-0 z-30">
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -200,7 +203,12 @@ export default function AdminShell({
           </div>
         </header>
 
-        <main className="p-3 sm:p-4 lg:p-6 flex-1">{children}</main>
+        {/* v0.11 B2: 主区移除自身 padding，改由内层 max-w-[1400px] 包装统一 4K 屏幕宽度上限 + 24px gutter */}
+        <main className="flex-1 overflow-x-hidden">
+          <div className="mx-auto w-full max-w-[1400px] px-3 sm:px-4 lg:px-6 py-3 sm:py-4 lg:py-6">
+            {children}
+          </div>
+        </main>
       </div>
     </div>
   );
@@ -269,6 +277,7 @@ function SidebarContent({
                 href={it.href}
                 title={it.label}
                 aria-label={it.label}
+                aria-current={active ? 'page' : undefined}
                 className={clsx(
                   'flex items-center justify-center mx-2 my-0.5 h-9 rounded text-sm',
                   active
@@ -284,6 +293,7 @@ function SidebarContent({
             <Link
               key={it.href}
               href={it.href}
+              aria-current={active ? 'page' : undefined}
               className={clsx(
                 'flex items-center gap-2 px-5 py-2.5 text-sm border-l-2',
                 active

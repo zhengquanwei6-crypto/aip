@@ -80,9 +80,10 @@ export default function MobileShell({
 
   return (
     <ToastProvider>
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col pb-16">
+      {/* v0.11 B2: pb 含 safe-area-inset-bottom，避免 iPhone 全面屏 home indicator 盖住底栏 */}
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col pb-[calc(theme(spacing.16)+env(safe-area-inset-bottom))]">
         {/* 顶栏 */}
-        <header className="h-12 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 flex items-center sticky top-0 z-30">
+        <header className="h-12 bg-white/90 dark:bg-slate-900/90 backdrop-blur border-b border-slate-200 dark:border-slate-800 px-3 flex items-center sticky top-0 z-30">
           {showBack ? (
             <button
               onClick={() => router.back()}
@@ -114,8 +115,8 @@ export default function MobileShell({
           {children}
         </main>
 
-        {/* 底部 Tab Bar */}
-        <nav className="fixed bottom-0 left-0 right-0 h-14 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 grid grid-cols-5 z-30">
+        {/* v0.11 B2: 底部 Tab Bar 加 safe-area inner padding（h-14 视觉高度不变，padding 在内部，纯保护）  */}
+        <nav className="fixed bottom-0 left-0 right-0 h-14 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 grid grid-cols-5 z-30 pb-[env(safe-area-inset-bottom)]">
           {TABS.map((t) => {
             const active = pathname === t.href || (t.href !== '/m' && pathname.startsWith(t.href));
             return (
