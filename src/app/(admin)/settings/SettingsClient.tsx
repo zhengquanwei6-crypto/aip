@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from '@/lib/toast';
 
@@ -27,6 +27,51 @@ interface SecretMeta {
   length: number;
 }
 
+/** v0.11 B1 · API Key 池条目（GET 已脱敏，apiKey:'' + isSet/length）*/
+interface PoolKey {
+  id: string;
+  provider: 'llm' | 'image';
+  label: string;
+  baseUrl: string;
+  apiKey: string;       // 永远 ''
+  isSet: boolean;
+  length: number;
+  model: string;
+  active: boolean;
+  priority: number;
+  lastUsedAt: string | null;
+  lastError: string | null;
+  consecutiveErrors: number;
+  totalRequests: number;
+  totalErrors: number;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface DraftKey {
+  id?: string;
+  provider: 'llm' | 'image';
+  label: string;
+  baseUrl: string;
+  apiKey: string;       // 用户编辑时输入新值；编辑模式下空字符串=保留原值
+  model: string;
+  active: boolean;
+  priority: number;
+  notes: string;
+}
+
+const EMPTY_DRAFT: DraftKey = {
+  provider: 'llm',
+  label: '',
+  baseUrl: '',
+  apiKey: '',
+  model: '',
+  active: true,
+  priority: 0,
+  notes: '',
+};
+
 export default function SettingsClient({
   initial,
   hasEnvLLMKey,
@@ -49,6 +94,170 @@ export default function SettingsClient({
   const [seeding, setSeeding] = useState(false);
   const [adapterList, setAdapterList] = useState(adapters);
   const [testing, setTesting] = useState<'llm' | 'image' | null>(null);
+
+  // === v0.11 B1 · API Key 池 ===
+  const [pool, setPool] = useState<PoolKey[]>([]);
+  const [poolLoading, setPoolLoading] = useState(false);
+  const [poolErr, setPoolErr] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [draft, setDraft] = useState<DraftKey>(EMPTY_DRAFT);
+  const [draftEditMode, setDraftEditMode] = useState(false); // false=新建 true=编辑
+  const [keyBusy, setKeyBusy] = useState<string | null>(null); // 行上正在跑的操作 id
+  const [draftSaving, setDraftSaving] = useState(false);
+
+  async function refreshPool() {
+    setPoolLoading(true);
+    setPoolErr(null);
+    try {
+      const res = await fetch('/api/settings/keys', { cache: 'no-store' });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '加载失败');
+      setPool(j.items as PoolKey[]);
+    } catch (e) {
+      setPoolErr((e as Error).message);
+    } finally {
+      setPoolLoading(false);
+    }
+  }
+  useEffect(() => {
+    void refreshPool();
+  }, []);
+
+  function openCreate(provider: 'llm' | 'image') {
+    setDraft({ ...EMPTY_DRAFT, provider });
+    setDraftEditMode(false);
+    setDrawerOpen(true);
+  }
+  function openEdit(row: PoolKey) {
+    setDraft({
+      id: row.id,
+      provider: row.provider,
+      label: row.label,
+      baseUrl: row.baseUrl,
+      apiKey: '', // 编辑时空 = 保留原值
+      model: row.model,
+      active: row.active,
+      priority: row.priority,
+      notes: row.notes ?? '',
+    });
+    setDraftEditMode(true);
+    setDrawerOpen(true);
+  }
+  function closeDrawer() {
+    setDrawerOpen(false);
+  }
+
+  async function saveDraft() {
+    if (!draft.label.trim()) return toast.error('请填 label');
+    if (!draft.baseUrl.trim()) return toast.error('请填 baseUrl');
+    if (!draft.model.trim()) return toast.error('请填 model');
+    if (!draftEditMode && !draft.apiKey.trim()) return toast.error('请填 apiKey');
+
+    setDraftSaving(true);
+    try {
+      let res: Response;
+      if (draftEditMode && draft.id) {
+        // PUT：apiKey 留空表示保留原值
+        const payload: Record<string, unknown> = {
+          provider: draft.provider,
+          label: draft.label,
+          baseUrl: draft.baseUrl,
+          model: draft.model,
+          active: draft.active,
+          priority: draft.priority,
+          notes: draft.notes,
+        };
+        if (draft.apiKey.trim() !== '') payload.apiKey = draft.apiKey;
+        res = await fetch(`/api/settings/keys/${draft.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch('/api/settings/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(draft),
+        });
+      }
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '保存失败');
+      toast.success(draftEditMode ? '已更新' : '已新增');
+      closeDrawer();
+      await refreshPool();
+    } catch (e) {
+      toast.error('保存失败：' + (e as Error).message);
+    } finally {
+      setDraftSaving(false);
+    }
+  }
+
+  async function testKey(id: string) {
+    setKeyBusy(id);
+    try {
+      const res = await fetch(`/api/settings/keys/${id}/test`, { method: 'POST' });
+      const j = await res.json();
+      if (j.ok) toast.success(j.message || '连通性 OK');
+      else toast.error(j.error || '连通性失败');
+      await refreshPool();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setKeyBusy(null);
+    }
+  }
+  async function promoteKey(id: string) {
+    setKeyBusy(id);
+    try {
+      const res = await fetch(`/api/settings/keys/${id}/promote`, { method: 'POST' });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '失败');
+      toast.success(`已置顶（priority=${j.priority}）`);
+      await refreshPool();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setKeyBusy(null);
+    }
+  }
+  async function deleteKey(id: string, label: string) {
+    if (!confirm(`确认删除 key「${label}」？此操作不可恢复。`)) return;
+    setKeyBusy(id);
+    try {
+      const res = await fetch(`/api/settings/keys/${id}`, { method: 'DELETE' });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '删除失败');
+      toast.success('已删除');
+      await refreshPool();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setKeyBusy(null);
+    }
+  }
+  async function toggleActive(row: PoolKey) {
+    setKeyBusy(row.id);
+    try {
+      const res = await fetch(`/api/settings/keys/${row.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: !row.active, resetErrors: !row.active }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '失败');
+      toast.success(row.active ? '已停用' : '已启用（错误计数已重置）');
+      await refreshPool();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setKeyBusy(null);
+    }
+  }
+
+  function maskUrl(u: string): string {
+    if (!u) return '';
+    return u.replace(/^https?:\/\/([^/]+).*$/, 'https://$1');
+  }
 
   function up<K extends keyof Form>(k: K, v: Form[K]) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -206,8 +415,174 @@ export default function SettingsClient({
     );
   }
 
+  // === API Key 池小组件 ===
+  function PoolTable({ provider }: { provider: 'llm' | 'image' }) {
+    const rows = pool.filter((r) => r.provider === provider);
+    return (
+      <div className="overflow-x-auto">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>label</th>
+              <th>baseUrl</th>
+              <th>model</th>
+              <th>priority</th>
+              <th>状态</th>
+              <th>统计</th>
+              <th className="text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={7} className="text-center text-slate-400 py-6">
+                  暂无 {provider === 'llm' ? 'LLM' : 'IMAGE'} key，
+                  <button onClick={() => openCreate(provider)} className="text-brand-600 hover:underline">
+                    新增第一条
+                  </button>
+                </td>
+              </tr>
+            )}
+            {rows.map((r) => (
+              <tr key={r.id} className={r.active ? '' : 'opacity-60'}>
+                <td>
+                  <div className="font-medium">{r.label}</div>
+                  {r.notes ? <div className="text-xs text-slate-400">{r.notes}</div> : null}
+                </td>
+                <td className="text-xs font-mono">{maskUrl(r.baseUrl)}</td>
+                <td className="text-xs font-mono">{r.model}</td>
+                <td>{r.priority}</td>
+                <td>
+                  {r.active ? (
+                    <span className="badge-green">active</span>
+                  ) : (
+                    <span className="badge-gray">disabled</span>
+                  )}
+                  {r.consecutiveErrors > 0 && (
+                    <span className="badge-red ml-1">连错 {r.consecutiveErrors}</span>
+                  )}
+                  {r.lastError ? (
+                    <div className="text-xs text-red-500 mt-1 max-w-[260px] truncate" title={r.lastError}>
+                      {r.lastError}
+                    </div>
+                  ) : null}
+                </td>
+                <td className="text-xs text-slate-500">
+                  {r.totalRequests} 次 / 错 {r.totalErrors}
+                  {r.lastUsedAt ? (
+                    <div className="text-xs text-slate-400">
+                      最近：{new Date(r.lastUsedAt).toLocaleString('zh-CN', { hour12: false })}
+                    </div>
+                  ) : null}
+                </td>
+                <td className="text-right whitespace-nowrap">
+                  <button
+                    disabled={keyBusy === r.id}
+                    onClick={() => openEdit(r)}
+                    className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    disabled={keyBusy === r.id}
+                    onClick={() => testKey(r.id)}
+                    className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
+                  >
+                    测试
+                  </button>
+                  <button
+                    disabled={keyBusy === r.id}
+                    onClick={() => promoteKey(r.id)}
+                    className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
+                  >
+                    置顶
+                  </button>
+                  <button
+                    disabled={keyBusy === r.id}
+                    onClick={() => toggleActive(r)}
+                    className="text-xs text-slate-600 hover:underline disabled:opacity-40 mr-2"
+                  >
+                    {r.active ? '停用' : '启用'}
+                  </button>
+                  <button
+                    disabled={keyBusy === r.id}
+                    onClick={() => deleteKey(r.id, r.label)}
+                    className="text-xs text-red-600 hover:underline disabled:opacity-40"
+                  >
+                    删除
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
+      {/* v0.11 B1 · API Keys 池（顶到顶部） */}
+      <div className="card border-brand-200 dark:border-brand-800">
+        <div className="card-header bg-brand-50/50 dark:bg-brand-900/20 flex-wrap gap-2">
+          <h2 className="font-semibold flex items-center gap-2">
+            <span>🔑</span>
+            <span>API Keys 池</span>
+            <span className="text-xs text-slate-400 font-normal">v0.11 B1</span>
+          </h2>
+          <div className="text-xs text-slate-500">
+            按 priority 升序选取 active=true 的 key。失败连续 3 次自动停用，下次取下一条。
+          </div>
+        </div>
+        <div className="card-body space-y-6">
+          {poolErr && (
+            <div className="text-sm text-red-600">{poolErr}</div>
+          )}
+
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">LLM 文案 keys</h3>
+              <button
+                onClick={() => openCreate('llm')}
+                className="btn-primary text-xs px-3 py-1.5"
+              >
+                新增 LLM key
+              </button>
+            </div>
+            <PoolTable provider="llm" />
+          </section>
+
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">IMAGE 出图 keys</h3>
+              <button
+                onClick={() => openCreate('image')}
+                className="btn-primary text-xs px-3 py-1.5"
+              >
+                新增 IMAGE key
+              </button>
+            </div>
+            <PoolTable provider="image" />
+          </section>
+
+          {poolLoading && (
+            <div className="text-xs text-slate-400">刷新中…</div>
+          )}
+        </div>
+      </div>
+
+      {/* 新增 / 编辑抽屉 */}
+      {drawerOpen && (
+        <KeyDrawer
+          draft={draft}
+          editMode={draftEditMode}
+          saving={draftSaving}
+          onChange={setDraft}
+          onClose={closeDrawer}
+          onSave={saveDraft}
+        />
+      )}
+
       {/* ① 默认图片 adapter（关键链路开关）*/}
       <div className="card border-brand-200 dark:border-brand-800">
         <div className="card-header bg-brand-50/50 dark:bg-brand-900/20">
@@ -263,7 +638,7 @@ export default function SettingsClient({
         {/* LLM */}
         <div className="card">
           <div className="card-header">
-            <h2 className="font-semibold">LLM 文案 API</h2>
+            <h2 className="font-semibold">LLM 文案 API（兼容/Fallback）</h2>
             <button
               onClick={() => test('llm')}
               disabled={testing === 'llm'}
@@ -273,6 +648,10 @@ export default function SettingsClient({
             </button>
           </div>
           <div className="card-body space-y-3">
+            <p className="text-xs text-slate-500 leading-relaxed">
+              v0.11 B1 起优先走「API Keys 池」。当池中无 active=true 的 LLM key 时，
+              系统才会回退到这里的兼容字段（Setting 表）。两者并存，相互不冲突。
+            </p>
             <Field label="API Base URL">
               <input
                 className="input"
@@ -296,7 +675,7 @@ export default function SettingsClient({
         {/* Image API（兼容旧路径）*/}
         <div className="card">
           <div className="card-header">
-            <h2 className="font-semibold">图片 API（fallback）</h2>
+            <h2 className="font-semibold">图片 API（兼容/Fallback）</h2>
             <button
               onClick={() => test('image')}
               disabled={testing === 'image'}
@@ -307,8 +686,8 @@ export default function SettingsClient({
           </div>
           <div className="card-body space-y-3">
             <p className="text-xs text-slate-500 leading-relaxed">
-              当上面"默认 adapter"未选时，生图会走这里的 OpenAI 兼容配置。<br/>
-              选了 adapter 后，下面的字段中只有 <code className="text-xs">IMAGE_API_KEY</code> 仍会被 adapter 复用。
+              当上面"默认 adapter"未选 + API Keys 池无 IMAGE key 时，生图才会走这里的 OpenAI 兼容配置。<br/>
+              选了 adapter 后，下面的字段中只有 <code className="text-xs">IMAGE_API_KEY</code> 仍会被 adapter 复用（且池优先）。
             </p>
             <Field label="API Base URL">
               <input
@@ -334,7 +713,7 @@ export default function SettingsClient({
       <div className="card">
         <div className="card-body flex items-center justify-between flex-wrap gap-3">
           <div className="text-xs text-slate-500 leading-relaxed">
-            说明：API Key 优先读取数据库（本页面填写）的值，若为空则回退到 .env。
+            说明：v0.11 B1 起 API Key 优先级 = ① API Keys 池 → ② 本页 Setting 兼容字段 → ③ .env 同名变量。
             数据库中的 Key 仅写入本机 SQLite。GET 接口已脱敏，不再回传明文。
           </div>
           <div className="flex items-center gap-3">
@@ -359,6 +738,119 @@ function Field({
     <div>
       <label className="label">{label}</label>
       {children}
+    </div>
+  );
+}
+
+/** v0.11 B1 · 新增 / 编辑抽屉 */
+function KeyDrawer({
+  draft,
+  editMode,
+  saving,
+  onChange,
+  onClose,
+  onSave,
+}: {
+  draft: DraftKey;
+  editMode: boolean;
+  saving: boolean;
+  onChange: (d: DraftKey) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  function up<K extends keyof DraftKey>(k: K, v: DraftKey[K]) {
+    onChange({ ...draft, [k]: v });
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
+      <div className="ml-auto w-full max-w-[560px] h-full bg-white dark:bg-slate-900 shadow-2xl flex flex-col relative">
+        <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+          <h3 className="font-semibold">{editMode ? '编辑 API Key' : '新增 API Key'}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+          <Field label="provider">
+            <select
+              className="input"
+              value={draft.provider}
+              onChange={(e) => up('provider', (e.target.value === 'image' ? 'image' : 'llm') as 'llm' | 'image')}
+            >
+              <option value="llm">llm（文案）</option>
+              <option value="image">image（出图）</option>
+            </select>
+          </Field>
+          <Field label="label（自定义名字）">
+            <input
+              className="input"
+              value={draft.label}
+              onChange={(e) => up('label', e.target.value)}
+              placeholder="例：DeepSeek 主用 / 4router 备用"
+            />
+          </Field>
+          <Field label="baseUrl">
+            <input
+              className="input"
+              value={draft.baseUrl}
+              onChange={(e) => up('baseUrl', e.target.value)}
+              placeholder="例：https://inference.do-ai.run/v1"
+            />
+          </Field>
+          <Field label={editMode ? 'apiKey（留空保留原值）' : 'apiKey'}>
+            <input
+              type="password"
+              className="input"
+              autoComplete="new-password"
+              value={draft.apiKey}
+              onChange={(e) => up('apiKey', e.target.value)}
+              placeholder={editMode ? '输入新 key（留空则不改）' : 'sk-...'}
+            />
+          </Field>
+          <Field label="model">
+            <input
+              className="input"
+              value={draft.model}
+              onChange={(e) => up('model', e.target.value)}
+              placeholder="例：deepseek-v4-pro / gpt-image-2"
+            />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="priority（越小越优先）">
+              <input
+                type="number"
+                className="input"
+                value={draft.priority}
+                onChange={(e) => up('priority', Number(e.target.value) || 0)}
+              />
+            </Field>
+            <Field label="启用">
+              <select
+                className="input"
+                value={draft.active ? '1' : '0'}
+                onChange={(e) => up('active', e.target.value === '1')}
+              >
+                <option value="1">启用</option>
+                <option value="0">停用</option>
+              </select>
+            </Field>
+          </div>
+          <Field label="备注（可选）">
+            <textarea
+              className="input"
+              rows={2}
+              value={draft.notes}
+              onChange={(e) => up('notes', e.target.value)}
+              placeholder="例：限速 60 RPM / 低价中转 / 仅备用"
+            />
+          </Field>
+        </div>
+        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
+          <button onClick={onClose} className="btn-secondary text-sm" disabled={saving}>取消</button>
+          <button onClick={onSave} className="btn-primary text-sm" disabled={saving}>
+            {saving ? '保存中…' : (editMode ? '更新' : '新增')}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

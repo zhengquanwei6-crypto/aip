@@ -12,6 +12,11 @@
  * v0.9 size 归一化：上游 gpt-image-2 / dall-e-3 只接受少数固定尺寸，
  *   非标准尺寸（如 1080x1440）会被中转站包装成「渠道不存在」类的误导错误。
  *   这里在调 runAdapter 前按宽高比就近映射，并把映射记录写进 trace.normalizedSize。
+ *
+ * v0.11 B1：adapter 路径取 IMAGE_API_KEY 改为优先池 → 失败回退 Setting 表 IMAGE_API_KEY → .env。
+ *   - 不改 adapter 选择逻辑（IMAGE_DEFAULT_ADAPTER 仍读 Setting）
+ *   - 不改 wire format
+ *   - 调用结果（adapter ok / fail）写回池（markKeySuccess / markKeyError）
  */
 
 import { prisma } from '@/lib/db';
@@ -20,6 +25,12 @@ import { runAdapter } from '@/lib/adapter-runtime';
 import { adapterConfigSchema, adapterKey } from '@/lib/adapter-types';
 import { saveImageFromBase64, saveImageFromUrl } from '@/lib/storage';
 import { normalizeSizeForAdapter, type NormalizedSize } from '@/lib/image-size';
+import {
+  getActiveImageKey,
+  markKeySuccess,
+  markKeyError,
+  type ActiveKey,
+} from '@/lib/ai/keys';
 
 export interface RunOptions {
   prompt: string;
@@ -45,6 +56,10 @@ export interface RunTrace {
   pollHistory?: { ts: number; at?: string; status?: string; ok: boolean }[];
   /** 尺寸归一化记录：上游不支持自由尺寸时记录原始值与映射后的值 */
   normalizedSize?: { from?: string; to: string; reason?: string };
+  /** v0.11 B1：实际取 key 的来源（pool / setting / env） */
+  keySource?: 'pool' | 'setting' | 'env' | 'none';
+  /** v0.11 B1：池命中时的 key label（脱敏，不含明文）*/
+  keyLabel?: string;
 }
 
 export interface RunResult {
@@ -85,6 +100,33 @@ async function loadAdapter(slug: string) {
   } catch {
     return null;
   }
+}
+
+/**
+ * v0.11 B1：取 IMAGE 调用用的 API key，依次：
+ *   1) ApiKey 池 provider='image'
+ *   2) Setting 表 IMAGE_API_KEY
+ *   3) .env IMAGE_API_KEY
+ */
+async function pickImageApiKey(): Promise<{
+  apiKey: string;
+  source: 'pool' | 'setting' | 'env' | 'none';
+  activeKey?: ActiveKey;
+}> {
+  try {
+    const k = await getActiveImageKey();
+    if (k && k.apiKey) {
+      return { apiKey: k.apiKey, source: 'pool', activeKey: k };
+    }
+  } catch {
+    /* fallback */
+  }
+  const cfg = await prisma.setting.findUnique({ where: { key: 'IMAGE_API_KEY' } });
+  const v = cfg?.value || '';
+  if (v) return { apiKey: v, source: 'setting' };
+  const env = process.env.IMAGE_API_KEY || '';
+  if (env) return { apiKey: env, source: 'env' };
+  return { apiKey: '', source: 'none' };
 }
 
 /** 把任意远端/base64 URL 列表本地化保存 */
@@ -148,15 +190,15 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
     if (slug) {
       const adapter = await loadAdapter(slug);
       if (adapter) {
-        // 读 IMAGE_API_KEY
-        const cfg = await prisma.setting.findUnique({ where: { key: 'IMAGE_API_KEY' } });
-        const apiKey = cfg?.value || process.env.IMAGE_API_KEY || '';
+        // v0.11 B1：取 IMAGE_API_KEY（优先池）
+        const picked = await pickImageApiKey();
+        const apiKey = picked.apiKey;
         if (!apiKey) {
           return {
             ok: false, savedUrls: [], via: 'adapter', adapterSlug: slug,
-            error: '未配置 IMAGE_API_KEY，请到设置页填写' + adapterSummary(slug, adapter.baseUrl),
+            error: '未配置 IMAGE API Key，请到设置页（API Keys 池）新增一条 provider=image 的 key' + adapterSummary(slug, adapter.baseUrl),
             durationMs: Date.now() - t0,
-            trace: { via: 'adapter', adapterSlug: slug, baseUrl: adapter.baseUrl, lastError: '未配置 IMAGE_API_KEY' },
+            trace: { via: 'adapter', adapterSlug: slug, baseUrl: adapter.baseUrl, lastError: '未配置 IMAGE_API_KEY', keySource: 'none' },
           };
         }
 
@@ -178,8 +220,14 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
         if (normalized.rewritten) {
           trace.normalizedSize = { from: normalized.original, to: normalized.size, reason: normalized.reason };
         }
+        trace.keySource = picked.source;
+        if (picked.activeKey?.label) trace.keyLabel = picked.activeKey.label;
 
         if (!result.ok || result.imageUrls.length === 0) {
+          // v0.11 B1：失败回写池
+          if (picked.activeKey) {
+            await markKeyError(picked.activeKey.id, result.error ?? trace.lastError ?? 'adapter 返回空结果');
+          }
           return {
             ok: false, savedUrls: [], remoteUrls: result.imageUrls, via: 'adapter',
             adapterSlug: slug,
@@ -187,6 +235,10 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
             durationMs: Date.now() - t0,
             trace,
           };
+        }
+        // 成功
+        if (picked.activeKey) {
+          await markKeySuccess(picked.activeKey.id);
         }
         const savedUrls = await persistImages(result.imageUrls);
         return {
@@ -205,7 +257,7 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
     console.warn('[image-runner] adapter path failed, falling back:', (e as Error).message);
   }
 
-  // 2) Legacy 路径
+  // 2) Legacy 路径（generateImage 内部已含池 + setting 回退 + recordImageResult）
   const legacy = await legacyGenerateImage({ prompt: opts.prompt, size: opts.size, n: opts.n });
   if (!legacy.ok || legacy.images.length === 0) {
     return {

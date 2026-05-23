@@ -221,3 +221,37 @@ model ImagePreset {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
+
+// ============= API Key 池（v0.11 B1 唯一 schema 改） =============
+//
+// 用户原话「不考虑安全性」→ 明文存 SQLite，不加密、不轮换。
+// provider 取 'llm' / 'image'，未来扩展可加 'embedding' / 'rerank' / ...
+//
+// 选 key 逻辑（src/lib/ai/keys.ts）：
+//   SELECT WHERE provider=? AND active=true ORDER BY priority ASC, createdAt ASC LIMIT 1
+//
+// 失败自动 disable：consecutiveErrors >= 3 → active=false
+// 成功自动 reset：    consecutiveErrors=0, lastUsedAt=now
+//
+// 数据迁移（v0.11 B1）：首次启动若 ApiKey 为空且 Setting 有 LLM_API_KEY/IMAGE_API_KEY →
+// 自动 seed 一条（src/lib/seed-api-keys.ts，惰性触发，模块缓存）
+model ApiKey {
+  id                String    @id @default(cuid())
+  provider          String    // 'llm' | 'image'
+  label             String    // 用户起的名字，例 "DeepSeek 主用"
+  baseUrl           String    // https://inference.do-ai.run/v1
+  apiKey            String    // 明文（用户 said 不考虑安全）
+  model             String    // deepseek-v4-pro / gpt-image-2 / ...
+  active            Boolean   @default(true)
+  priority          Int       @default(0)  // 越小越优先
+  lastUsedAt        DateTime?
+  lastError         String?   // 最近一次失败原因
+  consecutiveErrors Int       @default(0)
+  totalRequests     Int       @default(0)
+  totalErrors       Int       @default(0)
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([provider, active, priority])
+}

@@ -1,21 +1,22 @@
 // /api/health · 轻量健康检查
 //
-// v0.8 b6 增强：含 version / startedAt / uptime
+// v0.8 b6：含 version / startedAt / uptime
 //
-// v0.9 Batch 3 (B5) 增强：
-//   - agentRoutes: number  // findAgent 里注册的 agent 总数（含 publish-director / photo-director）
-//   - imageDefaultAdapter: string | null  // 当前 IMAGE_DEFAULT_ADAPTER 实际生效值（脱敏不暴露 key）
-//   - recentFailures: { llm: string | null, image: string | null }  // 最近 1 条 LLM/IMAGE 错误的 input 摘要（不含 key）
-//   - publishDirectorStats: { total, success, fail }  // 最近 24h via:'publish-director' AIOutput 统计
+// v0.9 Batch 3 (B5)：
+//   - agentRoutes / imageDefaultAdapter / recentFailures / publishDirectorStats
 //
-// v0.9.2 Batch 1 增强：
-//   - customPromptCount: number  // 当前 Setting 表里 prompt:* 前缀条目数（即用户在 /prompts 编辑保存了多少条）
+// v0.9.2 Batch 1：
+//   - customPromptCount
+//
+// v0.11 Batch 1：
+//   - apiKeyPool: { llm: { total, active, lastError }, image: { total, active, lastError } }
 //
 // 所有新字段都是可选信息，任何失败都用 null/0 兜底，不影响 HTTP 200/503
 
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { AGENTS } from "@/lib/agent-types";
+import { summarizePool } from "@/lib/ai/keys";
 
 const prisma = (globalThis as any).__prisma__ ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") {
@@ -25,7 +26,7 @@ if (process.env.NODE_ENV !== "production") {
 // 模块加载时记录启动时间
 const STARTED_AT = new Date().toISOString();
 const STARTED_AT_MS = Date.now();
-const APP_VERSION = process.env.APP_VERSION || "v0.9";
+const APP_VERSION = process.env.APP_VERSION || "v0.11";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -43,7 +44,6 @@ async function readImageDefaultAdapter(): Promise<string | null> {
 /** 提取最近一条失败的 input 摘要（不含 key） */
 function shortFailure(input: string | null | undefined, output: string | null | undefined): string | null {
   if (!output) return null;
-  // 简单截断 ≤120 字符并去掉 sk- 前缀的字符串
   const merged = (output || input || "").slice(0, 240);
   return merged.replace(/sk-[A-Za-z0-9_-]{6,}/g, "sk-***").slice(0, 120);
 }
@@ -51,7 +51,6 @@ function shortFailure(input: string | null | undefined, output: string | null | 
 async function readRecentFailures(): Promise<{ llm: string | null; image: string | null }> {
   const out = { llm: null as string | null, image: null as string | null };
   try {
-    // 最近 50 条 AIOutput，挑一条 text 失败 + 一条 image 失败
     const rows = await prisma.aIOutput.findMany({
       orderBy: { createdAt: "desc" },
       take: 50,
@@ -84,7 +83,6 @@ async function readPublishDirectorStats(): Promise<{ total: number; success: num
       take: 500,
     });
     for (const r of rows) {
-      // input 必含 "via":"publish-director"，避免误统计普通 generate
       if (!r.input || !r.input.includes('"via":"publish-director"')) continue;
       out.total++;
       let isFail = false;
@@ -95,7 +93,6 @@ async function readPublishDirectorStats(): Promise<{ total: number; success: num
           isFail = true;
         }
       } catch {
-        // 解析失败也算失败
         isFail = true;
       }
       if (isFail) out.fail++;
@@ -107,10 +104,6 @@ async function readPublishDirectorStats(): Promise<{ total: number; success: num
   return out;
 }
 
-/**
- * v0.9.2 b1：统计 Setting 表 prompt:* 前缀的条目数。
- * 用户每在 /prompts 编辑器保存一次模板，这里 +1；恢复默认即删除自定义条目，相应 -1。
- */
 async function readCustomPromptCount(): Promise<number> {
   try {
     return await prisma.setting.count({ where: { key: { startsWith: "prompt:" } } });
@@ -119,17 +112,33 @@ async function readCustomPromptCount(): Promise<number> {
   }
 }
 
+/** v0.11 B1：池摘要 */
+async function readApiKeyPool(): Promise<{
+  llm: { total: number; active: number; lastError: string | null };
+  image: { total: number; active: number; lastError: string | null };
+}> {
+  try {
+    const [llm, image] = await Promise.all([summarizePool('llm'), summarizePool('image')]);
+    return { llm, image };
+  } catch {
+    return {
+      llm: { total: 0, active: 0, lastError: null },
+      image: { total: 0, active: 0, lastError: null },
+    };
+  }
+}
+
 export async function GET() {
   const t0 = Date.now();
   try {
     await prisma.setting.count();
 
-    // 并行读 4 路扩展字段（任何失败都用 null/空对象兜底，不阻塞 health）
-    const [imageDefaultAdapter, recentFailures, publishDirectorStats, customPromptCount] = await Promise.all([
+    const [imageDefaultAdapter, recentFailures, publishDirectorStats, customPromptCount, apiKeyPool] = await Promise.all([
       readImageDefaultAdapter(),
       readRecentFailures(),
       readPublishDirectorStats(),
       readCustomPromptCount(),
+      readApiKeyPool(),
     ]);
 
     return NextResponse.json(
@@ -147,6 +156,8 @@ export async function GET() {
         publishDirectorStats,
         // v0.9.2 b1
         customPromptCount,
+        // v0.11 b1
+        apiKeyPool,
       },
       { status: 200 },
     );
