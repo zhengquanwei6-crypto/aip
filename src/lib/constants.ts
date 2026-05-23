@@ -83,9 +83,9 @@ export const SCRIPT_TYPES = [
 export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
 
 /**
- * 侧栏导航 (v0.11 B5: 22 项 → 14 项 整合).
+ * 侧栏导航 (v0.11 B5: 22 → 14 整合 · B6: +/docs = 15).
  *
- * 合并策略:
+ * 合并策略 (B5):
  *   - /clients   含「客户列表 / 报价方案」tabs (吸收 /pricing)
  *   - /presets   含「图片 / 文案 / Agent」tabs   (吸收 /prompts)
  *   - /workspace 含「历史 / 素材」tabs            (合并 /history /assets, URL 保留)
@@ -97,6 +97,9 @@ export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
  *   /prompts  → /presets?tab=content  (middleware 307 + page-level redirect)
  *   /history /assets /weekly-report /calculator /contents /suggestions
  *      —— URL 保留 (deeplink 多), 仅从 NAV 移除
+ *
+ * v0.11 B6 新增:
+ *   /docs    内部使用手册（9 篇 markdown），AdminShell 底部「?」图标快速跳转
  */
 export const NAV_ITEMS: { href: string; label: string }[] = [
   { href: '/dashboard', label: '首页看板' },
@@ -112,6 +115,7 @@ export const NAV_ITEMS: { href: string; label: string }[] = [
   { href: '/adapters', label: 'API 适配器' },
   { href: '/analytics', label: '数据复盘' },
   { href: '/tools', label: '综合工具' },
+  { href: '/docs', label: '使用手册' },
   { href: '/settings', label: '设置' },
 ];
 

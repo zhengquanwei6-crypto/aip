@@ -30,6 +30,8 @@ import {
   Lightbulb,
   Wrench,
   Briefcase,
+  BookOpen,
+  HelpCircle,
   Settings as SettingsIcon,
 } from 'lucide-react';
 import { NAV_ITEMS } from '@/lib/constants';
@@ -43,6 +45,8 @@ const SIDEBAR_COLLAPSED_KEY = 'sidebar:collapsed';
  * v0.11 B5：新增 /workspace（合并 history+assets）+ /tools（合并 weekly+calculator），
  * 旧 /history /assets /weekly-report /calculator /contents /pricing /prompts /suggestions
  * 仍保留映射以便深链可读到 breadcrumb / topbar 标题（NAV 不再列），即使从 NAV 移除也不影响 URL 可达。
+ *
+ * v0.11 B6：新增 /docs (BookOpen) — 内部使用手册 9 篇。
  */
 function iconFor(href: string) {
   switch (href) {
@@ -88,6 +92,8 @@ function iconFor(href: string) {
       return Sparkles;
     case '/suggestions':
       return Lightbulb;
+    case '/docs':
+      return BookOpen;
     case '/settings':
       return SettingsIcon;
     default:
@@ -276,7 +282,7 @@ function SidebarContent({
           </button>
         )}
       </div>
-      <nav className="py-3 flex-1 overflow-y-auto">
+      <nav className="py-3 flex-1 overflow-y-auto" aria-label="primary">
         {NAV_ITEMS.map((it) => {
           const active =
             pathname === it.href || pathname.startsWith(it.href + '/');
@@ -318,8 +324,22 @@ function SidebarContent({
           );
         })}
       </nav>
-      {!mobile && (
-        <div className="border-t border-slate-200 dark:border-slate-800 p-2">
+      {/* v0.11 B6: 底部"?" 图标 → /docs 快速跳转使用手册（移动+桌面通用，折叠态也保留） */}
+      <div className="border-t border-slate-200 dark:border-slate-800 p-2 flex flex-col gap-1.5">
+        <Link
+          href="/docs"
+          aria-label="使用手册"
+          title="使用手册"
+          data-docs-quicklink
+          className={clsx(
+            'inline-flex items-center justify-center gap-1.5 rounded text-xs text-slate-500 hover:text-brand-700 hover:bg-brand-50 dark:hover:bg-brand-900/20 dark:text-slate-400 dark:hover:text-brand-300 transition-colors',
+            collapsed ? 'h-9' : 'h-8 px-2',
+          )}
+        >
+          <HelpCircle size={14} aria-hidden="true" />
+          {!collapsed && <span>使用手册</span>}
+        </Link>
+        {!mobile && (
           <button
             type="button"
             onClick={onToggleCollapsed}
@@ -341,8 +361,8 @@ function SidebarContent({
               </>
             )}
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </aside>
   );
 }
