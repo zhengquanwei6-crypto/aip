@@ -82,27 +82,36 @@ export const SCRIPT_TYPES = [
 
 export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
 
-// 侧栏导航：在 /presets 之后插入 /adapters 入口
+/**
+ * 侧栏导航 (v0.11 B5: 22 项 → 14 项 整合).
+ *
+ * 合并策略:
+ *   - /clients   含「客户列表 / 报价方案」tabs (吸收 /pricing)
+ *   - /presets   含「图片 / 文案 / Agent」tabs   (吸收 /prompts)
+ *   - /workspace 含「历史 / 素材」tabs            (合并 /history /assets, URL 保留)
+ *   - /tools     含「周报 / 计算器」tabs           (合并 /weekly-report /calculator, URL 保留)
+ *   - /contents 与 /suggestions 仅从 NAV 移除, URL 仍可访问
+ *
+ * 旧 URL 兼容:
+ *   /pricing  → /clients?tab=pricing  (middleware 307 + page-level redirect)
+ *   /prompts  → /presets?tab=content  (middleware 307 + page-level redirect)
+ *   /history /assets /weekly-report /calculator /contents /suggestions
+ *      —— URL 保留 (deeplink 多), 仅从 NAV 移除
+ */
 export const NAV_ITEMS: { href: string; label: string }[] = [
   { href: '/dashboard', label: '首页看板' },
   { href: '/today', label: '今日任务' },
   { href: '/calendar', label: '发布日历' },
   { href: '/content', label: '文案生成' },
   { href: '/image', label: '图片生成' },
-  { href: '/contents', label: '内容仓库' },
-  { href: '/calculator', label: '报价计算器' },
-  { href: '/clients', label: '客户档案' },
-  { href: '/assets', label: '素材库' },
+  { href: '/workspace', label: '工作区' },
+  { href: '/clients', label: '客户' },
   { href: '/keywords', label: '关键词库' },
-  { href: '/pricing', label: '价格套餐' },
   { href: '/scripts', label: '私信话术' },
-  { href: '/presets', label: '图片预设' },
+  { href: '/presets', label: '模板' },
   { href: '/adapters', label: 'API 适配器' },
   { href: '/analytics', label: '数据复盘' },
-  { href: '/weekly-report', label: '周复盘报告' },
-  { href: '/history', label: 'AI 输出历史' },
-  { href: '/prompts', label: 'Prompt 模板库' },
-  { href: '/suggestions', label: 'AI 建议' },
+  { href: '/tools', label: '综合工具' },
   { href: '/settings', label: '设置' },
 ];
 

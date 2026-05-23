@@ -1,9 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Send, Inbox, CheckSquare, Target } from 'lucide-react';
+import {
+  Send,
+  Inbox,
+  CheckSquare,
+  Target,
+  ChevronDown,
+  PencilLine,
+  Image as ImageIcon,
+} from 'lucide-react';
 import { PLATFORM_LABEL, TASK_STATUSES } from '@/lib/constants';
 import { toast } from '@/lib/toast';
 import ProgressBar from '@/components/ProgressBar';
@@ -47,11 +55,14 @@ export default function TodayTasksClient({
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   // v0.9 b3：publish-director 抽屉（绑定到某条 task）
   const [pubDrawer, setPubDrawer] = useState<{ taskId: string; row: TaskRow } | null>(null);
+  // v0.11 B5：每张卡的「更多动作」下拉是否展开
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const router = useRouter();
 
   /** 触发 publish-director 抽屉，预填 task 上下文 */
   function openPubDirectorForTask(t: TaskRow) {
     setPubDrawer({ taskId: t.id, row: t });
+    setOpenMenuId(null);
   }
 
   /** publish-director 反写 task 后刷新页面 RSC payload */
@@ -71,6 +82,19 @@ export default function TodayTasksClient({
     const t = window.setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => window.clearInterval(t);
   }, [loadingId]);
+
+  // v0.11 B5: 点卡片外面关闭下拉菜单
+  useEffect(() => {
+    if (!openMenuId) return;
+    function onDocClick(e: MouseEvent) {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('[data-task-menu]')) return;
+      setOpenMenuId(null);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [openMenuId]);
 
   async function patchTask(id: string, data: Partial<TaskRow>) {
     const res = await fetch(`/api/tasks/${id}`, {
@@ -101,6 +125,7 @@ export default function TodayTasksClient({
     try {
       setLoadingId(id);
       setLoadingAction('content');
+      setOpenMenuId(null);
       const res = await fetch(`/api/tasks/${id}/generate-content`, {
         method: 'POST',
       });
@@ -120,6 +145,7 @@ export default function TodayTasksClient({
     try {
       setLoadingId(id);
       setLoadingAction('image');
+      setOpenMenuId(null);
       const res = await fetch(`/api/tasks/${id}/generate-image`, {
         method: 'POST',
       });
@@ -223,6 +249,7 @@ export default function TodayTasksClient({
           const isLoading = loadingId === t.id;
           const isThisGenerating =
             isLoading && (loadingAction === 'content' || loadingAction === 'image');
+          const menuOpen = openMenuId === t.id;
           return (
             <div className="card">
               <div className="card-body">
@@ -242,48 +269,21 @@ export default function TodayTasksClient({
                     <span className="badge-gray">{t.contentType}</span>
                     <StatusBadge status={t.status} />
                   </div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <button
-                      onClick={() => generateContent(t.id)}
-                      disabled={isLoading}
-                      className="btn-secondary text-xs px-2 py-1"
-                    >
-                      {isLoading && loadingAction === 'content'
-                        ? '生成中…'
-                        : '生成文案'}
-                    </button>
-                    <button
-                      onClick={() => generateImage(t.id)}
-                      disabled={isLoading}
-                      className="btn-secondary text-xs px-2 py-1"
-                    >
-                      {isLoading && loadingAction === 'image'
-                        ? '生成中…'
-                        : '生成图片'}
-                    </button>
-                    {/* v0.9 b3：publish-director 入口（绑当前 task） */}
-                    <button
-                      onClick={() => openPubDirectorForTask(t)}
-                      disabled={isLoading}
-                      className="text-xs px-2 py-1 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-900/60 inline-flex items-center gap-1"
-                      title="用 publish-director 一次性产出文案+图片，并反写 task"
-                    >
-                      <Target size={12} />
-                      用 publish-director
-                    </button>
-                    <select
-                      value={t.status}
-                      disabled={isLoading}
-                      onChange={(e) => setStatus(t.id, e.target.value)}
-                      className="input text-xs py-1 w-24"
-                    >
-                      {TASK_STATUSES.map((s) => (
-                        <option key={s.value} value={s.value}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+
+                  {/* v0.11 B5：「主动作 + 下拉」整合（recon §九 #14 partial）
+                      之前是 5 个动作并排（生成文案 / 生成图 / publish-director / 状态选择 / lightbox），
+                      现在压成「🎯 全流程发布」主按钮 +「更多操作」下拉，状态选择仍在卡片右侧 */}
+                  <TaskActionGroup
+                    task={t}
+                    isLoading={isLoading}
+                    loadingAction={loadingAction}
+                    menuOpen={menuOpen}
+                    onToggleMenu={() => setOpenMenuId(menuOpen ? null : t.id)}
+                    onPubDirector={() => openPubDirectorForTask(t)}
+                    onGenerateContent={() => generateContent(t.id)}
+                    onGenerateImage={() => generateImage(t.id)}
+                    onSetStatus={(v) => setStatus(t.id, v)}
+                  />
                 </div>
 
                 {isThisGenerating && (
@@ -375,7 +375,150 @@ export default function TodayTasksClient({
   );
 }
 
+/**
+ * v0.11 B5 · 任务卡操作合并：
+ *   主按钮：🎯 全流程发布（publish-director）
+ *   更多按钮（▾）：生成文案 / 生成图片 / 发布（手动改状态为 published）
+ *   状态下拉：仍保留（4 个状态可手改）
+ *
+ * 旧实现是 5 个动作并排（生成文案 / 生成图 / publish-director / 状态 select），
+ * 视觉噪音重；本版收敛成「主动作 + 下拉」+ 状态。
+ */
+function TaskActionGroup({
+  task,
+  isLoading,
+  loadingAction,
+  menuOpen,
+  onToggleMenu,
+  onPubDirector,
+  onGenerateContent,
+  onGenerateImage,
+  onSetStatus,
+}: {
+  task: TaskRow;
+  isLoading: boolean;
+  loadingAction: string;
+  menuOpen: boolean;
+  onToggleMenu: () => void;
+  onPubDirector: () => void;
+  onGenerateContent: () => void;
+  onGenerateImage: () => void;
+  onSetStatus: (v: string) => void;
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  return (
+    <div
+      data-task-menu
+      className="flex items-center gap-1.5 flex-wrap relative"
+      ref={menuRef}
+    >
+      {/* 主动作：🎯 全流程发布（publish-director） */}
+      <button
+        type="button"
+        onClick={onPubDirector}
+        disabled={isLoading}
+        className="text-xs px-2 py-1 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-900/60 inline-flex items-center gap-1 disabled:opacity-50"
+        title="用 publish-director 一次性产出文案+图片，并反写 task"
+      >
+        <Target size={12} aria-hidden="true" />
+        🎯 全流程发布
+      </button>
+
+      {/* 更多操作下拉：编辑 / 文案 / 图片 / 发布 */}
+      <button
+        type="button"
+        onClick={onToggleMenu}
+        disabled={isLoading}
+        aria-expanded={menuOpen}
+        aria-haspopup="menu"
+        className="btn-secondary text-xs px-2 py-1 inline-flex items-center gap-1"
+        title="更多操作"
+      >
+        更多
+        <ChevronDown size={12} aria-hidden="true" />
+      </button>
+
+      {menuOpen && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-1 z-20 w-44 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1 text-sm"
+        >
+          <Link
+            href={`/calendar/${dayOfWeekFromTime(task.publishTime)}/task/${task.id}`}
+            className="block px-3 py-1.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200"
+            role="menuitem"
+            onClick={onToggleMenu}
+          >
+            <PencilLine size={12} className="inline mr-1.5 -mt-0.5" aria-hidden="true" />
+            编辑任务详情
+          </Link>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={onGenerateContent}
+            disabled={isLoading}
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 text-slate-700 dark:text-slate-200"
+          >
+            <PencilLine size={12} className="inline mr-1.5 -mt-0.5" aria-hidden="true" />
+            {isLoading && loadingAction === 'content' ? '生成中…' : '生成文案'}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={onGenerateImage}
+            disabled={isLoading}
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 text-slate-700 dark:text-slate-200"
+          >
+            <ImageIcon size={12} className="inline mr-1.5 -mt-0.5" aria-hidden="true" />
+            {isLoading && loadingAction === 'image' ? '生成中…' : '生成图片'}
+          </button>
+          <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              onSetStatus('published');
+              onToggleMenu();
+            }}
+            disabled={isLoading}
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 text-emerald-700 dark:text-emerald-300"
+          >
+            <Send size={12} className="inline mr-1.5 -mt-0.5" aria-hidden="true" />
+            标记为已发布
+          </button>
+        </div>
+      )}
+
+      <select
+        value={task.status}
+        disabled={isLoading}
+        onChange={(e) => onSetStatus(e.target.value)}
+        className="input text-xs py-1 w-24"
+        aria-label="任务状态"
+      >
+        {TASK_STATUSES.map((s) => (
+          <option key={s.value} value={s.value}>
+            {s.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   const item = TASK_STATUSES.find((s) => s.value === status);
   return <span className={item?.badge ?? 'badge-gray'}>{item?.label ?? status}</span>;
+}
+
+/**
+ * v0.11 B5：从 publishTime（"HH:MM"）反推 dayOfWeek 是无解的（task 没存 dow），
+ * 所以这里取「今日 dow」作为 deeplink — 因为整个 /today 页面就是「今日」context。
+ * 用 native Date 算（与 lib/date.todayDayOfWeek 等价：周一=1, 周日=7，与 schedule 表一致）。
+ */
+function dayOfWeekFromTime(_publishTime: string): number {
+  const d = new Date();
+  const js = d.getDay(); // 0..6, Sunday=0
+  return js === 0 ? 7 : js;
 }

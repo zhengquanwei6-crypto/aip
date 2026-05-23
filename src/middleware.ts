@@ -8,11 +8,14 @@ import { NextRequest, NextResponse } from 'next/server';
  * v0.8 Batch 6 修复：
  * - cookie view_mode=desktop 优先级最高：即使是 /m/* 也会跳出去到对应桌面路径
  * - cookie view_mode=mobile 同样优先于 UA：桌面 UA 仍会被强制带到 /m
- * - 这样 /m 页面的"桌面版"按钮（写 cookie 后跳 /...）才不会被中间件再拽回 /m
  *
- * v0.11 B2 清理：
- * - 移除 §九 #5 中标记的 `(REMAP_TO_MOBILE_HOME.has(pathname) ? '/m' : (REMAP_TO_MOBILE_HOME.has(pathname) ? '/m' : `/m${pathname}`))`
- *   死代码嵌套（两层条件相同，外层 false 时内层永远 false），简化为单层三元，行为等价。
+ * v0.11 B2 清理：移除 §九 #5 中标记的双层三元嵌套死代码。
+ *
+ * v0.11 B5 NAV 整合：
+ * - /pricing  → 307 → /clients?tab=pricing
+ * - /prompts  → 307 → /presets?tab=content
+ * 这两条 redirect 必须放在 cookie / UA 判定之前 —— 否则 cookie=desktop 直接 next()，
+ * cookie=mobile 又会先把它们变成 /m/pricing /m/prompts，永远走不到我们的整合页。
  */
 
 const MOBILE_RE =
@@ -21,7 +24,6 @@ const MOBILE_RE =
 function isMobilePath(p: string): boolean {
   return p === '/m' || p.startsWith('/m/');
 }
-
 
 // BUG-2 fix: paths in this set don't have a corresponding /m/<path>
 // page; redirect them to the mobile home (/m) instead.
@@ -33,10 +35,19 @@ function stripMobilePrefix(p: string): string {
   return p;
 }
 
-/** v0.11 B2: 单点判断"桌面路径 → 对应移动端路径"，替换原来的双层三元嵌套 */
+/** v0.11 B2: 单点判断"桌面路径 → 对应移动端路径" */
 function toMobileTarget(pathname: string): string {
   return REMAP_TO_MOBILE_HOME.has(pathname) ? '/m' : `/m${pathname}`;
 }
+
+/**
+ * v0.11 B5: B5 NAV 整合后旧 URL → 新 URL 的精确映射 (exact match only,
+ * 子路径不动 —— /pricing/... 没有子路径; /prompts 也没 /prompts/[xxx] 的桌面页).
+ */
+const LEGACY_REDIRECTS: Record<string, string> = {
+  '/pricing': '/clients?tab=pricing',
+  '/prompts': '/presets?tab=content',
+};
 
 export function middleware(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
@@ -50,6 +61,14 @@ export function middleware(req: NextRequest) {
     pathname.includes('.') // 文件
   ) {
     return NextResponse.next();
+  }
+
+  // v0.11 B5: 旧 URL 精确重定向, 必须放在 cookie / UA 判定之前
+  // (cookie=desktop 时会直接 next() 跳过 cookie 之后的逻辑;
+  //  cookie=mobile 会把 /pricing 改写到 /m/pricing 而非整合页)
+  const legacyTarget = LEGACY_REDIRECTS[pathname];
+  if (legacyTarget) {
+    return NextResponse.redirect(new URL(legacyTarget, req.url), 307);
   }
 
   // ?desktop=1 -> 写 cookie + 如果当前在 /m 下，跳到去掉前缀的桌面路径
@@ -88,7 +107,7 @@ export function middleware(req: NextRequest) {
 
   const cookieMode = req.cookies.get('view_mode')?.value;
 
-  // cookie=desktop 时：在 /m/* 下也强制跳到桌面路径（修复 B6.6 关键 bug）
+  // cookie=desktop 时：在 /m/* 下也强制跳到桌面路径
   if (cookieMode === 'desktop') {
     if (isMobilePath(pathname)) {
       const target = stripMobilePrefix(pathname);

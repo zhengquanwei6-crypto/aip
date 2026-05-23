@@ -28,6 +28,8 @@ import {
   History as HistoryIcon,
   Sparkles,
   Lightbulb,
+  Wrench,
+  Briefcase,
   Settings as SettingsIcon,
 } from 'lucide-react';
 import { NAV_ITEMS } from '@/lib/constants';
@@ -36,7 +38,12 @@ import Breadcrumbs from './Breadcrumbs';
 
 const SIDEBAR_COLLAPSED_KEY = 'sidebar:collapsed';
 
-/** NAV 路径 → lucide icon */
+/**
+ * NAV 路径 → lucide icon。
+ * v0.11 B5：新增 /workspace（合并 history+assets）+ /tools（合并 weekly+calculator），
+ * 旧 /history /assets /weekly-report /calculator /contents /pricing /prompts /suggestions
+ * 仍保留映射以便深链可读到 breadcrumb / topbar 标题（NAV 不再列），即使从 NAV 移除也不影响 URL 可达。
+ */
 function iconFor(href: string) {
   switch (href) {
     case '/dashboard':
@@ -49,6 +56,8 @@ function iconFor(href: string) {
       return PencilLine;
     case '/image':
       return ImageIcon;
+    case '/workspace':
+      return Briefcase;
     case '/contents':
       return FolderOpen;
     case '/calculator':
@@ -69,6 +78,8 @@ function iconFor(href: string) {
       return Plug;
     case '/analytics':
       return BarChart3;
+    case '/tools':
+      return Wrench;
     case '/weekly-report':
       return ClipboardList;
     case '/history':

@@ -1,21 +1,11 @@
-import { listPromptTemplates } from '@/lib/ai/prompts';
-import PromptsClient from './PromptsClient';
+import { redirect } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
 
-export default async function PromptsPage() {
-  const list = await listPromptTemplates();
-  return (
-    <PromptsClient
-      initial={list.map(({ key, source, tpl }) => ({
-        key,
-        source,
-        name: tpl.name,
-        description: tpl.description,
-        system: tpl.system,
-        user: tpl.user,
-        vars: tpl.vars,
-      }))}
-    />
-  );
+/**
+ * v0.11 B5：/prompts 已合入 /presets?tab=content。
+ * middleware 已对该路径做 307 重定向；这里保留 server-side redirect 作为兜底。
+ */
+export default function PromptsPage(): never {
+  redirect('/presets?tab=content');
 }

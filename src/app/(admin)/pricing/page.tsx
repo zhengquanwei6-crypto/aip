@@ -1,26 +1,13 @@
-import { prisma } from '@/lib/db';
-import PricingClient from './PricingClient';
-import { AgentLauncher } from '@/components/agents/AgentDrawer';
+import { redirect } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
 
-export default async function PricingPage() {
-  const list = await prisma.pricePackage.findMany({
-    orderBy: [{ category: 'asc' }, { tier: 'asc' }],
-  });
-  return (
-    <>
-      <PricingClient
-        initial={list.map((p) => ({
-          id: p.id,
-          category: p.category,
-          tier: p.tier,
-          name: p.name,
-          priceRange: p.priceRange,
-          description: p.description ?? '',
-        }))}
-      />
-      <AgentLauncher slug="price-quoter" />
-    </>
-  );
+/**
+ * v0.11 B5：/pricing 已合入 /clients?tab=pricing。
+ * 这里保留 server-component redirect 作为 middleware redirect 的兜底
+ * (middleware 已经会先 307; 即便 middleware 配置变更或 cookie 路径绕过, 这里仍然能保证
+ *  深链外部访问者落到正确的整合页).
+ */
+export default function PricingPage(): never {
+  redirect('/clients?tab=pricing');
 }
