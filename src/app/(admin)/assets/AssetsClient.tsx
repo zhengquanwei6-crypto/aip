@@ -35,14 +35,67 @@ const FAV_FILTER_OPTIONS = [
   { value: '1', label: '仅收藏' },
 ];
 
+const STORAGE_KEY = 'list:assets';
+
+/**
+ * v0.11 B7 · /workspace?tab=assets&type=xxx&source=yyy URL 参数支持
+ *
+ * 旧实现：父级 page 已经把 ?type / ?source 应用到 prisma where（server-side），
+ *         但传给 AssetsClient 的 `filters` prop 完全被忽略 —— ListShell 用
+ *         localStorage 持久化的 filterValues 默认值（空字符串），所以 URL 跳过来
+ *         一打开会看到没有任何筛选标签 + 全部数据（不是用户期待）。
+ *
+ * 修复：useState 懒初始化把 URL 筛选值同步写入 localStorage[list:assets]。
+ *       这个写入在 AssetsClient 的初次 render 时完成，发生在 ListShell 内
+ *       useStickyState 的 useEffect 运行之前 —— 所以 ListShell 首次 mount 读
+ *       localStorage 时就能拿到 URL 来的筛选值，UI 一次到位 + 0 闪烁。
+ *
+ * 不破坏：用户在 /assets（未带 query）已经保存的 filter 偏好仍然保留 —— 只在
+ *         URL 真有 ?type 或 ?source 时才覆盖。
+ */
 export default function AssetsClient({
   initialAssets,
   initialFavMap = {},
+  filters,
 }: {
   initialAssets: Asset[];
   filters?: { type: string; source: string };
   initialFavMap?: Record<string, boolean>;
 }) {
+  // v0.11 B7: 懒初始化 — 在第一次 render 时把 URL filters 写入 localStorage
+  // 这样 ListShell 的 useStickyState 在 useEffect mount 时读取 localStorage 就能拿到 URL 值
+  const [_seededFromUrl] = useState<true | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const urlType = filters?.type ?? '';
+    const urlSource = filters?.source ?? '';
+    if (!urlType && !urlSource) return null;
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      const parsed = raw
+        ? (JSON.parse(raw) as {
+            view?: string;
+            filters?: Record<string, string>;
+            q?: string;
+            page?: number;
+          })
+        : {};
+      const merged = {
+        view: parsed.view ?? 'card',
+        q: parsed.q ?? '',
+        page: 1,
+        filters: {
+          ...(parsed.filters ?? {}),
+          ...(urlType ? { type: urlType } : {}),
+          ...(urlSource ? { source: urlSource } : {}),
+        },
+      };
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+    } catch {
+      /* localStorage quota / disabled — 静默 */
+    }
+    return true;
+  });
+
   // 收藏的素材排在最前
   const [favMap, setFavMap] = useState<Record<string, boolean>>(initialFavMap);
   const sortByFav = (arr: Asset[], fm: Record<string, boolean>) =>
@@ -192,7 +245,7 @@ export default function AssetsClient({
       <ListShell<Asset>
         items={assets}
         getId={(a) => a.id}
-        storageKey="list:assets"
+        storageKey={STORAGE_KEY}
         title={<span className="text-slate-700 dark:text-slate-200">素材库</span>}
         toolbar={
           <>
