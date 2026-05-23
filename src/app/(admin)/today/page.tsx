@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { todayDayOfWeek, formatDateCN } from '@/lib/date';
 import TodayTasksClient from './TodayTasksClient';
+import { AgentLauncher } from '@/components/agents/AgentDrawer';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,7 +33,8 @@ export default async function TodayPage() {
       </div>
 
       <TodayTasksClient initialTasks={tasks.map(serialize)} />
-    </div>
+          <AgentLauncher slug="day-coach" />
+      </div>
   );
 }
 

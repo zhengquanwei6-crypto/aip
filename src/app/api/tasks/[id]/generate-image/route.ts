@@ -1,12 +1,23 @@
+/**
+ * /api/tasks/[id]/generate-image · 任务一键生成图片（重构走 adapter）
+ *
+ * 流程不变：
+ *   1) LLM 生 prompt
+ *   2) 调图片 API（现在走 image-runner）
+ *   3) 写素材库 + 更新 task.imageUrl
+ *
+ * v0.8 Batch 5：fail 时把 trace 透传（含 adapter / baseUrl / lastError / pollHistory）
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generateText, extractJSON } from '@/lib/ai/text';
 import { buildImagePromptMessages } from '@/lib/ai/prompts';
-import { generateImage } from '@/lib/ai/image';
-import { saveImageFromBase64, saveImageFromUrl } from '@/lib/storage';
+import { runImageGenerate } from '@/lib/image-runner';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
 
 export async function POST(
   _req: NextRequest,
@@ -47,52 +58,63 @@ export async function POST(
       );
     }
 
-    // 2) 调图片 API
-    const img = await generateImage({ prompt: parsed.prompt, size: parsed.size || size });
-    if (!img.ok || img.images.length === 0) {
-      return NextResponse.json({ ok: false, error: img.error || '未返回图片' }, { status: 500 });
+    // 2) 调图片 API（走 image-runner，兼容 adapter / legacy）
+    const r = await runImageGenerate({
+      prompt: parsed.prompt,
+      size: parsed.size || size,
+      n: 1,
+      extra: { aspectRatio: ratio },
+    });
+    if (!r.ok || r.savedUrls.length === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: r.error || '未返回图片',
+          via: r.via,
+          adapterSlug: r.adapterSlug,
+          durationMs: r.durationMs,
+          trace: r.trace,
+        },
+        { status: 500 },
+      );
     }
+    const url = r.savedUrls[0];
+    const fileName = url.split('/').pop() || '';
 
-    const it = img.images[0];
-    let saved;
-    try {
-      if (it.b64) {
-        saved = await saveImageFromBase64(it.b64);
-      } else if (it.url) {
-        saved = await saveImageFromUrl(it.url);
-      } else {
-        return NextResponse.json({ ok: false, error: '图片返回为空' }, { status: 500 });
-      }
-    } catch (e) {
-      return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
-    }
-
-    // 3) 写入素材库 + 任务
+    // 3) 写素材库 + 更新 task
     await prisma.asset.create({
       data: {
         type: platform === 'xiaohongshu' ? '封面图' : '商品首图',
         source: 'ai_generated',
         platform,
         category: task.category,
-        url: saved.url,
+        url,
         prompt: parsed.prompt,
-        fileName: saved.fileName,
+        fileName,
       },
     });
     await prisma.aIOutput.create({
       data: {
         type: 'image',
         input: JSON.stringify({ taskId: task.id, prompt: parsed.prompt }),
-        output: JSON.stringify({ url: saved.url }),
-        model: img.model,
+        output: JSON.stringify({ url, via: r.via, adapterSlug: r.adapterSlug }),
+        model: r.via === 'adapter' ? `adapter:${r.adapterSlug}` : (r.model ?? 'unknown'),
       },
     });
 
     const updated = await prisma.task.update({
       where: { id: task.id },
-      data: { imageUrl: saved.url },
+      data: { imageUrl: url },
     });
-    return NextResponse.json({ ok: true, task: updated, prompt: parsed.prompt });
+    return NextResponse.json({
+      ok: true,
+      task: updated,
+      prompt: parsed.prompt,
+      via: r.via,
+      adapterSlug: r.adapterSlug,
+      durationMs: r.durationMs,
+      trace: r.trace,
+    });
   } catch (err) {
     return NextResponse.json(
       { ok: false, error: (err as Error).message },

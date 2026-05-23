@@ -1,7 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { SCRIPT_TYPES } from '@/lib/constants';
+import { toast } from '@/lib/toast';
+import SimpleListShell from '@/components/SimpleListShell';
+import { bulkSerial } from '@/components/ListShell';
 
 interface Script {
   id: string;
@@ -12,7 +15,6 @@ interface Script {
 
 export default function ScriptsClient({ initial }: { initial: Script[] }) {
   const [items, setItems] = useState(initial);
-  const [filterType, setFilterType] = useState('');
   const [editing, setEditing] = useState<Script | null>(null);
   const [draft, setDraft] = useState<Script>({
     id: '',
@@ -20,19 +22,13 @@ export default function ScriptsClient({ initial }: { initial: Script[] }) {
     title: '',
     content: '',
   });
-  const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  const filtered = useMemo(() => {
-    return items.filter((x) => !filterType || x.type === filterType);
-  }, [items, filterType]);
 
   async function add() {
     if (!draft.title.trim() || !draft.content.trim()) {
-      setError('请填写标题和内容');
+      toast.error('请填写标题和内容');
       return;
     }
-    setError(null);
     try {
       const res = await fetch('/api/scripts', {
         method: 'POST',
@@ -43,8 +39,9 @@ export default function ScriptsClient({ initial }: { initial: Script[] }) {
       if (!res.ok || !j.ok) throw new Error(j.error || '添加失败');
       setItems((arr) => [j.item, ...arr]);
       setDraft({ ...draft, title: '', content: '' });
+      toast.success('已新增话术');
     } catch (e) {
-      setError((e as Error).message);
+      toast.error((e as Error).message);
     }
   }
 
@@ -59,8 +56,9 @@ export default function ScriptsClient({ initial }: { initial: Script[] }) {
       if (!res.ok || !j.ok) throw new Error(j.error || '保存失败');
       setItems((arr) => arr.map((x) => (x.id === s.id ? j.item : x)));
       setEditing(null);
+      toast.success('已保存');
     } catch (e) {
-      alert((e as Error).message);
+      toast.error((e as Error).message);
     }
   }
 
@@ -69,7 +67,7 @@ export default function ScriptsClient({ initial }: { initial: Script[] }) {
     const res = await fetch(`/api/scripts/${id}`, { method: 'DELETE' });
     const j = await res.json();
     if (!res.ok || !j.ok) {
-      alert(j.error || '删除失败');
+      toast.error(j.error || '删除失败');
       return;
     }
     setItems((arr) => arr.filter((x) => x.id !== id));
@@ -119,138 +117,158 @@ export default function ScriptsClient({ initial }: { initial: Script[] }) {
               onChange={(e) => setDraft({ ...draft, content: e.target.value })}
             />
           </div>
-          <div className="md:col-span-2 flex items-center gap-2">
+          <div className="md:col-span-2">
             <button onClick={add} className="btn-primary">
               添加话术
             </button>
-            {error && <span className="text-sm text-red-600">{error}</span>}
           </div>
         </div>
       </div>
 
-      <div className="card">
-        <div className="card-body flex items-end gap-3">
-          <div>
-            <label className="label">类型筛选</label>
-            <select
-              className="input w-44"
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
-            >
-              <option value="">全部</option>
-              {SCRIPT_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="text-sm text-slate-500 ml-auto">
-            共 {filtered.length} 条
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        {filtered.map((s) =>
-          editing?.id === s.id ? (
-            <div key={s.id} className="card border-brand-300">
-              <div className="card-body space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-3">
-                  <div>
-                    <label className="label">类型</label>
-                    <select
-                      className="input"
-                      value={editing.type}
-                      onChange={(e) =>
-                        setEditing({ ...editing!, type: e.target.value })
-                      }
-                    >
-                      {SCRIPT_TYPES.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
+      <SimpleListShell<Script>
+        items={items}
+        getId={(s) => s.id}
+        storageKey="list:scripts"
+        searchPlaceholder="搜索标题 / 类型 / 内容"
+        searchKeys={['title', 'type', 'content']}
+        onToastSuccess={(m) => toast.success(m)}
+        onToastError={(m) => toast.error(m)}
+        bulkDelete={{
+          confirmText: (n) => `确认删除已选 ${n} 条话术？`,
+          run: async (ids) => {
+            const r = await bulkSerial(ids, async (id) => {
+              const res = await fetch(`/api/scripts/${id}`, {
+                method: 'DELETE',
+              });
+              const j = await res.json().catch(() => ({}));
+              if (!res.ok || !j.ok) throw new Error(j.error || '删除失败');
+            });
+            const failedIds = new Set(r.failed.map((f) => f.id));
+            setItems((arr) =>
+              arr.filter((x) => !ids.includes(x.id) || failedIds.has(x.id)),
+            );
+            if (r.failed.length === 0)
+              return { ok: true, message: `已删除 ${r.ok} 条话术` };
+            return {
+              ok: false,
+              message: `部分失败：成功 ${r.ok} / 失败 ${r.failed.length}`,
+            };
+          },
+        }}
+      >
+        {(filtered, helpers) => (
+          <div className="space-y-3">
+            {filtered.map((s) =>
+              editing?.id === s.id ? (
+                <div key={s.id} className="card border-brand-300">
+                  <div className="card-body space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-3">
+                      <div>
+                        <label className="label">类型</label>
+                        <select
+                          className="input"
+                          value={editing.type}
+                          onChange={(e) =>
+                            setEditing({ ...editing!, type: e.target.value })
+                          }
+                        >
+                          {SCRIPT_TYPES.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="label">标题</label>
+                        <input
+                          className="input"
+                          value={editing.title}
+                          onChange={(e) =>
+                            setEditing({ ...editing!, title: e.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="label">内容</label>
+                      <textarea
+                        className="input min-h-[120px]"
+                        value={editing.content}
+                        onChange={(e) =>
+                          setEditing({ ...editing!, content: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => save(editing!)}
+                        className="btn-primary"
+                      >
+                        保存
+                      </button>
+                      <button
+                        onClick={() => setEditing(null)}
+                        className="btn-secondary"
+                      >
+                        取消
+                      </button>
+                    </div>
                   </div>
-                  <div>
-                    <label className="label">标题</label>
-                    <input
-                      className="input"
-                      value={editing.title}
-                      onChange={(e) =>
-                        setEditing({ ...editing!, title: e.target.value })
-                      }
-                    />
+                </div>
+              ) : (
+                <div
+                  key={s.id}
+                  className={
+                    'card ' +
+                    (helpers.isSelected(s.id)
+                      ? 'ring-2 ring-brand-500'
+                      : '')
+                  }
+                >
+                  <div className="card-body">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 cursor-pointer"
+                        checked={helpers.isSelected(s.id)}
+                        onChange={() => helpers.toggle(s.id)}
+                        aria-label="选择"
+                      />
+                      <span className="badge-blue">{s.type}</span>
+                      <h3 className="font-semibold text-slate-800 dark:text-slate-100">
+                        {s.title}
+                      </h3>
+                      <div className="flex-1" />
+                      <button
+                        onClick={() => copy(s.id, s.content)}
+                        className="text-sm text-brand-600 hover:underline"
+                      >
+                        {copiedId === s.id ? '已复制' : '复制'}
+                      </button>
+                      <button
+                        onClick={() => setEditing(s)}
+                        className="text-sm text-slate-600 dark:text-slate-300 hover:underline"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => del(s.id)}
+                        className="text-sm text-red-600 hover:underline"
+                      >
+                        删除
+                      </button>
+                    </div>
+                    <div className="mt-2 text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
+                      {s.content}
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <label className="label">内容</label>
-                  <textarea
-                    className="input min-h-[120px]"
-                    value={editing.content}
-                    onChange={(e) =>
-                      setEditing({ ...editing!, content: e.target.value })
-                    }
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => save(editing!)}
-                    className="btn-primary"
-                  >
-                    保存
-                  </button>
-                  <button
-                    onClick={() => setEditing(null)}
-                    className="btn-secondary"
-                  >
-                    取消
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div key={s.id} className="card">
-              <div className="card-body">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="badge-blue">{s.type}</span>
-                  <h3 className="font-semibold text-slate-800">{s.title}</h3>
-                  <div className="flex-1" />
-                  <button
-                    onClick={() => copy(s.id, s.content)}
-                    className="text-sm text-brand-600 hover:underline"
-                  >
-                    {copiedId === s.id ? '已复制' : '复制'}
-                  </button>
-                  <button
-                    onClick={() => setEditing(s)}
-                    className="text-sm text-slate-600 hover:underline"
-                  >
-                    编辑
-                  </button>
-                  <button
-                    onClick={() => del(s.id)}
-                    className="text-sm text-red-600 hover:underline"
-                  >
-                    删除
-                  </button>
-                </div>
-                <div className="mt-2 text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
-                  {s.content}
-                </div>
-              </div>
-            </div>
-          ),
-        )}
-        {filtered.length === 0 && (
-          <div className="card">
-            <div className="card-body text-center text-sm text-slate-400 py-8">
-              暂无话术
-            </div>
+              ),
+            )}
           </div>
         )}
-      </div>
+      </SimpleListShell>
     </div>
   );
 }

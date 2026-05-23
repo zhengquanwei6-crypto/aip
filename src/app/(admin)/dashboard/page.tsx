@@ -8,6 +8,7 @@ import {
   endOfDay,
 } from '@/lib/date';
 import { PLATFORM_LABEL } from '@/lib/constants';
+import { AgentLauncher } from '@/components/agents/AgentDrawer';
 
 export const dynamic = 'force-dynamic';
 
@@ -229,6 +230,7 @@ function StatCard({
         {value}
         {suffix && <span className="text-xs sm:text-sm ml-1">{suffix}</span>}
       </div>
-    </div>
+          <AgentLauncher slug="day-coach" />
+      </div>
   );
 }

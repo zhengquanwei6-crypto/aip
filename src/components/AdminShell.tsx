@@ -4,8 +4,85 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
+import {
+  Menu,
+  X,
+  PanelLeftClose,
+  PanelLeft,
+  Home,
+  CheckSquare,
+  Calendar,
+  PencilLine,
+  Image as ImageIcon,
+  FolderOpen,
+  Calculator,
+  Users,
+  Layers,
+  Tags,
+  DollarSign,
+  MessageCircle,
+  SlidersHorizontal,
+  Plug,
+  BarChart3,
+  ClipboardList,
+  History as HistoryIcon,
+  Sparkles,
+  Lightbulb,
+  Settings as SettingsIcon,
+} from 'lucide-react';
 import { NAV_ITEMS } from '@/lib/constants';
 import ThemeToggle from './ThemeToggle';
+import Breadcrumbs from './Breadcrumbs';
+
+const SIDEBAR_COLLAPSED_KEY = 'sidebar:collapsed';
+
+/** NAV 路径 → lucide icon */
+function iconFor(href: string) {
+  switch (href) {
+    case '/dashboard':
+      return Home;
+    case '/today':
+      return CheckSquare;
+    case '/calendar':
+      return Calendar;
+    case '/content':
+      return PencilLine;
+    case '/image':
+      return ImageIcon;
+    case '/contents':
+      return FolderOpen;
+    case '/calculator':
+      return Calculator;
+    case '/clients':
+      return Users;
+    case '/assets':
+      return Layers;
+    case '/keywords':
+      return Tags;
+    case '/pricing':
+      return DollarSign;
+    case '/scripts':
+      return MessageCircle;
+    case '/presets':
+      return SlidersHorizontal;
+    case '/adapters':
+      return Plug;
+    case '/analytics':
+      return BarChart3;
+    case '/weekly-report':
+      return ClipboardList;
+    case '/history':
+      return HistoryIcon;
+    case '/prompts':
+      return Sparkles;
+    case '/suggestions':
+      return Lightbulb;
+    case '/settings':
+      return SettingsIcon;
+    default:
+      return Home;
+  }
+}
 
 export default function AdminShell({
   children,
@@ -14,6 +91,35 @@ export default function AdminShell({
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+
+  // hydrate collapsed state
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const v = window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
+      if (v === '1') setCollapsed(true);
+    } catch {
+      /* noop */
+    }
+  }, []);
+
+  function toggleCollapsed() {
+    setCollapsed((c) => {
+      const next = !c;
+      try {
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(
+            SIDEBAR_COLLAPSED_KEY,
+            next ? '1' : '0',
+          );
+        }
+      } catch {
+        /* noop */
+      }
+      return next;
+    });
+  }
 
   useEffect(() => {
     setOpen(false);
@@ -39,7 +145,12 @@ export default function AdminShell({
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 lg:flex">
       <SidebarContent
         pathname={pathname}
-        className="hidden lg:flex lg:flex-col lg:w-56 lg:flex-shrink-0 lg:border-r lg:border-slate-200 lg:bg-white dark:lg:bg-slate-900 dark:lg:border-slate-800"
+        collapsed={collapsed}
+        onToggleCollapsed={toggleCollapsed}
+        className={clsx(
+          'hidden lg:flex lg:flex-col lg:flex-shrink-0 lg:border-r lg:border-slate-200 lg:bg-white dark:lg:bg-slate-900 dark:lg:border-slate-800 transition-[width] duration-200',
+          collapsed ? 'lg:w-14' : 'lg:w-56',
+        )}
       />
 
       <div
@@ -54,11 +165,14 @@ export default function AdminShell({
         />
         <SidebarContent
           pathname={pathname}
+          collapsed={false}
+          onToggleCollapsed={toggleCollapsed}
           className={clsx(
             'absolute left-0 top-0 h-full w-64 bg-white dark:bg-slate-900 shadow-xl flex flex-col transform transition-transform duration-200',
             open ? 'translate-x-0' : '-translate-x-full',
           )}
           onClickClose={() => setOpen(false)}
+          mobile
         />
       </div>
 
@@ -70,25 +184,16 @@ export default function AdminShell({
             className="lg:hidden -ml-1 inline-flex items-center justify-center w-9 h-9 rounded text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
             aria-label="打开菜单"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="3" y1="12" x2="21" y2="12" />
-              <line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
+            <Menu className="h-5 w-5" aria-hidden="true" />
           </button>
-          <h1 className="text-base font-semibold text-slate-800 dark:text-slate-100 truncate flex-1">
+          <h1 className="text-base font-semibold text-slate-800 dark:text-slate-100 truncate shrink-0">
             {title}
           </h1>
+          <div className="hidden md:flex flex-1 min-w-0 ml-2">
+            <Breadcrumbs />
+          </div>
+          <div className="flex-1 md:hidden" />
+          <Breadcrumbs className="md:hidden" />
           <ThemeToggle />
           <div className="hidden sm:block text-xs text-slate-400 shrink-0">
             个人本地工作台
@@ -105,22 +210,42 @@ function SidebarContent({
   pathname,
   className,
   onClickClose,
+  collapsed,
+  onToggleCollapsed,
+  mobile,
 }: {
   pathname: string;
   className?: string;
   onClickClose?: () => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+  mobile?: boolean;
 }) {
   return (
     <aside className={className}>
-      <div className="px-5 py-5 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between">
-        <div>
-          <div className="text-sm text-slate-400">design-ai-ops</div>
-          <div className="text-base font-semibold text-slate-800 dark:text-slate-100 leading-snug mt-1">
-            平面设计接单
-            <br />
-            AI 运营工作台
+      <div
+        className={clsx(
+          'border-b border-slate-200 dark:border-slate-800 flex items-start justify-between',
+          collapsed ? 'px-2 py-3' : 'px-5 py-5',
+        )}
+      >
+        {collapsed ? (
+          <div
+            className="w-full text-center font-semibold text-brand-600 text-sm"
+            title="design-ai-ops"
+          >
+            d.a.o
           </div>
-        </div>
+        ) : (
+          <div>
+            <div className="text-sm text-slate-400">design-ai-ops</div>
+            <div className="text-base font-semibold text-slate-800 dark:text-slate-100 leading-snug mt-1">
+              平面设计接单
+              <br />
+              AI 运营工作台
+            </div>
+          </div>
+        )}
         {onClickClose && (
           <button
             type="button"
@@ -128,20 +253,7 @@ function SidebarContent({
             className="text-slate-400 hover:text-slate-700 -mr-1 -mt-1 p-1"
             aria-label="关闭菜单"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+            <X className="h-[18px] w-[18px]" aria-hidden="true" />
           </button>
         )}
       </div>
@@ -149,22 +261,66 @@ function SidebarContent({
         {NAV_ITEMS.map((it) => {
           const active =
             pathname === it.href || pathname.startsWith(it.href + '/');
+          const Icon = iconFor(it.href);
+          if (collapsed) {
+            return (
+              <Link
+                key={it.href}
+                href={it.href}
+                title={it.label}
+                aria-label={it.label}
+                className={clsx(
+                  'flex items-center justify-center mx-2 my-0.5 h-9 rounded text-sm',
+                  active
+                    ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300'
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800',
+                )}
+              >
+                <Icon size={16} aria-hidden="true" />
+              </Link>
+            );
+          }
           return (
             <Link
               key={it.href}
               href={it.href}
               className={clsx(
-                'block px-5 py-2.5 text-sm border-l-2',
+                'flex items-center gap-2 px-5 py-2.5 text-sm border-l-2',
                 active
                   ? 'bg-brand-50 text-brand-700 border-brand-600 font-medium dark:bg-brand-900/30 dark:text-brand-300'
                   : 'text-slate-600 dark:text-slate-300 border-transparent hover:bg-slate-50 dark:hover:bg-slate-800',
               )}
             >
-              {it.label}
+              <Icon size={14} aria-hidden="true" className="shrink-0" />
+              <span className="truncate">{it.label}</span>
             </Link>
           );
         })}
       </nav>
+      {!mobile && (
+        <div className="border-t border-slate-200 dark:border-slate-800 p-2">
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            data-sidebar-toggle
+            className={clsx(
+              'w-full inline-flex items-center justify-center gap-1.5 rounded text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 dark:text-slate-400 transition-colors',
+              collapsed ? 'h-9' : 'h-8 px-2',
+            )}
+            aria-label={collapsed ? '展开侧栏' : '折叠侧栏'}
+            title={collapsed ? '展开侧栏' : '折叠侧栏'}
+          >
+            {collapsed ? (
+              <PanelLeft size={14} aria-hidden="true" />
+            ) : (
+              <>
+                <PanelLeftClose size={14} aria-hidden="true" />
+                <span>折叠侧栏</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

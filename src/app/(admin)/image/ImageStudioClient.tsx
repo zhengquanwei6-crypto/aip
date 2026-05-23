@@ -1,11 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { History as HistoryIcon, RotateCcw, X, Trash2 } from 'lucide-react';
 import {
   PLATFORMS,
   CATEGORIES,
   IMAGE_TYPES,
 } from '@/lib/constants';
+import { toast } from '@/lib/toast';
+import ProgressBar from '@/components/ProgressBar';
+import ImageLightbox from '@/components/ImageLightbox';
+import { usePromptHistory } from '@/hooks/usePromptHistory';
 
 type Platform = 'xiaohongshu' | 'xianyu';
 type Ratio = '3:4' | '1:1';
@@ -29,6 +34,24 @@ interface ImagePreset {
   isDefault: boolean;
 }
 
+interface AssetRow {
+  id?: string;
+  url: string;
+  fileName?: string;
+}
+
+interface HistoryEntry {
+  id: string;
+  prompt: string;
+  url: string;
+  ts: number;
+}
+
+interface QueueFailure {
+  prompt: string;
+  error: string;
+}
+
 const DEFAULT: FormState = {
   platform: 'xiaohongshu',
   ratio: '3:4',
@@ -44,10 +67,32 @@ export default function ImageStudioClient() {
   const [prompt, setPrompt] = useState('');
   const [negativePrompt, setNegativePrompt] = useState('');
   const [size, setSize] = useState('1024x1536');
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [assets, setAssets] = useState<AssetRow[]>([]);
   const [step1Loading, setStep1Loading] = useState(false);
   const [step2Loading, setStep2Loading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [elapsed1, setElapsed1] = useState(0);
+  const [elapsed2, setElapsed2] = useState(0);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+
+  // B5.3 失败诊断
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [lastTrace, setLastTrace] = useState<any>(null);
+
+  // B5.3 批量队列
+  const [batchPrompts, setBatchPrompts] = useState('');
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchDone, setBatchDone] = useState(0);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const [batchElapsed, setBatchElapsed] = useState(0);
+  const [batchFailures, setBatchFailures] = useState<QueueFailure[]>([]);
+
+  // B5.3 历史抽屉（仅会话内）
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  // B6.4 持久化 prompt 历史
+  const { history: textHistory, push: pushTextHistory, clear: clearTextHistory } =
+    usePromptHistory('image', 20);
 
   useEffect(() => {
     fetch('/api/image-presets')
@@ -70,6 +115,34 @@ export default function ImageStudioClient() {
       .catch(() => {});
   }, []);
 
+  // 计时器
+  useEffect(() => {
+    if (!step1Loading) {
+      setElapsed1(0);
+      return;
+    }
+    const t = window.setInterval(() => setElapsed1((s) => s + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [step1Loading]);
+
+  useEffect(() => {
+    if (!step2Loading) {
+      setElapsed2(0);
+      return;
+    }
+    const t = window.setInterval(() => setElapsed2((s) => s + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [step2Loading]);
+
+  useEffect(() => {
+    if (!batchRunning) {
+      setBatchElapsed(0);
+      return;
+    }
+    const t = window.setInterval(() => setBatchElapsed((s) => s + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [batchRunning]);
+
   function up<K extends keyof FormState>(k: K, v: FormState[K]) {
     setForm((f) => {
       const next = { ...f, [k]: v };
@@ -90,9 +163,26 @@ export default function ImageStudioClient() {
     setNegativePrompt(p.negativePrompt || '');
   }
 
+  function appendHistory(items: AssetRow[], usedPrompt: string) {
+    if (items.length === 0) return;
+    setHistory((h) => {
+      const next: HistoryEntry[] = [
+        ...items.map((a, i) => ({
+          id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+          prompt: usedPrompt,
+          url: a.url,
+          ts: Date.now(),
+        })),
+        ...h,
+      ];
+      return next.slice(0, 20);
+    });
+    // B6.4 持久化纯文本 prompt
+    pushTextHistory(usedPrompt);
+  }
+
   async function buildPrompt() {
     setStep1Loading(true);
-    setError(null);
     try {
       const res = await fetch('/api/image/prompt', {
         method: 'POST',
@@ -103,27 +193,33 @@ export default function ImageStudioClient() {
       if (!res.ok || !j.ok) throw new Error(j.error || '生成失败');
       setPrompt(j.prompt || '');
       setNegativePrompt(j.negativePrompt || '');
-      setSize(j.size || (form.platform === 'xiaohongshu' ? '1024x1536' : '1024x1024'));
+      setSize(
+        j.size || (form.platform === 'xiaohongshu' ? '1024x1536' : '1024x1024'),
+      );
+      toast.success('提示词已生成');
     } catch (e) {
-      setError((e as Error).message);
+      toast.error((e as Error).message);
     } finally {
       setStep1Loading(false);
     }
   }
 
-  async function callImage() {
-    if (!prompt.trim()) {
-      setError('请先生成或填写提示词');
-      return;
+  /** 单次调用图片 API。可选传入自定义 prompt（队列模式用），默认用页面 prompt。 */
+  async function callImage(customPrompt?: string): Promise<{ ok: boolean; assets: AssetRow[]; error?: string }> {
+    const usePrompt = (customPrompt ?? prompt).trim();
+    if (!usePrompt) {
+      toast.error('请先生成或填写提示词');
+      return { ok: false, assets: [], error: '提示词为空' };
     }
     setStep2Loading(true);
-    setError(null);
+    setLastError(null);
+    setLastTrace(null);
     try {
       const res = await fetch('/api/image/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt,
+          prompt: usePrompt,
           size,
           platform: form.platform,
           category: form.category,
@@ -131,13 +227,102 @@ export default function ImageStudioClient() {
         }),
       });
       const j = await res.json();
-      if (!res.ok || !j.ok) throw new Error(j.error || '图片生成失败');
-      setImageUrl(j.asset?.url ?? null);
+      if (!res.ok || !j.ok) {
+        const msg = j.error || '图片生成失败';
+        setLastError(msg);
+        if (j.trace) setLastTrace(j.trace);
+        throw new Error(msg);
+      }
+      const arr: AssetRow[] = Array.isArray(j.assets) && j.assets.length > 0
+        ? j.assets
+        : j.asset
+          ? [j.asset]
+          : [];
+      // 仅在非队列模式（即页面单次）下展示当前结果；队列模式下交由 callBatch 决定
+      if (!customPrompt) {
+        setAssets(arr);
+      }
+      appendHistory(arr, usePrompt);
+      if (arr.length > 0 && !customPrompt) toast.success(`已生成 ${arr.length} 张图`);
+      return { ok: true, assets: arr };
     } catch (e) {
-      setError((e as Error).message);
+      const msg = (e as Error).message;
+      if (!customPrompt) toast.error(msg);
+      return { ok: false, assets: [], error: msg };
     } finally {
       setStep2Loading(false);
     }
+  }
+
+  async function retry() {
+    await callImage();
+  }
+
+  async function runBatch() {
+    const lines = batchPrompts
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    if (lines.length === 0) {
+      toast.error('请在批量框里至少写一行 prompt');
+      return;
+    }
+    setBatchRunning(true);
+    setBatchTotal(lines.length);
+    setBatchDone(0);
+    setBatchFailures([]);
+    let okCount = 0;
+    const fails: QueueFailure[] = [];
+    const allAssets: AssetRow[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const p = lines[i];
+      const r = await callImage(p);
+      if (r.ok) {
+        okCount++;
+        allAssets.push(...r.assets);
+      } else {
+        fails.push({ prompt: p, error: r.error ?? '未知错误' });
+      }
+      setBatchDone(i + 1);
+      setBatchFailures([...fails]);
+      // 节流 800ms
+      if (i < lines.length - 1) {
+        await new Promise((res) => setTimeout(res, 800));
+      }
+    }
+    setBatchRunning(false);
+    if (allAssets.length > 0) setAssets(allAssets);
+    if (fails.length === 0) {
+      toast.success(`批量完成 ${okCount}/${lines.length}`);
+    } else {
+      toast.error(`完成 ${okCount}/${lines.length}，失败 ${fails.length} 张`);
+    }
+  }
+
+  async function retryFailure(idx: number) {
+    const item = batchFailures[idx];
+    if (!item) return;
+    const r = await callImage(item.prompt);
+    if (r.ok) {
+      setBatchFailures((arr) => arr.filter((_, i) => i !== idx));
+      setAssets((curr) => [...curr, ...r.assets]);
+      toast.success('重试成功');
+    } else {
+      setBatchFailures((arr) =>
+        arr.map((x, i) => (i === idx ? { ...x, error: r.error ?? '未知错误' } : x)),
+      );
+    }
+  }
+
+  function reusePromptFromHistory(h: HistoryEntry) {
+    setPrompt(h.prompt);
+    toast.info('已填入提示词，可直接生成');
+  }
+
+  function reusePromptFromText(text: string) {
+    setPrompt(text);
+    toast.info('已填入历史提示词');
   }
 
   return (
@@ -146,6 +331,18 @@ export default function ImageStudioClient() {
       <div className="card h-fit">
         <div className="card-header">
           <h2 className="font-semibold">图片参数</h2>
+          <button
+            type="button"
+            onClick={() => setHistoryOpen((v) => !v)}
+            className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-brand-600"
+            title="本会话最近 20 次生成（刷新清空） + 持久化 prompt 历史"
+            data-prompt-history
+          >
+            <HistoryIcon size={14} />
+            历史 {history.length + textHistory.length > 0
+              ? `(${history.length}/${textHistory.length})`
+              : ''}
+          </button>
         </div>
         <div className="card-body space-y-3">
           <Field label="平台">
@@ -239,6 +436,13 @@ export default function ImageStudioClient() {
           >
             {step1Loading ? '生成中...' : '① 先生成图片提示词'}
           </button>
+          {step1Loading && (
+            <ProgressBar
+              mode="indeterminate"
+              label="正在生成提示词…"
+              elapsed={elapsed1}
+            />
+          )}
           <p className="text-xs text-slate-400 leading-relaxed">
             提示：先生成提示词后，可以在右侧手动调整再生成图片。
           </p>
@@ -252,7 +456,14 @@ export default function ImageStudioClient() {
             <h2 className="font-semibold">提示词（可手动修改）</h2>
             {prompt && (
               <button
-                onClick={() => navigator.clipboard?.writeText(prompt)}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard?.writeText(prompt);
+                    toast.success('已复制提示词');
+                  } catch {
+                    toast.error('复制失败');
+                  }
+                }}
                 className="text-xs text-brand-600 hover:underline"
               >
                 复制
@@ -283,46 +494,278 @@ export default function ImageStudioClient() {
                 placeholder="例：1024x1536"
               />
             </Field>
-            {error && (
-              <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
-                {error}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => callImage()}
+                disabled={step2Loading || batchRunning}
+                className="btn-primary"
+              >
+                {step2Loading ? '调用图片 API 中...' : '② 调用图片 API 生成'}
+              </button>
+              {lastError && !step2Loading && (
+                <button
+                  onClick={retry}
+                  disabled={step2Loading || batchRunning}
+                  className="btn-secondary inline-flex items-center gap-1 text-sm"
+                >
+                  <RotateCcw size={14} />
+                  重试
+                </button>
+              )}
+            </div>
+            {step2Loading && (
+              <ProgressBar
+                mode="indeterminate"
+                label="正在出图…"
+                elapsed={elapsed2}
+              />
+            )}
+
+            {/* 失败提示 + 调试信息（折叠） */}
+            {lastError && !step2Loading && (
+              <div className="rounded border border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800 p-2 space-y-1">
+                <div className="text-xs text-rose-700 dark:text-rose-300 break-all">
+                  ✗ {lastError}
+                </div>
+                {lastTrace && (
+                  <details>
+                    <summary className="text-[11px] text-rose-500 cursor-pointer">调试信息</summary>
+                    <pre className="mt-1 text-[11px] bg-white/60 dark:bg-rose-950/60 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all">{JSON.stringify(lastTrace, null, 2)}</pre>
+                  </details>
+                )}
               </div>
             )}
-            <button
-              onClick={callImage}
-              disabled={step2Loading}
-              className="btn-primary"
-            >
-              {step2Loading ? '调用图片 API 中...' : '② 调用 GPT IMG 2 生成图片'}
-            </button>
+          </div>
+        </div>
+
+        {/* 批量队列 */}
+        <div className="card">
+          <div className="card-header">
+            <h2 className="font-semibold">批量生成（每行一个 prompt，串行节流 800ms）</h2>
+            {batchRunning && (
+              <span className="text-xs text-slate-500">运行中…</span>
+            )}
+          </div>
+          <div className="card-body space-y-2">
+            <textarea
+              className="input min-h-[100px] font-mono text-xs"
+              value={batchPrompts}
+              onChange={(e) => setBatchPrompts(e.target.value)}
+              placeholder={'每行一个 prompt，例：\n清新简约的母婴用品 logo\n复古日式茶馆海报\n极简北欧风家居图'}
+              disabled={batchRunning}
+            />
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={runBatch}
+                disabled={batchRunning || step2Loading}
+                className="btn-primary text-sm"
+              >
+                {batchRunning ? `批量生成中（${batchDone}/${batchTotal}）…` : '批量生成'}
+              </button>
+              {batchPrompts && !batchRunning && (
+                <button
+                  onClick={() => setBatchPrompts('')}
+                  className="text-xs text-slate-500 hover:text-slate-700"
+                >
+                  清空
+                </button>
+              )}
+            </div>
+            {batchTotal > 0 && (
+              <ProgressBar
+                mode="determinate"
+                value={batchDone}
+                max={batchTotal}
+                label={`队列 ${batchDone}/${batchTotal}`}
+                elapsed={batchElapsed}
+              />
+            )}
+            {batchFailures.length > 0 && (
+              <div className="rounded border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-2 space-y-1">
+                <div className="text-xs text-amber-700 dark:text-amber-300">
+                  失败 {batchFailures.length} 项 · 可二次重试
+                </div>
+                <ul className="space-y-1">
+                  {batchFailures.map((f, i) => (
+                    <li key={i} className="flex items-start gap-2 text-[11px]">
+                      <button
+                        onClick={() => retryFailure(i)}
+                        className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-amber-300 hover:bg-amber-100"
+                      >
+                        <RotateCcw size={10} />
+                        重试
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-slate-700 dark:text-slate-300 truncate" title={f.prompt}>
+                          {f.prompt}
+                        </div>
+                        <div className="text-rose-600 dark:text-rose-400 truncate" title={f.error}>
+                          {f.error}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
 
         <div className="card">
           <div className="card-header">
             <h2 className="font-semibold">生成结果</h2>
-            {imageUrl && (
-              <a href={imageUrl} target="_blank" rel="noreferrer" className="text-xs text-brand-600 hover:underline">
-                打开原图
-              </a>
+            {assets.length > 0 && (
+              <span className="text-xs text-slate-500">
+                共 {assets.length} 张 · 点击查看大图
+              </span>
             )}
           </div>
           <div className="card-body">
-            {imageUrl ? (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img
-                src={imageUrl}
-                alt="生成结果"
-                className="max-w-full rounded border border-slate-200"
-              />
-            ) : (
+            {assets.length === 0 ? (
               <div className="text-sm text-slate-400 text-center py-12">
                 尚未生成图片。完成上方两步后会显示在这里。生成的图片会自动保存到「素材库」。
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                {assets.map((a, i) => (
+                  <button
+                    key={a.id ?? i}
+                    type="button"
+                    onClick={() => setLightboxIndex(i)}
+                    className="block relative group"
+                    aria-label={`查看第 ${i + 1} 张大图`}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={a.url}
+                      alt={`生成结果 ${i + 1}`}
+                      className="w-full aspect-square object-cover rounded border border-slate-200 dark:border-slate-700 group-hover:opacity-90 cursor-zoom-in transition-opacity"
+                    />
+                    <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/50 text-white text-[10px] tabular-nums">
+                      {i + 1} / {assets.length}
+                    </div>
+                  </button>
+                ))}
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {lightboxIndex !== null && assets.length > 0 && (
+        <ImageLightbox
+          images={assets.map((a) => ({ url: a.url }))}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onIndexChange={(i) => setLightboxIndex(i)}
+        />
+      )}
+
+      {/* 历史抽屉：本会话 + 持久化 */}
+      {historyOpen && (
+        <>
+          <div
+            className="fixed inset-0 z-[9000] bg-black/30 backdrop-blur-sm"
+            onClick={() => setHistoryOpen(false)}
+            aria-hidden="true"
+          />
+          <aside
+            className="fixed top-0 right-0 z-[9001] h-full w-80 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-xl flex flex-col"
+            role="dialog"
+            aria-label="本会话生成历史 + 持久化 prompt 历史"
+          >
+            <header className="flex items-center justify-between p-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="font-medium text-sm flex items-center gap-1.5">
+                <HistoryIcon size={14} />
+                历史
+              </div>
+              <button
+                onClick={() => setHistoryOpen(false)}
+                aria-label="关闭历史"
+                className="text-slate-400 hover:text-slate-700"
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <div className="flex-1 overflow-auto p-2 space-y-3">
+              <section>
+                <div className="px-1 py-1 text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                  本会话 · 含图（刷新清空）
+                </div>
+                {history.length === 0 ? (
+                  <div className="text-xs text-slate-400 text-center py-4">
+                    暂无记录
+                  </div>
+                ) : (
+                  history.map((h) => (
+                    <button
+                      key={h.id}
+                      type="button"
+                      onClick={() => reusePromptFromHistory(h)}
+                      className="w-full flex gap-2 items-start text-left p-1.5 rounded hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                      title="点击复用 prompt"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={h.url}
+                        alt="history thumb"
+                        className="w-12 h-12 object-cover rounded border border-slate-200 dark:border-slate-700 shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11px] text-slate-500">
+                          {new Date(h.ts).toLocaleTimeString('zh-CN')}
+                        </div>
+                        <div className="text-xs text-slate-700 dark:text-slate-300 line-clamp-2">
+                          {h.prompt}
+                        </div>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </section>
+
+              <section data-prompt-text-history>
+                <div className="px-1 py-1 text-[11px] font-medium uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                  <span>持久化 prompt（最近 20 条）</span>
+                  {textHistory.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearTextHistory();
+                        toast.info('已清空持久化 prompt 历史');
+                      }}
+                      className="text-slate-400 hover:text-rose-500 inline-flex items-center gap-0.5"
+                      title="清空持久化历史"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  )}
+                </div>
+                {textHistory.length === 0 ? (
+                  <div className="text-xs text-slate-400 text-center py-4">
+                    暂无记录
+                  </div>
+                ) : (
+                  <ul className="space-y-1">
+                    {textHistory.map((p, i) => (
+                      <li key={i}>
+                        <button
+                          type="button"
+                          onClick={() => reusePromptFromText(p)}
+                          className="w-full text-left p-1.5 rounded hover:bg-slate-50 dark:hover:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 line-clamp-2"
+                          title="点击复用 prompt"
+                        >
+                          {p}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </div>
+          </aside>
+        </>
+      )}
     </div>
   );
 }

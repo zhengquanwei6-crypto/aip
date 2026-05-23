@@ -1,8 +1,16 @@
 /**
  * 文案 / 图片提示词 - prompt 构造
+ *
+ * v0.8 Batch 4：新增可编辑模板基础设施（DEFAULT_PROMPTS / getPromptTemplate）
+ * 现有 build*Messages 函数保持 sync，行为不变（保证 Batch 1-3 调用方不破坏）。
+ * /prompts 页编辑的内容暂作"模板库知识"展示与备份，正式启用 override
+ * 留待 v0.9 渐进式整合。
  */
 
 import type { ChatMessage } from './text';
+import { prisma } from '@/lib/db';
+
+/* ---------------- 现有动态构造（保持兼容） ---------------- */
 
 export interface ContentInput {
   platform: 'xiaohongshu' | 'xianyu';
@@ -163,3 +171,177 @@ ${JSON.stringify(input.monthlyMetrics, null, 2)}
     { role: 'user', content: user },
   ];
 }
+
+/* ---------------- v0.8 B4 - 模板库 ---------------- */
+
+export interface PromptVar {
+  key: string;
+  label: string;
+  example?: string;
+}
+
+export interface PromptTemplate {
+  name: string;
+  description: string;
+  system: string;
+  user: string;
+  vars: PromptVar[];
+}
+
+/**
+ * 默认模板（DEFAULT_PROMPTS）
+ *
+ * key 命名约定：`<场景>:<细分>`，例如 xiaohongshu:case
+ * 当用户在 /prompts 页编辑时，自定义内容写入 Setting 表 `prompt:<key>`；
+ * 删除自定义条目 → 通过 getPromptTemplate 自动回退到此默认。
+ */
+export const DEFAULT_PROMPTS: Record<string, PromptTemplate> = {
+  'xiaohongshu:case': {
+    name: '小红书 · 案例型笔记',
+    description: '基于真实/伪真实案例展示设计能力，强调结果与转化路径。',
+    system:
+      '你是平面设计接单 AI 运营工作台的小红书案例文案助手。以"小细节+真实结果"的口吻写笔记，避免绝对化词汇，避免站外导流。输出严格 JSON：{"titles":[5条],"body":"...","coverText":"≤14字","imageSuggestion":"...","tags":["..."],"cta":"..."}',
+    user: '类目：{{category}}\n目标客户：{{audience}}\n本次案例主题：{{topic}}\n关键词：{{keywords}}\n\n请输出严格 JSON。',
+    vars: [
+      { key: 'category', label: '类目', example: 'Logo' },
+      { key: 'audience', label: '目标客户', example: '电商卖家' },
+      { key: 'topic', label: '案例主题', example: '奶茶店开业菜单升级' },
+      { key: 'keywords', label: '关键词', example: 'Logo设计, 餐饮品牌' },
+    ],
+  },
+  'xiaohongshu:tutorial': {
+    name: '小红书 · 教程/干货型',
+    description: '通过 N 步流程或 N 个套路输出知识型笔记，建立专业感。',
+    system:
+      '你是小红书教程文案助手。结构：钩子→3-5 步流程→可执行小贴士→轻引导私信。严格 JSON：{"titles":[5条],"body":"...","coverText":"≤14字","imageSuggestion":"...","tags":["..."],"cta":"..."}',
+    user: '类目：{{category}}\n目标客户：{{audience}}\n教程主题：{{topic}}\n步骤数：{{steps}}\n\n请输出严格 JSON。',
+    vars: [
+      { key: 'category', label: '类目', example: '海报' },
+      { key: 'audience', label: '目标客户', example: '创业者' },
+      { key: 'topic', label: '教程主题', example: '海报排版 5 步法' },
+      { key: 'steps', label: '步骤数', example: '5' },
+    ],
+  },
+  'xianyu:product': {
+    name: '闲鱼 · 商品文案',
+    description: '强调服务项目、价格阶梯、交付范围、修改规则、下单流程。',
+    system:
+      '你是闲鱼商品文案助手。给出严格 JSON：{"title":"≤30字","description":"分段详情","coverText":"≤12字","tiers":[{"tier":"...","name":"...","priceRange":"..."}],"orderFlow":["..."],"deliveryScope":"...","revisionRule":"...","preOrderNotes":["..."],"faq":[{"q":"...","a":"..."}],"quickReplies":["..."]}',
+    user: '类目：{{category}}\n核心服务：{{topic}}\n参考价格：{{priceRange}}\n\n请输出严格 JSON。',
+    vars: [
+      { key: 'category', label: '类目', example: 'VI品牌' },
+      { key: 'topic', label: '核心服务', example: '小型品牌全套VI' },
+      { key: 'priceRange', label: '参考价格', example: '500-2000元' },
+    ],
+  },
+  'title:refine': {
+    name: '标题打磨器',
+    description: '把一个标题用 5 种风格各改写一版（加钩子/更口语/数字化/痛点切入/反差感）。',
+    system:
+      '你是标题打磨大师。把原标题用 5 种风格各改写一版：加钩子、更口语、数字化、痛点切入、反差感。每条 ≤ 22 字。严格 JSON：{"refined":[{"style":"...","title":"..."}]}',
+    user: '原标题：{{title}}\n平台：{{platform}}',
+    vars: [
+      { key: 'title', label: '原标题', example: '我帮奶茶店升级菜单的故事' },
+      { key: 'platform', label: '平台', example: '小红书' },
+    ],
+  },
+  'image:suggest': {
+    name: '图片提示词建议',
+    description: '为 GPT IMG 2 生成中英混合的图像 prompt，描述构图、配色、文字位置。',
+    system:
+      '你是图片提示词专家。中英混合输出，强调构图/配色/风格/文字位置。严格 JSON：{"prompt":"...","negativePrompt":"...","size":"1024x1536"}',
+    user: '平台：{{platform}}\n图片类型：{{imageType}}\n类目：{{category}}\n封面标题：{{coverTitle}}\n风格：{{styleKeywords}}',
+    vars: [
+      { key: 'platform', label: '平台', example: '小红书' },
+      { key: 'imageType', label: '图片类型', example: '封面图' },
+      { key: 'category', label: '类目', example: 'Logo' },
+      { key: 'coverTitle', label: '封面标题', example: '5 步搞定 Logo' },
+      { key: 'styleKeywords', label: '风格', example: '极简, 暖色调' },
+    ],
+  },
+};
+
+const PROMPT_KEY_RE = /^[a-z0-9:_-]+$/;
+const PROMPT_PREFIX = 'prompt:';
+
+export function isValidPromptKey(key: string): boolean {
+  return typeof key === 'string' && key.length > 0 && key.length <= 80 && PROMPT_KEY_RE.test(key);
+}
+
+export function isPromptTemplateShape(o: any): o is PromptTemplate {
+  if (!o || typeof o !== 'object') return false;
+  if (typeof o.name !== 'string') return false;
+  if (typeof o.description !== 'string') return false;
+  if (typeof o.system !== 'string') return false;
+  if (typeof o.user !== 'string') return false;
+  if (!Array.isArray(o.vars)) return false;
+  for (const v of o.vars) {
+    if (!v || typeof v.key !== 'string' || typeof v.label !== 'string') return false;
+  }
+  return true;
+}
+
+/**
+ * 读取模板：优先从 Setting 表读 `prompt:<key>`，否则回退到 DEFAULT_PROMPTS。
+ */
+export async function getPromptTemplate(key: string): Promise<PromptTemplate | null> {
+  if (!isValidPromptKey(key)) return null;
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: PROMPT_PREFIX + key } });
+    if (row && row.value) {
+      try {
+        const parsed = JSON.parse(row.value);
+        if (isPromptTemplateShape(parsed)) return parsed;
+      } catch {
+        /* ignore malformed */
+      }
+    }
+  } catch {
+    /* prisma error → fall through */
+  }
+  return DEFAULT_PROMPTS[key] ?? null;
+}
+
+/**
+ * 列出所有 prompt 条目（合并：用户自定义 + DEFAULT_PROMPTS 兜底）。
+ * 自定义优先；用户没有的 key 用 DEFAULT_PROMPTS 填充。
+ */
+export async function listPromptTemplates(): Promise<
+  { key: string; source: 'custom' | 'default'; tpl: PromptTemplate }[]
+> {
+  const rows = await prisma.setting.findMany({
+    where: { key: { startsWith: PROMPT_PREFIX } },
+  });
+  const customMap = new Map<string, PromptTemplate>();
+  for (const row of rows) {
+    const k = row.key.slice(PROMPT_PREFIX.length);
+    if (!isValidPromptKey(k)) continue;
+    try {
+      const parsed = JSON.parse(row.value);
+      if (isPromptTemplateShape(parsed)) customMap.set(k, parsed);
+    } catch {
+      /* skip malformed */
+    }
+  }
+  const allKeys = new Set<string>([
+    ...customMap.keys(),
+    ...Object.keys(DEFAULT_PROMPTS),
+  ]);
+  const out: { key: string; source: 'custom' | 'default'; tpl: PromptTemplate }[] = [];
+  for (const key of allKeys) {
+    const custom = customMap.get(key);
+    if (custom) {
+      out.push({ key, source: 'custom', tpl: custom });
+    } else {
+      out.push({ key, source: 'default', tpl: DEFAULT_PROMPTS[key] });
+    }
+  }
+  // 排序：先 default 排序键名，再 custom 在前
+  out.sort((a, b) => {
+    if (a.source !== b.source) return a.source === 'custom' ? -1 : 1;
+    return a.key.localeCompare(b.key);
+  });
+  return out;
+}
+
+export const PROMPT_KEY_PREFIX = PROMPT_PREFIX;

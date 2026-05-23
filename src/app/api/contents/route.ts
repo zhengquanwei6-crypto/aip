@@ -105,3 +105,14 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ ok: true, items: items.slice(0, limit) });
 }
+
+// BUG-3 fix: legacy clients sometimes POST to /api/contents (plural)
+// expecting content generation. Real endpoint is /api/content/generate (singular).
+// Return 307 so method + body are preserved on the redirect.
+export async function POST(req: NextRequest) {
+  // Build redirect against the request's actual host instead of relying on req.url
+  // (req.url has been seen to use 0.0.0.0 inside the container).
+  const host = req.headers.get('host') || '127.0.0.1:3000';
+  const proto = req.headers.get('x-forwarded-proto') || 'http';
+  return NextResponse.redirect(new URL('/api/content/generate', `${proto}://${host}`), 307);
+}

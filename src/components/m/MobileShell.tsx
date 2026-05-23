@@ -3,6 +3,14 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import clsx from 'clsx';
+import {
+  Home,
+  CheckSquare,
+  PencilLine,
+  Image as ImageIcon,
+  User,
+  ChevronLeft,
+} from 'lucide-react';
 import ToastProvider from './Toast';
 import ThemeToggle from '../ThemeToggle';
 
@@ -52,6 +60,24 @@ export default function MobileShell({
   const isTab = TABS.some((t) => t.href === pathname);
   const showBack = !isTab && pathname !== '/m';
 
+  /**
+   * 桌面版按钮：
+   * - 写 cookie view_mode=desktop（一年）
+   * - 路径里去掉 /m 前缀（例如 /m/today → /today；/m → /dashboard）
+   * - 用 router.push 跳过去；middleware 看到 cookie 后会放行
+   */
+  function switchToDesktop() {
+    if (typeof document !== 'undefined') {
+      const oneYear = 60 * 60 * 24 * 365;
+      document.cookie = `view_mode=desktop; path=/; max-age=${oneYear}; SameSite=Lax`;
+    }
+    let target = pathname && pathname.startsWith('/m')
+      ? pathname.replace(/^\/m(?=\/|$)/, '')
+      : pathname;
+    if (!target || target === '') target = '/dashboard';
+    router.push(target);
+  }
+
   return (
     <ToastProvider>
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col pb-16">
@@ -63,9 +89,7 @@ export default function MobileShell({
               className="-ml-1 w-9 h-9 flex items-center justify-center text-slate-700"
               aria-label="返回"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
             </button>
           ) : (
             <div className="w-9" />
@@ -74,13 +98,15 @@ export default function MobileShell({
             {title}
           </h1>
           <ThemeToggle className="mr-1" />
-          <Link
-            href="?desktop=1"
-            prefetch={false}
-            className="text-xs text-slate-400 px-2"
+          <button
+            type="button"
+            onClick={switchToDesktop}
+            data-switch-desktop
+            className="text-xs text-slate-400 px-2 hover:text-brand-600"
+            aria-label="切到桌面版"
           >
             桌面版
-          </Link>
+          </button>
         </header>
 
         {/* 内容 */}
@@ -115,54 +141,24 @@ export default function MobileShell({
 }
 
 function TabIcon({ name, active }: { name: string; active: boolean }) {
-  const stroke = active ? '#2563eb' : '#64748b';
-  const props = {
-    width: 22,
-    height: 22,
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke,
+  const color = active ? '#2563eb' : '#64748b';
+  const common = {
+    size: 22,
+    color,
     strokeWidth: 2,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
+    'aria-hidden': true as const,
   };
   switch (name) {
     case 'home':
-      return (
-        <svg {...props}>
-          <path d="M3 12l9-9 9 9" />
-          <path d="M5 10v10h14V10" />
-        </svg>
-      );
+      return <Home {...common} />;
     case 'check':
-      return (
-        <svg {...props}>
-          <rect x="3" y="4" width="18" height="18" rx="2" />
-          <polyline points="9 12 11 14 15 10" />
-        </svg>
-      );
+      return <CheckSquare {...common} />;
     case 'edit':
-      return (
-        <svg {...props}>
-          <path d="M12 20h9" />
-          <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z" />
-        </svg>
-      );
+      return <PencilLine {...common} />;
     case 'image':
-      return (
-        <svg {...props}>
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          <circle cx="9" cy="9" r="2" />
-          <path d="M21 15l-5-5L5 21" />
-        </svg>
-      );
+      return <ImageIcon {...common} />;
     case 'user':
-      return (
-        <svg {...props}>
-          <circle cx="12" cy="8" r="4" />
-          <path d="M4 21v-1a8 8 0 0116 0v1" />
-        </svg>
-      );
+      return <User {...common} />;
     default:
       return null;
   }

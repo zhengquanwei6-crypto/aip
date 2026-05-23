@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import ClientDetailClient from './ClientDetailClient';
+import { AgentLauncher } from '@/components/agents/AgentDrawer';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,6 +43,7 @@ export default async function ClientDetailPage({
           })),
         }}
       />
-    </div>
+          <AgentLauncher slug="client-coach" context={{ clientId: params.id }} />
+      </div>
   );
 }

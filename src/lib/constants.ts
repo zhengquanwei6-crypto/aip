@@ -82,6 +82,7 @@ export const SCRIPT_TYPES = [
 
 export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
 
+// 侧栏导航：在 /presets 之后插入 /adapters 入口
 export const NAV_ITEMS: { href: string; label: string }[] = [
   { href: '/dashboard', label: '首页看板' },
   { href: '/today', label: '今日任务' },
@@ -96,8 +97,11 @@ export const NAV_ITEMS: { href: string; label: string }[] = [
   { href: '/pricing', label: '价格套餐' },
   { href: '/scripts', label: '私信话术' },
   { href: '/presets', label: '图片预设' },
+  { href: '/adapters', label: 'API 适配器' },
   { href: '/analytics', label: '数据复盘' },
   { href: '/weekly-report', label: '周复盘报告' },
+  { href: '/history', label: 'AI 输出历史' },
+  { href: '/prompts', label: 'Prompt 模板库' },
   { href: '/suggestions', label: 'AI 建议' },
   { href: '/settings', label: '设置' },
 ];

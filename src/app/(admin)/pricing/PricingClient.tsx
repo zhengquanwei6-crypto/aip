@@ -1,7 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { CATEGORIES, PRICE_TIERS } from '@/lib/constants';
+import { toast } from '@/lib/toast';
+import SimpleListShell from '@/components/SimpleListShell';
+import { bulkSerial } from '@/components/ListShell';
 
 interface Pkg {
   id: string;
@@ -20,8 +23,6 @@ const TIER_BADGE: Record<string, string> = {
 
 export default function PricingClient({ initial }: { initial: Pkg[] }) {
   const [items, setItems] = useState(initial);
-  const [filterCat, setFilterCat] = useState('');
-  const [filterTier, setFilterTier] = useState('');
   const [editing, setEditing] = useState<Pkg | null>(null);
   const [draft, setDraft] = useState<Pkg>({
     id: '',
@@ -31,22 +32,12 @@ export default function PricingClient({ initial }: { initial: Pkg[] }) {
     priceRange: '',
     description: '',
   });
-  const [error, setError] = useState<string | null>(null);
-
-  const filtered = useMemo(() => {
-    return items.filter(
-      (x) =>
-        (!filterCat || x.category === filterCat) &&
-        (!filterTier || x.tier === filterTier),
-    );
-  }, [items, filterCat, filterTier]);
 
   async function add() {
     if (!draft.name.trim() || !draft.priceRange.trim()) {
-      setError('请填写名称和价格区间');
+      toast.error('请填写名称和价格区间');
       return;
     }
-    setError(null);
     try {
       const res = await fetch('/api/pricing', {
         method: 'POST',
@@ -55,10 +46,14 @@ export default function PricingClient({ initial }: { initial: Pkg[] }) {
       });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || '添加失败');
-      setItems((arr) => [{ ...j.item, description: j.item.description ?? '' }, ...arr]);
+      setItems((arr) => [
+        { ...j.item, description: j.item.description ?? '' },
+        ...arr,
+      ]);
       setDraft({ ...draft, name: '', priceRange: '', description: '' });
+      toast.success('已新增套餐');
     } catch (e) {
-      setError((e as Error).message);
+      toast.error((e as Error).message);
     }
   }
 
@@ -73,12 +68,15 @@ export default function PricingClient({ initial }: { initial: Pkg[] }) {
       if (!res.ok || !j.ok) throw new Error(j.error || '保存失败');
       setItems((arr) =>
         arr.map((x) =>
-          x.id === p.id ? { ...j.item, description: j.item.description ?? '' } : x,
+          x.id === p.id
+            ? { ...j.item, description: j.item.description ?? '' }
+            : x,
         ),
       );
       setEditing(null);
+      toast.success('已保存');
     } catch (e) {
-      alert((e as Error).message);
+      toast.error((e as Error).message);
     }
   }
 
@@ -87,7 +85,7 @@ export default function PricingClient({ initial }: { initial: Pkg[] }) {
     const res = await fetch(`/api/pricing/${id}`, { method: 'DELETE' });
     const j = await res.json();
     if (!res.ok || !j.ok) {
-      alert(j.error || '删除失败');
+      toast.error(j.error || '删除失败');
       return;
     }
     setItems((arr) => arr.filter((x) => x.id !== id));
@@ -143,7 +141,9 @@ export default function PricingClient({ initial }: { initial: Pkg[] }) {
             <input
               className="input"
               value={draft.priceRange}
-              onChange={(e) => setDraft({ ...draft, priceRange: e.target.value })}
+              onChange={(e) =>
+                setDraft({ ...draft, priceRange: e.target.value })
+              }
               placeholder="例：199-399元"
             />
           </div>
@@ -156,180 +156,188 @@ export default function PricingClient({ initial }: { initial: Pkg[] }) {
           <input
             className="input"
             value={draft.description}
-            onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+            onChange={(e) =>
+              setDraft({ ...draft, description: e.target.value })
+            }
           />
-          {error && <div className="text-sm text-red-600 mt-2">{error}</div>}
         </div>
       </div>
 
-      {/* 筛选 */}
-      <div className="card">
-        <div className="card-body flex items-end gap-3 flex-wrap">
-          <div>
-            <label className="label">类目</label>
-            <select
-              className="input w-40"
-              value={filterCat}
-              onChange={(e) => setFilterCat(e.target.value)}
-            >
-              <option value="">全部</option>
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+      <SimpleListShell<Pkg>
+        items={items}
+        getId={(p) => p.id}
+        storageKey="list:pricing"
+        searchPlaceholder="搜索名称 / 类目 / 档位 / 价格"
+        searchKeys={['name', 'category', 'tier', 'priceRange', 'description']}
+        onToastSuccess={(m) => toast.success(m)}
+        onToastError={(m) => toast.error(m)}
+        bulkDelete={{
+          confirmText: (n) => `确认删除已选 ${n} 个价格套餐？`,
+          run: async (ids) => {
+            const r = await bulkSerial(ids, async (id) => {
+              const res = await fetch(`/api/pricing/${id}`, {
+                method: 'DELETE',
+              });
+              const j = await res.json().catch(() => ({}));
+              if (!res.ok || !j.ok) throw new Error(j.error || '删除失败');
+            });
+            const failedIds = new Set(r.failed.map((f) => f.id));
+            setItems((arr) =>
+              arr.filter((x) => !ids.includes(x.id) || failedIds.has(x.id)),
+            );
+            if (r.failed.length === 0)
+              return { ok: true, message: `已删除 ${r.ok} 个套餐` };
+            return {
+              ok: false,
+              message: `部分失败：成功 ${r.ok} / 失败 ${r.failed.length}`,
+            };
+          },
+        }}
+      >
+        {(filtered, helpers) => (
+          <div className="card overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="table min-w-[800px]">
+                <thead>
+                  <tr>
+                    <th className="w-10" />
+                    <th className="w-32">类目</th>
+                    <th className="w-24">档位</th>
+                    <th>名称</th>
+                    <th className="w-40">价格区间</th>
+                    <th>说明</th>
+                    <th className="w-32 text-right">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((p) =>
+                    editing?.id === p.id ? (
+                      <tr key={p.id} className="bg-slate-50 dark:bg-slate-800/50">
+                        <td />
+                        <td>
+                          <select
+                            className="input"
+                            value={editing.category}
+                            onChange={(e) =>
+                              setEditing({ ...editing!, category: e.target.value })
+                            }
+                          >
+                            {CATEGORIES.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <select
+                            className="input"
+                            value={editing.tier}
+                            onChange={(e) =>
+                              setEditing({ ...editing!, tier: e.target.value })
+                            }
+                          >
+                            {PRICE_TIERS.map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <input
+                            className="input"
+                            value={editing.name}
+                            onChange={(e) =>
+                              setEditing({ ...editing!, name: e.target.value })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className="input"
+                            value={editing.priceRange}
+                            onChange={(e) =>
+                              setEditing({ ...editing!, priceRange: e.target.value })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className="input"
+                            value={editing.description}
+                            onChange={(e) =>
+                              setEditing({ ...editing!, description: e.target.value })
+                            }
+                          />
+                        </td>
+                        <td className="text-right space-x-2">
+                          <button
+                            onClick={() => save(editing!)}
+                            className="text-brand-600 hover:underline"
+                          >
+                            保存
+                          </button>
+                          <button
+                            onClick={() => setEditing(null)}
+                            className="text-slate-500 hover:underline"
+                          >
+                            取消
+                          </button>
+                        </td>
+                      </tr>
+                    ) : (
+                      <tr
+                        key={p.id}
+                        className={
+                          helpers.isSelected(p.id)
+                            ? 'bg-brand-50 dark:bg-brand-900/30'
+                            : ''
+                        }
+                      >
+                        <td>
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 cursor-pointer"
+                            checked={helpers.isSelected(p.id)}
+                            onChange={() => helpers.toggle(p.id)}
+                            aria-label="选择行"
+                          />
+                        </td>
+                        <td>{p.category}</td>
+                        <td>
+                          <span className={TIER_BADGE[p.tier] ?? 'badge-gray'}>
+                            {p.tier}
+                          </span>
+                        </td>
+                        <td>{p.name}</td>
+                        <td className="text-slate-700 dark:text-slate-200">
+                          {p.priceRange}
+                        </td>
+                        <td className="text-slate-500">{p.description}</td>
+                        <td className="text-right space-x-2">
+                          <button
+                            onClick={() => setEditing(p)}
+                            className="text-brand-600 hover:underline"
+                          >
+                            编辑
+                          </button>
+                          <button
+                            onClick={() => del(p.id)}
+                            className="text-red-600 hover:underline"
+                          >
+                            删除
+                          </button>
+                        </td>
+                      </tr>
+                    ),
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div>
-            <label className="label">档位</label>
-            <select
-              className="input w-32"
-              value={filterTier}
-              onChange={(e) => setFilterTier(e.target.value)}
-            >
-              <option value="">全部</option>
-              {PRICE_TIERS.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="text-sm text-slate-500 ml-auto">
-            共 {filtered.length} 条
-          </div>
-        </div>
-      </div>
-
-      {/* 列表 */}
-      <div className="card overflow-hidden">
-        <div className="overflow-x-auto">
-        <table className="table min-w-[760px]">
-          <thead>
-            <tr>
-              <th className="w-32">类目</th>
-              <th className="w-24">档位</th>
-              <th>名称</th>
-              <th className="w-40">价格区间</th>
-              <th>说明</th>
-              <th className="w-32 text-right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((p) =>
-              editing?.id === p.id ? (
-                <tr key={p.id} className="bg-slate-50">
-                  <td>
-                    <select
-                      className="input"
-                      value={editing.category}
-                      onChange={(e) =>
-                        setEditing({ ...editing!, category: e.target.value })
-                      }
-                    >
-                      {CATEGORIES.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td>
-                    <select
-                      className="input"
-                      value={editing.tier}
-                      onChange={(e) =>
-                        setEditing({ ...editing!, tier: e.target.value })
-                      }
-                    >
-                      {PRICE_TIERS.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td>
-                    <input
-                      className="input"
-                      value={editing.name}
-                      onChange={(e) =>
-                        setEditing({ ...editing!, name: e.target.value })
-                      }
-                    />
-                  </td>
-                  <td>
-                    <input
-                      className="input"
-                      value={editing.priceRange}
-                      onChange={(e) =>
-                        setEditing({ ...editing!, priceRange: e.target.value })
-                      }
-                    />
-                  </td>
-                  <td>
-                    <input
-                      className="input"
-                      value={editing.description}
-                      onChange={(e) =>
-                        setEditing({ ...editing!, description: e.target.value })
-                      }
-                    />
-                  </td>
-                  <td className="text-right space-x-2">
-                    <button
-                      onClick={() => save(editing!)}
-                      className="text-brand-600 hover:underline"
-                    >
-                      保存
-                    </button>
-                    <button
-                      onClick={() => setEditing(null)}
-                      className="text-slate-500 hover:underline"
-                    >
-                      取消
-                    </button>
-                  </td>
-                </tr>
-              ) : (
-                <tr key={p.id}>
-                  <td>{p.category}</td>
-                  <td>
-                    <span className={TIER_BADGE[p.tier] ?? 'badge-gray'}>
-                      {p.tier}
-                    </span>
-                  </td>
-                  <td>{p.name}</td>
-                  <td className="text-slate-700">{p.priceRange}</td>
-                  <td className="text-slate-500">{p.description}</td>
-                  <td className="text-right space-x-2">
-                    <button
-                      onClick={() => setEditing(p)}
-                      className="text-brand-600 hover:underline"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      onClick={() => del(p.id)}
-                      className="text-red-600 hover:underline"
-                    >
-                      删除
-                    </button>
-                  </td>
-                </tr>
-              ),
-            )}
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={6} className="text-center text-slate-400 py-8">
-                  暂无套餐
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-        </div>
-      </div>
+        )}
+      </SimpleListShell>
     </div>
   );
 }

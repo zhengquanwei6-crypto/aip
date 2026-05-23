@@ -131,3 +131,70 @@ body {
     display: block !important;
   }
 }
+
+/* ── v0.7-batch-1-utilities (U04 共享动画 + 进度条 + flash-new) ── */
+@layer utilities {
+  /* 淡入 */
+  .animate-fade-in {
+    animation: fade-in 200ms ease-out both;
+  }
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(2px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* 缩放进入 */
+  .animate-zoom-in {
+    animation: zoom-in 200ms ease-out both;
+  }
+  @keyframes zoom-in {
+    from { opacity: 0; transform: scale(0.96); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+
+  /* 滑动进入（v0.7 新增） */
+  .animate-slide-up {
+    animation: slide-up 250ms ease-out both;
+  }
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* 高亮闪现（v0.7 新增） */
+  .flash-new {
+    animation: flash-new 1500ms ease-out both;
+  }
+  @keyframes flash-new {
+    0%   { background-color: hsl(48 96% 89% / 0.6); box-shadow: 0 0 0 4px hsl(48 96% 70% / 0.35); }
+    60%  { background-color: hsl(48 96% 89% / 0.3); box-shadow: 0 0 0 2px hsl(48 96% 70% / 0.15); }
+    100% { background-color: transparent;          box-shadow: 0 0 0 0   transparent; }
+  }
+  .dark .flash-new {
+    animation-name: flash-new-dark;
+  }
+  @keyframes flash-new-dark {
+    0%   { background-color: hsl(48 96% 50% / 0.18); box-shadow: 0 0 0 4px hsl(48 96% 50% / 0.18); }
+    100% { background-color: transparent;            box-shadow: 0 0 0 0   transparent; }
+  }
+
+  /* 进度条不确定模式动画（U02 配套） */
+  .animate-progress-indeterminate {
+    animation: progress-indeterminate 1.4s ease-in-out infinite;
+  }
+  @keyframes progress-indeterminate {
+    0%   { left: -33%; }
+    50%  { left: 50%; }
+    100% { left: 110%; }
+  }
+}
+
+/* ── 系统级减少动画偏好 ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

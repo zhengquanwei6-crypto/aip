@@ -1,0 +1,222 @@
+/**
+ * 图片生成统一入口
+ *
+ * 优先级：
+ *   1. 用户在 Setting 里选了 IMAGE_DEFAULT_ADAPTER（adapter slug）→ 走 adapter
+ *   2. 否则回退到旧 generateImage（OpenAI 兼容硬编码）
+ *
+ * v0.8 Batch 5（B5.1 / B5.5）：fail 路径透传 trace 给上层，便于前端展示
+ *   - trace 包含 adapter / baseUrl / model / lastError / lastResponseSnippet / pollHistory
+ *   - trace 不包含 API key / Authorization 原文（adapter-runtime.redactHeaders 已脱敏）
+ *
+ * 之前 v0.8 Batch 1（B1.8）：错误信息附加 baseUrl + model
+ */
+
+import { prisma } from '@/lib/db';
+import { generateImage as legacyGenerateImage } from '@/lib/ai/image';
+import { runAdapter } from '@/lib/adapter-runtime';
+import { adapterConfigSchema, adapterKey } from '@/lib/adapter-types';
+import { saveImageFromBase64, saveImageFromUrl } from '@/lib/storage';
+
+export interface RunOptions {
+  prompt: string;
+  size?: string;
+  n?: number;
+  /** 透传给 adapter 的 extra（aspectRatio / resolution / outputFormat 等）*/
+  extra?: Record<string, unknown>;
+  /** AbortController 信号 */
+  abortSignal?: AbortSignal;
+}
+
+/** 精简版 trace，仅放对前端排错有用的字段（不含原始 headers / 完整请求体） */
+export interface RunTrace {
+  via: 'adapter' | 'legacy';
+  adapterSlug?: string;
+  baseUrl?: string;
+  model?: string;
+  /** 最近一次 adapter 错误（来自 adapter-runtime trace.lastError）*/
+  lastError?: string;
+  /** 最近一次响应片段（截断 800 字符） */
+  lastResponseSnippet?: string;
+  /** 轮询历史：每条带 ts(ms) / status / ok */
+  pollHistory?: { ts: number; at?: string; status?: string; ok: boolean }[];
+}
+
+export interface RunResult {
+  ok: boolean;
+  /** 已经下载好、可直接展示 / 写库的本地路径数组（/uploads/xxx.png）*/
+  savedUrls: string[];
+  /** 远端原始 URL（如果有），仅供调试 */
+  remoteUrls?: string[];
+  durationMs?: number;
+  via: 'adapter' | 'legacy';
+  adapterSlug?: string;
+  model?: string;
+  error?: string;
+  /** v0.8 Batch 5：精简 trace，可直接序列化进 API 响应 */
+  trace?: RunTrace;
+}
+
+function adapterSummary(slug: string, baseUrl?: string): string {
+  return ` [adapter=${slug}, baseUrl=${baseUrl || '(空)'}]`;
+}
+
+/** 读 Setting 里 IMAGE_DEFAULT_ADAPTER 的 slug；空字符串则视为不存在 */
+async function readDefaultAdapterSlug(): Promise<string | null> {
+  const row = await prisma.setting.findUnique({ where: { key: 'IMAGE_DEFAULT_ADAPTER' } });
+  const v = row?.value?.trim();
+  return v ? v : null;
+}
+
+/** 读出某个 adapter 配置 */
+async function loadAdapter(slug: string) {
+  const row = await prisma.setting.findUnique({ where: { key: adapterKey(slug) } });
+  if (!row) return null;
+  try {
+    const parsed = adapterConfigSchema.safeParse(JSON.parse(row.value));
+    if (!parsed.success) return null;
+    if (!parsed.data.enabled) return null;
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+/** 把任意远端/base64 URL 列表本地化保存 */
+async function persistImages(remoteUrls: string[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const url of remoteUrls) {
+    try {
+      if (typeof url === 'string' && url.startsWith('data:image/')) {
+        const m = url.match(/^data:image\/[a-z]+;base64,(.+)$/i);
+        if (m) {
+          const saved = await saveImageFromBase64(m[1]);
+          out.push(saved.url);
+          continue;
+        }
+      }
+      const saved = await saveImageFromUrl(url);
+      out.push(saved.url);
+    } catch (e) {
+      // 单张失败不影响其余
+    }
+  }
+  return out;
+}
+
+/** 从 adapter-runtime trace（结构宽松）里提炼前端能用的精简版 */
+function extractAdapterTrace(
+  rawTrace: any,
+  slug: string,
+  baseUrl?: string,
+): RunTrace {
+  const out: RunTrace = { via: 'adapter', adapterSlug: slug, baseUrl };
+  if (!rawTrace || typeof rawTrace !== 'object') return out;
+  if (typeof rawTrace.lastError === 'string') out.lastError = rawTrace.lastError;
+  if (typeof rawTrace.lastResponseSnippet === 'string') {
+    out.lastResponseSnippet = rawTrace.lastResponseSnippet;
+  }
+  if (Array.isArray(rawTrace.pollHistory)) {
+    out.pollHistory = rawTrace.pollHistory.map((h: any) => ({
+      ts: typeof h?.ts === 'number' ? h.ts : 0,
+      at: typeof h?.at === 'string' ? h.at : undefined,
+      status: typeof h?.status === 'string' ? h.status : undefined,
+      ok: typeof h?.ok === 'boolean' ? h.ok : true,
+    }));
+  }
+  return out;
+}
+
+export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
+  const t0 = Date.now();
+
+  // 1) 尝试 adapter 路径
+  try {
+    const slug = await readDefaultAdapterSlug();
+    if (slug) {
+      const adapter = await loadAdapter(slug);
+      if (adapter) {
+        // 读 IMAGE_API_KEY
+        const cfg = await prisma.setting.findUnique({ where: { key: 'IMAGE_API_KEY' } });
+        const apiKey = cfg?.value || process.env.IMAGE_API_KEY || '';
+        if (!apiKey) {
+          return {
+            ok: false, savedUrls: [], via: 'adapter', adapterSlug: slug,
+            error: '未配置 IMAGE_API_KEY，请到设置页填写' + adapterSummary(slug, adapter.baseUrl),
+            durationMs: Date.now() - t0,
+            trace: { via: 'adapter', adapterSlug: slug, baseUrl: adapter.baseUrl, lastError: '未配置 IMAGE_API_KEY' },
+          };
+        }
+        // v0.8 Batch 5：失败诊断需要 trace，所以始终 collectTrace
+        const result = await runAdapter(adapter, {
+          prompt: opts.prompt,
+          size: opts.size,
+          n: opts.n ?? 1,
+          extra: opts.extra ?? {},
+        }, {
+          apiKey,
+          abortSignal: opts.abortSignal,
+          collectTrace: true,
+        });
+        const trace = extractAdapterTrace(result.trace, slug, adapter.baseUrl);
+        if (!result.ok || result.imageUrls.length === 0) {
+          return {
+            ok: false, savedUrls: [], remoteUrls: result.imageUrls, via: 'adapter',
+            adapterSlug: slug,
+            error: (result.error ?? trace.lastError ?? 'adapter 返回空结果') + adapterSummary(slug, adapter.baseUrl),
+            durationMs: Date.now() - t0,
+            trace,
+          };
+        }
+        const savedUrls = await persistImages(result.imageUrls);
+        return {
+          ok: savedUrls.length > 0,
+          savedUrls,
+          remoteUrls: result.imageUrls,
+          durationMs: Date.now() - t0,
+          via: 'adapter',
+          adapterSlug: slug,
+          error: savedUrls.length === 0 ? '远程图片下载失败' + adapterSummary(slug, adapter.baseUrl) : undefined,
+          trace,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[image-runner] adapter path failed, falling back:', (e as Error).message);
+  }
+
+  // 2) Legacy 路径
+  const legacy = await legacyGenerateImage({ prompt: opts.prompt, size: opts.size, n: opts.n });
+  if (!legacy.ok || legacy.images.length === 0) {
+    return {
+      ok: false, savedUrls: [], via: 'legacy',
+      error: legacy.error ?? '未返回图片',
+      model: legacy.model,
+      durationMs: Date.now() - t0,
+      trace: { via: 'legacy', model: legacy.model, lastError: legacy.error ?? undefined },
+    };
+  }
+  const savedUrls: string[] = [];
+  for (const it of legacy.images) {
+    try {
+      if (it.b64) {
+        const saved = await saveImageFromBase64(it.b64);
+        savedUrls.push(saved.url);
+      } else if (it.url) {
+        const saved = await saveImageFromUrl(it.url);
+        savedUrls.push(saved.url);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return {
+    ok: savedUrls.length > 0,
+    savedUrls,
+    via: 'legacy',
+    model: legacy.model,
+    durationMs: Date.now() - t0,
+    error: savedUrls.length === 0 ? '图片保存失败' : undefined,
+    trace: { via: 'legacy', model: legacy.model },
+  };
+}

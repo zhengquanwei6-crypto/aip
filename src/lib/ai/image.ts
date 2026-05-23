@@ -3,6 +3,8 @@
  * 兼容 GPT IMG 2 / OpenAI images.generate 格式
  *
  * 配置优先级：数据库 Setting 表 > .env
+ *
+ * v0.8 Batch 1（B1.8）：错误信息附加 baseUrl + model 摘要
  */
 
 import { prisma } from '@/lib/db';
@@ -24,6 +26,10 @@ export interface ImageConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+}
+
+function summary(cfg: Partial<ImageConfig>): string {
+  return ` [baseUrl=${cfg.baseUrl || '(空)'}, model=${cfg.model || '(空)'}]`;
 }
 
 export async function getImageConfig(): Promise<Partial<ImageConfig>> {
@@ -52,7 +58,9 @@ export async function generateImage(
     return {
       ok: false,
       images: [],
-      error: '未配置图片 API。请前往「设置」页面填写 IMAGE_API_BASE_URL 与 IMAGE_API_KEY。',
+      error:
+        '未配置图片 API。请前往「设置」页面填写 IMAGE_API_BASE_URL 与 IMAGE_API_KEY。' +
+        summary(cfg),
     };
   }
 
@@ -78,7 +86,10 @@ export async function generateImage(
       return {
         ok: false,
         images: [],
-        error: `图片 API 调用失败 (${res.status}): ${errText.slice(0, 500)}`,
+        error:
+          `图片 API 调用失败 (${res.status}): ${errText.slice(0, 500)}` +
+          summary(cfg),
+        model: cfg.model,
       };
     }
     const data: any = await res.json();
@@ -89,7 +100,8 @@ export async function generateImage(
     return {
       ok: false,
       images: [],
-      error: `图片请求异常: ${(err as Error).message}`,
+      error: `图片请求异常: ${(err as Error).message}` + summary(cfg),
+      model: cfg.model,
     };
   }
 }

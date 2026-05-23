@@ -1,8 +1,11 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { Download, Trash2, Heart } from 'lucide-react';
 import { IMAGE_TYPES } from '@/lib/constants';
+import { toast } from '@/lib/toast';
+import ListShell, { bulkSerial } from '@/components/ListShell';
+import ImageLightbox from '@/components/ImageLightbox';
 
 interface Asset {
   id: string;
@@ -16,193 +19,358 @@ interface Asset {
   createdAt: string;
 }
 
-const SOURCE_OPTIONS: { value: string; label: string }[] = [
+const SOURCE_FILTER_OPTIONS = [
   { value: '', label: '全部来源' },
-  { value: 'ai_generated', label: 'AI生成' },
+  { value: 'ai_generated', label: 'AI 生成' },
   { value: 'manual_upload', label: '手动上传' },
+];
+
+const TYPE_FILTER_OPTIONS = [
+  { value: '', label: '全部类型' },
+  ...IMAGE_TYPES.map((c) => ({ value: c, label: c })),
+];
+
+const FAV_FILTER_OPTIONS = [
+  { value: '', label: '全部' },
+  { value: '1', label: '仅收藏' },
 ];
 
 export default function AssetsClient({
   initialAssets,
-  filters,
+  initialFavMap = {},
 }: {
   initialAssets: Asset[];
-  filters: { type: string; source: string };
+  filters?: { type: string; source: string };
+  initialFavMap?: Record<string, boolean>;
 }) {
-  const router = useRouter();
-  const [assets, setAssets] = useState(initialAssets);
-  const [type, setType] = useState(filters.type);
-  const [source, setSource] = useState(filters.source);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement | null>(null);
+  // 收藏的素材排在最前
+  const [favMap, setFavMap] = useState<Record<string, boolean>>(initialFavMap);
+  const sortByFav = (arr: Asset[], fm: Record<string, boolean>) =>
+    arr
+      .slice()
+      .sort(
+        (a, b) =>
+          (fm[b.id] ? 1 : 0) - (fm[a.id] ? 1 : 0),
+      );
 
-  function applyFilter() {
-    const sp = new URLSearchParams();
-    if (type) sp.set('type', type);
-    if (source) sp.set('source', source);
-    router.push(`/assets${sp.toString() ? '?' + sp.toString() : ''}`);
-  }
+  const [assets, setAssets] = useState(() => sortByFav(initialAssets, initialFavMap));
+  const [uploading, setUploading] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [zipping, setZipping] = useState(false);
+  const [favPending, setFavPending] = useState<Set<string>>(new Set());
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   async function uploadFile(file: File) {
     setUploading(true);
-    setError(null);
     try {
       const fd = new FormData();
       fd.append('file', file);
-      fd.append('type', type || '封面图');
-      const res = await fetch('/api/assets/upload', { method: 'POST', body: fd });
+      fd.append('type', '封面图');
+      const res = await fetch('/api/assets/upload', {
+        method: 'POST',
+        body: fd,
+      });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || '上传失败');
-      setAssets((arr) => [j.asset, ...arr]);
+      setAssets((arr) => sortByFav([j.asset, ...arr], favMap));
+      toast.success('已上传');
     } catch (e) {
-      setError((e as Error).message);
+      toast.error((e as Error).message);
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';
     }
   }
 
-  async function remove(id: string) {
-    if (!confirm('确定删除这张图片吗？文件会一并删除。')) return;
-    const res = await fetch(`/api/assets/${id}`, { method: 'DELETE' });
-    const j = await res.json();
-    if (!res.ok || !j.ok) {
-      alert(j.error || '删除失败');
-      return;
-    }
-    setAssets((arr) => arr.filter((a) => a.id !== id));
+  function getExtFromUrl(url: string, fallback = 'jpg') {
+    const m = url.match(/\.([a-zA-Z0-9]{1,5})(?:\?|#|$)/);
+    if (m) return m[1].toLowerCase();
+    return fallback;
   }
 
+  async function downloadZip(ids: string[]) {
+    setZipping(true);
+    try {
+      const JSZipMod = await import('jszip');
+      const JSZip = (JSZipMod as any).default || JSZipMod;
+      const zip = new JSZip();
+      const idSet = new Set(ids);
+      const list = assets.filter((a) => idSet.has(a.id));
+      let success = 0;
+      for (let i = 0; i < list.length; i++) {
+        const a = list[i];
+        try {
+          const res = await fetch(a.url);
+          if (!res.ok) throw new Error(`下载 ${a.url} 失败`);
+          const blob = await res.blob();
+          const ext = getExtFromUrl(a.url, 'jpg');
+          const safeFileName =
+            a.fileName && /\.\w{1,5}$/.test(a.fileName)
+              ? a.fileName
+              : `${a.source || 'asset'}-${a.id}.${ext}`;
+          zip.file(safeFileName, blob);
+          success++;
+        } catch (e) {
+          console.warn('zip skip', a.id, e);
+        }
+        if (i < list.length - 1) {
+          await new Promise((r) => setTimeout(r, 80));
+        }
+      }
+      if (success === 0) {
+        return { ok: false, message: '没有图片可打包' };
+      }
+      const out = await zip.generateAsync({ type: 'blob' });
+      const dlUrl = URL.createObjectURL(out);
+      const a = document.createElement('a');
+      a.href = dlUrl;
+      a.download = `assets-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(dlUrl), 5000);
+      return { ok: true, message: `已打包 ${success} 张图片为 ZIP` };
+    } catch (e) {
+      return { ok: false, message: (e as Error).message };
+    } finally {
+      setZipping(false);
+    }
+  }
+
+  async function toggleFavorite(id: string) {
+    if (favPending.has(id)) return;
+    const cur = !!favMap[id];
+    const next = !cur;
+    // 乐观更新
+    setFavPending((s) => {
+      const copy = new Set(s);
+      copy.add(id);
+      return copy;
+    });
+    const prevFav = favMap;
+    const optimistic = { ...favMap, [id]: next };
+    if (!next) delete optimistic[id];
+    setFavMap(optimistic);
+    setAssets((arr) => sortByFav(arr, optimistic));
+    try {
+      const res = await fetch(`/api/assets/${id}/favorite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ favorite: next }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '操作失败');
+      toast.success(next ? '已收藏' : '已取消收藏');
+    } catch (e) {
+      // 回滚
+      setFavMap(prevFav);
+      setAssets((arr) => sortByFav(arr, prevFav));
+      toast.error((e as Error).message);
+    } finally {
+      setFavPending((s) => {
+        const copy = new Set(s);
+        copy.delete(id);
+        return copy;
+      });
+    }
+  }
+
+  function openLightbox(id: string) {
+    const idx = assets.findIndex((a) => a.id === id);
+    if (idx >= 0) setLightboxIndex(idx);
+  }
+  const lightboxImages = assets.map((a) => ({
+    url: a.url,
+    alt: a.fileName || a.type,
+  }));
+
   return (
-    <div className="space-y-4">
-      {/* 顶部操作栏 */}
-      <div className="card">
-        <div className="card-body flex items-end flex-wrap gap-3">
-          <div>
-            <label className="label">图片类型</label>
-            <select
-              className="input w-40"
-              value={type}
-              onChange={(e) => setType(e.target.value)}
+    <>
+      <ListShell<Asset>
+        items={assets}
+        getId={(a) => a.id}
+        storageKey="list:assets"
+        title={<span className="text-slate-700 dark:text-slate-200">素材库</span>}
+        toolbar={
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) uploadFile(f);
+              }}
+            />
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              className="btn-primary text-sm"
             >
-              <option value="">全部类型</option>
-              {IMAGE_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="label">来源</label>
-            <select
-              className="input w-32"
-              value={source}
-              onChange={(e) => setSource(e.target.value)}
+              {uploading ? '上传中…' : '上传图片'}
+            </button>
+          </>
+        }
+        searchPlaceholder="搜索 prompt / 文件名 / 类目"
+        searchKeys={['prompt', 'fileName', 'category', 'type']}
+        filters={[
+          {
+            key: 'fav',
+            label: '收藏',
+            options: FAV_FILTER_OPTIONS,
+            predicate: (a, v) => (v === '1' ? !!favMap[a.id] : true),
+          },
+          {
+            key: 'source',
+            label: '来源',
+            options: SOURCE_FILTER_OPTIONS,
+            predicate: (a, v) => a.source === v,
+          },
+          {
+            key: 'type',
+            label: '类型',
+            options: TYPE_FILTER_OPTIONS,
+            predicate: (a, v) => a.type === v,
+          },
+        ]}
+        viewModes={['card']}
+        pageSize={60}
+        emptyState="暂无素材，先去 /image 生成或在右上角「上传图片」"
+        onToastSuccess={(m) => toast.success(m)}
+        onToastError={(m) => toast.error(m)}
+        bulk={[
+          {
+            key: 'zip',
+            label: zipping ? '打包中…' : '下载 ZIP',
+            icon: <Download size={14} />,
+            run: async (ids) => downloadZip(ids),
+            clearOnDone: false,
+          },
+          {
+            key: 'delete',
+            label: '批量删除',
+            icon: <Trash2 size={14} />,
+            destructive: true,
+            confirmText: '确认删除已选素材？文件会一并从存储中移除。',
+            run: async (ids) => {
+              const r = await bulkSerial(ids, async (id) => {
+                const res = await fetch(`/api/assets/${id}`, { method: 'DELETE' });
+                const j = await res.json().catch(() => ({}));
+                if (!res.ok || !j.ok) throw new Error(j.error || `删除 ${id} 失败`);
+              });
+              const failedIds = new Set(r.failed.map((f) => f.id));
+              setAssets((arr) =>
+                arr.filter((x) => !ids.includes(x.id) || failedIds.has(x.id)),
+              );
+              if (r.failed.length === 0) {
+                return { ok: true, message: `已删除 ${r.ok} 张素材` };
+              }
+              return {
+                ok: false,
+                message: `部分失败：成功 ${r.ok} / 失败 ${r.failed.length}`,
+              };
+            },
+          },
+        ]}
+        cardGridClassName="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4"
+        renderCard={(a) => {
+          const fav = !!favMap[a.id];
+          const pending = favPending.has(a.id);
+          return (
+            <div
+              className={
+                'card overflow-hidden flex flex-col h-full transition-shadow ' +
+                (fav ? 'ring-2 ring-amber-400' : '')
+              }
             >
-              {SOURCE_OPTIONS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <button onClick={applyFilter} className="btn-secondary">
-            筛选
-          </button>
-          <div className="flex-1" />
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) uploadFile(f);
-            }}
-          />
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={uploading}
-            className="btn-primary"
-          >
-            {uploading ? '上传中...' : '上传图片'}
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="card border-red-200 bg-red-50">
-          <div className="card-body text-sm text-red-700">{error}</div>
-        </div>
-      )}
-
-      {/* 网格 */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-        {assets.map((a) => (
-          <div key={a.id} className="card overflow-hidden flex flex-col">
-            <div className="aspect-square bg-slate-100 flex items-center justify-center overflow-hidden">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={a.url}
-                alt={a.fileName}
-                className="w-full h-full object-cover"
-              />
-            </div>
-            <div className="p-3 flex flex-col gap-1 text-xs flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="badge-blue">{a.type}</span>
-                <span className="badge-gray">
-                  {a.source === 'ai_generated' ? 'AI生成' : '手动上传'}
-                </span>
-              </div>
-              <div className="text-slate-500 truncate">
-                {a.platform || '-'} / {a.category || '-'}
-              </div>
-              {a.prompt && (
-                <div className="text-slate-500 line-clamp-2" title={a.prompt}>
-                  {a.prompt}
-                </div>
-              )}
-              <div className="text-slate-400 mt-auto pt-1">
-                {new Date(a.createdAt).toLocaleString('zh-CN')}
-              </div>
-              <div className="flex items-center gap-2 pt-1">
-                {a.prompt && (
-                  <button
-                    onClick={() => navigator.clipboard?.writeText(a.prompt)}
-                    className="text-brand-600 hover:underline"
-                  >
-                    复制提示词
-                  </button>
-                )}
-                <a
-                  href={a.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-brand-600 hover:underline"
-                >
-                  原图
-                </a>
+              <div className="relative">
                 <button
-                  onClick={() => remove(a.id)}
-                  className="text-red-600 hover:underline ml-auto"
+                  type="button"
+                  onClick={() => openLightbox(a.id)}
+                  className="aspect-square w-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden"
+                  aria-label="查看大图"
                 >
-                  删除
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={a.url}
+                    alt={a.fileName}
+                    className="w-full h-full object-cover hover:opacity-90 transition-opacity cursor-zoom-in"
+                  />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleFavorite(a.id);
+                  }}
+                  disabled={pending}
+                  aria-label={fav ? '取消收藏' : '收藏'}
+                  title={fav ? '取消收藏' : '收藏'}
+                  className={
+                    'absolute top-1.5 right-1.5 inline-flex items-center justify-center w-7 h-7 rounded-full backdrop-blur-sm transition-colors ' +
+                    (fav
+                      ? 'bg-amber-100/90 text-amber-600 hover:bg-amber-200/90'
+                      : 'bg-white/70 text-slate-500 hover:bg-white hover:text-rose-500 dark:bg-slate-900/70')
+                  }
+                >
+                  <Heart size={14} fill={fav ? 'currentColor' : 'none'} />
                 </button>
               </div>
+              <div className="p-3 flex flex-col gap-1 text-xs flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="badge-blue">{a.type}</span>
+                  <span className="badge-gray">
+                    {a.source === 'ai_generated' ? 'AI 生成' : '手动上传'}
+                  </span>
+                  {fav && <span className="badge-yellow">已收藏</span>}
+                </div>
+                <div className="text-slate-500 truncate">
+                  {a.platform || '-'} / {a.category || '-'}
+                </div>
+                {a.prompt && (
+                  <div className="text-slate-500 line-clamp-2" title={a.prompt}>
+                    {a.prompt}
+                  </div>
+                )}
+                <div className="text-slate-400 mt-auto pt-1">
+                  {new Date(a.createdAt).toLocaleString('zh-CN')}
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  {a.prompt && (
+                    <button
+                      onClick={() => {
+                        navigator.clipboard?.writeText(a.prompt);
+                        toast.success('已复制 prompt');
+                      }}
+                      className="text-brand-600 hover:underline"
+                    >
+                      复制提示词
+                    </button>
+                  )}
+                  <a
+                    href={a.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-brand-600 hover:underline"
+                  >
+                    原图
+                  </a>
+                </div>
+              </div>
             </div>
-          </div>
-        ))}
-        {assets.length === 0 && (
-          <div className="col-span-full card">
-            <div className="card-body text-center text-sm text-slate-400 py-8">
-              暂无素材
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+          );
+        }}
+      />
+
+      {lightboxIndex !== null && lightboxImages.length > 0 && (
+        <ImageLightbox
+          images={lightboxImages}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onIndexChange={(i) => setLightboxIndex(i)}
+        />
+      )}
+    </>
   );
 }

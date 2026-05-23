@@ -1,7 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { CATEGORIES, PLATFORMS, PLATFORM_LABEL } from '@/lib/constants';
+import { toast } from '@/lib/toast';
+import SimpleListShell from '@/components/SimpleListShell';
+import { bulkSerial } from '@/components/ListShell';
 
 interface KW {
   id: string;
@@ -12,17 +15,13 @@ interface KW {
 
 export default function KeywordsClient({ initial }: { initial: KW[] }) {
   const [items, setItems] = useState(initial);
-  const [filterCat, setFilterCat] = useState('');
-  const [filterPlat, setFilterPlat] = useState('');
   const [editing, setEditing] = useState<KW | null>(null);
   const [draft, setDraft] = useState({
     category: 'Logo',
     platform: 'xiaohongshu',
     keyword: '',
   });
-  const [error, setError] = useState<string | null>(null);
 
-  // AI 扩词
   const [showExpand, setShowExpand] = useState(false);
   const [expandSeed, setExpandSeed] = useState('');
   const [expandCount, setExpandCount] = useState(20);
@@ -30,17 +29,8 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
   const [expandResults, setExpandResults] = useState<string[]>([]);
   const [expandSelected, setExpandSelected] = useState<Set<string>>(new Set());
 
-  const filtered = useMemo(() => {
-    return items.filter(
-      (x) =>
-        (!filterCat || x.category === filterCat) &&
-        (!filterPlat || x.platform === filterPlat),
-    );
-  }, [items, filterCat, filterPlat]);
-
   async function add() {
     if (!draft.keyword.trim()) return;
-    setError(null);
     try {
       const res = await fetch('/api/keywords', {
         method: 'POST',
@@ -51,13 +41,13 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
       if (!res.ok || !j.ok) throw new Error(j.error || '添加失败');
       setItems((arr) => [j.item, ...arr]);
       setDraft({ ...draft, keyword: '' });
+      toast.success('已新增关键词');
     } catch (e) {
-      setError((e as Error).message);
+      toast.error((e as Error).message);
     }
   }
 
   async function save(k: KW) {
-    setError(null);
     try {
       const res = await fetch(`/api/keywords/${k.id}`, {
         method: 'PATCH',
@@ -68,17 +58,18 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
       if (!res.ok || !j.ok) throw new Error(j.error || '保存失败');
       setItems((arr) => arr.map((x) => (x.id === k.id ? j.item : x)));
       setEditing(null);
+      toast.success('已保存');
     } catch (e) {
-      setError((e as Error).message);
+      toast.error((e as Error).message);
     }
   }
 
-  async function del(id: string) {
+  async function delOne(id: string) {
     if (!confirm('确定删除？')) return;
     const res = await fetch(`/api/keywords/${id}`, { method: 'DELETE' });
     const j = await res.json();
     if (!res.ok || !j.ok) {
-      alert(j.error || '删除失败');
+      toast.error(j.error || '删除失败');
       return;
     }
     setItems((arr) => arr.filter((x) => x.id !== id));
@@ -86,11 +77,10 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
 
   async function expandKeywords() {
     if (!expandSeed.trim()) {
-      setError('请填写种子词');
+      toast.error('请填写种子词');
       return;
     }
     setExpandLoading(true);
-    setError(null);
     setExpandResults([]);
     try {
       const res = await fetch('/api/keywords/expand', {
@@ -108,7 +98,7 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
       setExpandResults(j.keywords);
       setExpandSelected(new Set(j.keywords));
     } catch (e) {
-      setError((e as Error).message);
+      toast.error((e as Error).message);
     } finally {
       setExpandLoading(false);
     }
@@ -117,7 +107,7 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
   async function saveExpanded() {
     const selected = Array.from(expandSelected);
     if (selected.length === 0) return;
-    const items = selected.map((k) => ({
+    const itemsBody = selected.map((k) => ({
       category: draft.category,
       platform: draft.platform,
       keyword: k,
@@ -125,14 +115,13 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
     const res = await fetch('/api/keywords/bulk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ items: itemsBody }),
     });
     const j = await res.json();
     if (!res.ok || !j.ok) {
-      setError(j.error || '保存失败');
+      toast.error(j.error || '保存失败');
       return;
     }
-    // 重新加载
     const r = await fetch('/api/keywords');
     const j2 = await r.json();
     if (j2.ok) {
@@ -149,7 +138,7 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
     setExpandResults([]);
     setExpandSelected(new Set());
     setExpandSeed('');
-    alert(`已新增 ${j.added} 个关键词（共选中 ${selected.length}）`);
+    toast.success(`已新增 ${j.added} 个关键词`);
   }
 
   return (
@@ -210,153 +199,156 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
             添加
           </button>
         </div>
-        {error && <div className="card-body pt-0 text-sm text-red-600">{error}</div>}
       </div>
 
-      {/* 筛选 */}
-      <div className="card">
-        <div className="card-body flex items-end gap-3 flex-wrap">
-          <div>
-            <label className="label">按类目筛选</label>
-            <select
-              className="input w-36"
-              value={filterCat}
-              onChange={(e) => setFilterCat(e.target.value)}
-            >
-              <option value="">全部</option>
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+      <SimpleListShell<KW>
+        items={items}
+        getId={(k) => k.id}
+        storageKey="list:keywords"
+        searchPlaceholder="搜索关键词 / 类目 / 平台"
+        searchKeys={['keyword', 'category', 'platform']}
+        onToastSuccess={(m) => toast.success(m)}
+        onToastError={(m) => toast.error(m)}
+        bulkDelete={{
+          confirmText: (n) => `确认删除已选 ${n} 个关键词？`,
+          run: async (ids) => {
+            const r = await bulkSerial(ids, async (id) => {
+              const res = await fetch(`/api/keywords/${id}`, {
+                method: 'DELETE',
+              });
+              const j = await res.json().catch(() => ({}));
+              if (!res.ok || !j.ok) throw new Error(j.error || '删除失败');
+            });
+            const failedIds = new Set(r.failed.map((f) => f.id));
+            setItems((arr) =>
+              arr.filter((x) => !ids.includes(x.id) || failedIds.has(x.id)),
+            );
+            if (r.failed.length === 0)
+              return { ok: true, message: `已删除 ${r.ok} 个关键词` };
+            return {
+              ok: false,
+              message: `部分失败：成功 ${r.ok} / 失败 ${r.failed.length}`,
+            };
+          },
+        }}
+      >
+        {(filtered, helpers) => (
+          <div className="card overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="table min-w-[600px]">
+                <thead>
+                  <tr>
+                    <th className="w-10" />
+                    <th className="w-32">类目</th>
+                    <th className="w-24">平台</th>
+                    <th>关键词</th>
+                    <th className="w-32 text-right">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((k) =>
+                    editing?.id === k.id ? (
+                      <tr key={k.id} className="bg-slate-50 dark:bg-slate-800/50">
+                        <td />
+                        <td>
+                          <select
+                            className="input"
+                            value={editing.category}
+                            onChange={(e) =>
+                              setEditing({ ...editing!, category: e.target.value })
+                            }
+                          >
+                            {CATEGORIES.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <select
+                            className="input"
+                            value={editing.platform}
+                            onChange={(e) =>
+                              setEditing({ ...editing!, platform: e.target.value })
+                            }
+                          >
+                            {PLATFORMS.map((p) => (
+                              <option key={p.value} value={p.value}>
+                                {p.label}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <input
+                            className="input"
+                            value={editing.keyword}
+                            onChange={(e) =>
+                              setEditing({ ...editing!, keyword: e.target.value })
+                            }
+                          />
+                        </td>
+                        <td className="text-right space-x-2">
+                          <button
+                            onClick={() => save(editing!)}
+                            className="text-brand-600 hover:underline"
+                          >
+                            保存
+                          </button>
+                          <button
+                            onClick={() => setEditing(null)}
+                            className="text-slate-500 hover:underline"
+                          >
+                            取消
+                          </button>
+                        </td>
+                      </tr>
+                    ) : (
+                      <tr
+                        key={k.id}
+                        className={
+                          helpers.isSelected(k.id)
+                            ? 'bg-brand-50 dark:bg-brand-900/30'
+                            : ''
+                        }
+                      >
+                        <td>
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 cursor-pointer"
+                            checked={helpers.isSelected(k.id)}
+                            onChange={() => helpers.toggle(k.id)}
+                            aria-label="选择行"
+                          />
+                        </td>
+                        <td>{k.category}</td>
+                        <td>{PLATFORM_LABEL[k.platform] ?? k.platform}</td>
+                        <td>{k.keyword}</td>
+                        <td className="text-right space-x-2">
+                          <button
+                            onClick={() => setEditing(k)}
+                            className="text-brand-600 hover:underline"
+                          >
+                            编辑
+                          </button>
+                          <button
+                            onClick={() => delOne(k.id)}
+                            className="text-red-600 hover:underline"
+                          >
+                            删除
+                          </button>
+                        </td>
+                      </tr>
+                    ),
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div>
-            <label className="label">按平台筛选</label>
-            <select
-              className="input w-32"
-              value={filterPlat}
-              onChange={(e) => setFilterPlat(e.target.value)}
-            >
-              <option value="">全部</option>
-              {PLATFORMS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="text-sm text-slate-500 ml-auto">
-            共 {filtered.length} 条
-          </div>
-        </div>
-      </div>
+        )}
+      </SimpleListShell>
 
-      {/* 列表 */}
-      <div className="card overflow-hidden">
-        <div className="overflow-x-auto">
-        <table className="table min-w-[600px]">
-          <thead>
-            <tr>
-              <th className="w-32">类目</th>
-              <th className="w-24">平台</th>
-              <th>关键词</th>
-              <th className="w-32 text-right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((k) =>
-              editing?.id === k.id ? (
-                <tr key={k.id} className="bg-slate-50">
-                  <td>
-                    <select
-                      className="input"
-                      value={editing.category}
-                      onChange={(e) =>
-                        setEditing({ ...editing!, category: e.target.value })
-                      }
-                    >
-                      {CATEGORIES.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td>
-                    <select
-                      className="input"
-                      value={editing.platform}
-                      onChange={(e) =>
-                        setEditing({ ...editing!, platform: e.target.value })
-                      }
-                    >
-                      {PLATFORMS.map((p) => (
-                        <option key={p.value} value={p.value}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td>
-                    <input
-                      className="input"
-                      value={editing.keyword}
-                      onChange={(e) =>
-                        setEditing({ ...editing!, keyword: e.target.value })
-                      }
-                    />
-                  </td>
-                  <td className="text-right space-x-2">
-                    <button
-                      onClick={() => save(editing!)}
-                      className="text-brand-600 hover:underline"
-                    >
-                      保存
-                    </button>
-                    <button
-                      onClick={() => setEditing(null)}
-                      className="text-slate-500 hover:underline"
-                    >
-                      取消
-                    </button>
-                  </td>
-                </tr>
-              ) : (
-                <tr key={k.id}>
-                  <td>{k.category}</td>
-                  <td>{PLATFORM_LABEL[k.platform] ?? k.platform}</td>
-                  <td>{k.keyword}</td>
-                  <td className="text-right space-x-2">
-                    <button
-                      onClick={() => setEditing(k)}
-                      className="text-brand-600 hover:underline"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      onClick={() => del(k.id)}
-                      className="text-red-600 hover:underline"
-                    >
-                      删除
-                    </button>
-                  </td>
-                </tr>
-              ),
-            )}
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={4} className="text-center text-slate-400 py-8">
-                  暂无关键词
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-        </div>
-      </div>
-
-      {/* AI 扩词弹窗 */}
       {showExpand && (
         <div
           className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
@@ -380,9 +372,7 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
               <select
                 className="input"
                 value={draft.category}
-                onChange={(e) =>
-                  setDraft({ ...draft, category: e.target.value })
-                }
+                onChange={(e) => setDraft({ ...draft, category: e.target.value })}
               >
                 {CATEGORIES.map((c) => (
                   <option key={c} value={c}>
@@ -393,9 +383,7 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
               <select
                 className="input"
                 value={draft.platform}
-                onChange={(e) =>
-                  setDraft({ ...draft, platform: e.target.value })
-                }
+                onChange={(e) => setDraft({ ...draft, platform: e.target.value })}
               >
                 {PLATFORMS.map((p) => (
                   <option key={p.value} value={p.value}>
@@ -407,9 +395,7 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
                 type="number"
                 className="input"
                 value={expandCount}
-                onChange={(e) =>
-                  setExpandCount(Number(e.target.value) || 20)
-                }
+                onChange={(e) => setExpandCount(Number(e.target.value) || 20)}
                 min={5}
                 max={50}
               />
@@ -419,7 +405,7 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
               disabled={expandLoading}
               className="btn-primary w-full"
             >
-              {expandLoading ? 'AI 生成中...' : `① 扩展 ${expandCount} 个长尾词`}
+              {expandLoading ? 'AI 生成中…' : `① 扩展 ${expandCount} 个长尾词`}
             </button>
 
             {expandResults.length > 0 && (
@@ -430,9 +416,7 @@ export default function KeywordsClient({ initial }: { initial: KW[] }) {
                   </span>
                   <div className="flex gap-2 text-xs">
                     <button
-                      onClick={() =>
-                        setExpandSelected(new Set(expandResults))
-                      }
+                      onClick={() => setExpandSelected(new Set(expandResults))}
                       className="text-brand-600 hover:underline"
                     >
                       全选

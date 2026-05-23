@@ -43,11 +43,29 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const data = await req.json();
+    let data: any;
+    try {
+      data = await req.json();
+    } catch {
+      // BUG-6 fix: malformed JSON -> 400 instead of 500
+      return NextResponse.json({ ok: false, error: '请求体不是合法 JSON' }, { status: 400 });
+    }
     if (!data.nickname || !data.platform) {
       return NextResponse.json(
         { ok: false, error: '请填写昵称和平台' },
         { status: 400 },
+      );
+    }
+    // BUG-5 fix: prevent duplicate clients with the same nickname+platform.
+    // Returns the existing row if found, with a 200 + already=true flag
+    // so the UI can either reuse it or show a duplicate warning.
+    const existing = await prisma.client.findFirst({
+      where: { nickname: data.nickname, platform: data.platform },
+    });
+    if (existing) {
+      return NextResponse.json(
+        { ok: true, already: true, client: existing },
+        { status: 200 },
       );
     }
     const client = await prisma.client.create({

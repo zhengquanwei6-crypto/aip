@@ -3,6 +3,8 @@ import AssetsClient from './AssetsClient';
 
 export const dynamic = 'force-dynamic';
 
+const FAV_PREFIX = 'asset:fav:';
+
 export default async function AssetsPage({
   searchParams,
 }: {
@@ -11,11 +13,25 @@ export default async function AssetsPage({
   const where: any = {};
   if (searchParams.type) where.type = searchParams.type;
   if (searchParams.source) where.source = searchParams.source;
-  const assets = await prisma.asset.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    take: 200,
-  });
+  const [assets, favRows] = await Promise.all([
+    prisma.asset.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    }),
+    prisma.setting.findMany({
+      where: { key: { startsWith: FAV_PREFIX } },
+    }),
+  ]);
+
+  // 把 setting key 转成 { [assetId]: true }
+  const favMap: Record<string, boolean> = {};
+  for (const row of favRows) {
+    if (row.value !== '1') continue;
+    const id = row.key.slice(FAV_PREFIX.length);
+    if (id) favMap[id] = true;
+  }
+
   return (
     <AssetsClient
       initialAssets={assets.map((a) => ({
@@ -33,6 +49,7 @@ export default async function AssetsPage({
         type: searchParams.type ?? '',
         source: searchParams.source ?? '',
       }}
+      initialFavMap={favMap}
     />
   );
 }

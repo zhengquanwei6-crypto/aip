@@ -1,3 +1,12 @@
+/**
+ * /api/settings - 应用配置
+ *
+ * v0.8 Batch 1（B1.7）：GET 字段脱敏
+ *   - key 名包含 "KEY"（大小写不敏感）的字段，返回 { key, value: '', isSet, length }
+ *   - 其他字段照旧返回 value
+ *   - POST 不变（用户保存仍传明文）
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
@@ -11,11 +20,29 @@ const ALLOWED_KEYS = [
   'IMAGE_API_BASE_URL',
   'IMAGE_API_KEY',
   'IMAGE_MODEL',
+  // 默认图片 adapter slug（空字符串 / 不存在 = 走 legacy 路径）
+  'IMAGE_DEFAULT_ADAPTER',
 ];
 
+function isSecretKey(key: string): boolean {
+  return /key/i.test(key);
+}
+
 export async function GET() {
-  const list = await prisma.setting.findMany({
+  const rows = await prisma.setting.findMany({
     where: { key: { in: ALLOWED_KEYS } },
+  });
+  const list = rows.map((row) => {
+    if (isSecretKey(row.key)) {
+      const length = row.value?.length ?? 0;
+      return {
+        key: row.key,
+        value: '',
+        isSet: length > 0,
+        length,
+      };
+    }
+    return { key: row.key, value: row.value };
   });
   return NextResponse.json({ ok: true, list });
 }
@@ -27,7 +54,6 @@ export async function POST(req: NextRequest) {
       if (key in body) {
         const value = String(body[key] ?? '');
         if (value === '') {
-          // 留空则删除（回退到 .env）
           await prisma.setting.deleteMany({ where: { key } });
         } else {
           await prisma.setting.upsert({

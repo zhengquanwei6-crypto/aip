@@ -1,4 +1,6 @@
 import AdminShell from '@/components/AdminShell';
+import { ToastProvider } from '@/components/Toast';
+import CommandPalette from '@/components/CommandPalette';
 
 export const dynamic = 'force-dynamic';
 
@@ -7,5 +9,10 @@ export default function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return <AdminShell>{children}</AdminShell>;
+  return (
+    <ToastProvider>
+      <CommandPalette />
+      <AdminShell>{children}</AdminShell>
+    </ToastProvider>
+  );
 }

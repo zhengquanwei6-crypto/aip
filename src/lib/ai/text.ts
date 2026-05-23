@@ -3,6 +3,8 @@
  * 兼容 OpenAI Chat Completions 格式 /v1/chat/completions
  *
  * 配置优先级：数据库 Setting 表 > .env
+ *
+ * v0.8 Batch 1（B1.8）：错误信息附加 baseUrl + model 摘要（BUG-7）
  */
 
 import { prisma } from '@/lib/db';
@@ -32,6 +34,10 @@ export interface LLMConfig {
   model: string;
 }
 
+function summary(cfg: Partial<LLMConfig>): string {
+  return ` [baseUrl=${cfg.baseUrl || '(空)'}, model=${cfg.model || '(空)'}]`;
+}
+
 export async function getLLMConfig(): Promise<Partial<LLMConfig>> {
   const settings = await prisma.setting.findMany({
     where: { key: { in: ['LLM_API_BASE_URL', 'LLM_API_KEY', 'LLM_MODEL'] } },
@@ -58,7 +64,9 @@ export async function generateText(
     return {
       ok: false,
       content: '',
-      error: '未配置 LLM API。请前往「设置」页面填写 LLM_API_BASE_URL 与 LLM_API_KEY。',
+      error:
+        '未配置 LLM API。请前往「设置」页面填写 LLM_API_BASE_URL 与 LLM_API_KEY。' +
+        summary(cfg),
     };
   }
 
@@ -87,7 +95,10 @@ export async function generateText(
       return {
         ok: false,
         content: '',
-        error: `LLM API 调用失败 (${res.status}): ${errText.slice(0, 500)}`,
+        error:
+          `LLM API 调用失败 (${res.status}): ${errText.slice(0, 500)}` +
+          summary(cfg),
+        model: cfg.model,
       };
     }
     const data: any = await res.json();
@@ -98,7 +109,8 @@ export async function generateText(
     return {
       ok: false,
       content: '',
-      error: `LLM 请求异常: ${(err as Error).message}`,
+      error: `LLM 请求异常: ${(err as Error).message}` + summary(cfg),
+      model: cfg.model,
     };
   }
 }

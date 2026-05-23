@@ -3,6 +3,13 @@
 import { useState } from 'react';
 import { copyAll } from '@/lib/clipboard';
 
+interface RefinedItem {
+  style: string;
+  title: string;
+}
+
+type Version = RefinedItem[];
+
 interface Props {
   title: string;
   platform: 'xiaohongshu' | 'xianyu';
@@ -12,8 +19,12 @@ interface Props {
 export default function TitleRefiner({ title, platform, onSelect }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ style: string; title: string }[]>([]);
+  const [versions, setVersions] = useState<Version[]>([]);
+  const [compareMode, setCompareMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const current = versions.length > 0 ? versions[versions.length - 1] : [];
+  const previous = versions.length >= 2 ? versions[versions.length - 2] : null;
 
   async function refine() {
     setLoading(true);
@@ -26,7 +37,8 @@ export default function TitleRefiner({ title, platform, onSelect }: Props) {
       });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || '生成失败');
-      setResult(j.refined);
+      setVersions((arr) => [...arr, j.refined as Version]);
+      setCompareMode(false);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -34,12 +46,18 @@ export default function TitleRefiner({ title, platform, onSelect }: Props) {
     }
   }
 
+  function styleToCurr(items: Version): Map<string, string> {
+    const m = new Map<string, string>();
+    for (const r of items) m.set(r.style, r.title);
+    return m;
+  }
+
   return (
     <>
       <button
         onClick={() => {
           setOpen(true);
-          if (result.length === 0) refine();
+          if (versions.length === 0) refine();
         }}
         className="text-xs text-brand-600 hover:underline ml-2"
         title="让 AI 用 5 种风格改写这个标题"
@@ -53,7 +71,7 @@ export default function TitleRefiner({ title, platform, onSelect }: Props) {
           onClick={() => setOpen(false)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-lg p-5 w-full max-w-lg space-y-3 max-h-[90vh] overflow-y-auto"
+            className="bg-white dark:bg-slate-900 rounded-lg p-5 w-full max-w-2xl space-y-3 max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="font-semibold">✨ 标题打磨器</h3>
@@ -74,50 +92,48 @@ export default function TitleRefiner({ title, platform, onSelect }: Props) {
               </div>
             )}
 
-            {result.length > 0 && (
+            {!loading && current.length > 0 && !compareMode && (
               <div className="space-y-2">
-                {result.map((r, i) => (
-                  <div
-                    key={i}
-                    className="rounded border border-slate-200 dark:border-slate-700 p-2.5"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="badge-blue">{r.style}</span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => copyAll(r.title)}
-                          className="text-xs text-brand-600 hover:underline"
-                        >
-                          复制
-                        </button>
-                        {onSelect && (
-                          <button
-                            onClick={() => {
-                              onSelect(r.title);
-                              setOpen(false);
-                            }}
-                            className="text-xs text-emerald-600 hover:underline"
-                          >
-                            采用
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="mt-1.5 text-sm text-slate-800 dark:text-slate-100 leading-relaxed">
-                      {r.title}
-                    </div>
+                {versions.length >= 2 && (
+                  <div className="text-xs text-slate-500">
+                    已生成 {versions.length} 版，可点击「对比上一版」。
                   </div>
+                )}
+                {current.map((r, i) => (
+                  <RefinedRow
+                    key={i}
+                    item={r}
+                    onCopy={copyAll}
+                    onSelect={onSelect}
+                    onClose={() => setOpen(false)}
+                  />
                 ))}
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-2 pt-2">
+            {!loading && compareMode && previous && (
+              <CompareTitles prev={previous} curr={current} />
+            )}
+
+            <div className="grid grid-cols-3 gap-2 pt-2">
               <button
                 onClick={refine}
                 disabled={loading}
                 className="btn-secondary"
               >
-                🔄 再生成
+                🔄 再来一版
+              </button>
+              <button
+                onClick={() => setCompareMode((v) => !v)}
+                disabled={loading || versions.length < 2}
+                className={
+                  'text-xs px-3 py-2 rounded border ' +
+                  (versions.length < 2
+                    ? 'opacity-40 border-slate-200 dark:border-slate-700'
+                    : 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200')
+                }
+              >
+                {compareMode ? '↩️ 退出对比' : '🔍 对比上一版'}
               </button>
               <button onClick={() => setOpen(false)} className="btn-primary">
                 关闭
@@ -127,5 +143,106 @@ export default function TitleRefiner({ title, platform, onSelect }: Props) {
         </div>
       )}
     </>
+  );
+}
+
+function RefinedRow({
+  item,
+  onCopy,
+  onSelect,
+  onClose,
+}: {
+  item: RefinedItem;
+  onCopy: (s: string) => void;
+  onSelect?: (s: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="badge-blue">{item.style}</span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onCopy(item.title)}
+            className="text-xs text-brand-600 hover:underline"
+          >
+            复制
+          </button>
+          {onSelect && (
+            <button
+              onClick={() => {
+                onSelect(item.title);
+                onClose();
+              }}
+              className="text-xs text-emerald-600 hover:underline"
+            >
+              采用
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="mt-1.5 text-sm text-slate-800 dark:text-slate-100 leading-relaxed">
+        {item.title}
+      </div>
+    </div>
+  );
+}
+
+function CompareTitles({
+  prev,
+  curr,
+}: {
+  prev: RefinedItem[];
+  curr: RefinedItem[];
+}) {
+  const styles = Array.from(
+    new Set([...prev.map((r) => r.style), ...curr.map((r) => r.style)]),
+  );
+  const prevMap = new Map(prev.map((r) => [r.style, r.title] as const));
+  const currMap = new Map(curr.map((r) => [r.style, r.title] as const));
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-900/30 rounded p-2">
+        差异已用黄色高亮（按风格对齐）。
+      </div>
+      {styles.map((style) => {
+        const p = prevMap.get(style) ?? '';
+        const c = currMap.get(style) ?? '';
+        const same = p === c;
+        return (
+          <div
+            key={style}
+            className="rounded border border-slate-200 dark:border-slate-700 p-2.5 space-y-1"
+          >
+            <span className="badge-blue">{style}</span>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div
+                className={
+                  'rounded px-2 py-1 ' +
+                  (same
+                    ? 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                    : 'bg-yellow-100 dark:bg-yellow-900/30 text-slate-800 dark:text-slate-100')
+                }
+              >
+                <div className="text-[10px] text-slate-500 mb-0.5">上一版</div>
+                {p || '—'}
+              </div>
+              <div
+                className={
+                  'rounded px-2 py-1 ' +
+                  (same
+                    ? 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                    : 'bg-yellow-100 dark:bg-yellow-900/30 text-slate-800 dark:text-slate-100')
+                }
+              >
+                <div className="text-[10px] text-slate-500 mb-0.5">当前版</div>
+                {c || '—'}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
