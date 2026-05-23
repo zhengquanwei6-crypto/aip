@@ -2,12 +2,14 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Send, Inbox, CheckSquare } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Send, Inbox, CheckSquare, Target } from 'lucide-react';
 import { PLATFORM_LABEL, TASK_STATUSES } from '@/lib/constants';
 import { toast } from '@/lib/toast';
 import ProgressBar from '@/components/ProgressBar';
 import ImageLightbox from '@/components/ImageLightbox';
 import ListShell, { bulkSerial } from '@/components/ListShell';
+import { PublishDirectorDrawer } from '@/components/agents/PublishDirectorDrawer';
 
 interface TaskRow {
   id: string;
@@ -43,6 +45,23 @@ export default function TodayTasksClient({
   const [loadingAction, setLoadingAction] = useState<string>('');
   const [elapsed, setElapsed] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  // v0.9 b3：publish-director 抽屉（绑定到某条 task）
+  const [pubDrawer, setPubDrawer] = useState<{ taskId: string; row: TaskRow } | null>(null);
+  const router = useRouter();
+
+  /** 触发 publish-director 抽屉，预填 task 上下文 */
+  function openPubDirectorForTask(t: TaskRow) {
+    setPubDrawer({ taskId: t.id, row: t });
+  }
+
+  /** publish-director 反写 task 后刷新页面 RSC payload */
+  function handlePubDirectorTaskUpdated(taskId: string) {
+    // 乐观把当前任务标 generated（service 已经写库，下次 router.refresh 会同步真实数据）
+    setTasks((arr) =>
+      arr.map((x) => (x.id === taskId ? { ...x, status: 'generated' } : x)),
+    );
+    router.refresh();
+  }
 
   useEffect(() => {
     if (!loadingId) {
@@ -242,6 +261,16 @@ export default function TodayTasksClient({
                         ? '生成中…'
                         : '生成图片'}
                     </button>
+                    {/* v0.9 b3：publish-director 入口（绑当前 task） */}
+                    <button
+                      onClick={() => openPubDirectorForTask(t)}
+                      disabled={isLoading}
+                      className="text-xs px-2 py-1 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-900/60 inline-flex items-center gap-1"
+                      title="用 publish-director 一次性产出文案+图片，并反写 task"
+                    >
+                      <Target size={12} />
+                      用 publish-director
+                    </button>
                     <select
                       value={t.status}
                       disabled={isLoading}
@@ -324,6 +353,22 @@ export default function TodayTasksClient({
           index={lightboxIndex}
           onClose={() => setLightboxIndex(null)}
           onIndexChange={(i) => setLightboxIndex(i)}
+        />
+      )}
+
+      {/* v0.9 b3：publish-director 抽屉，绑定到当前 task */}
+      {pubDrawer && (
+        <PublishDirectorDrawer
+          open={true}
+          onClose={() => setPubDrawer(null)}
+          taskId={pubDrawer.taskId}
+          initialForm={{
+            platform: pubDrawer.row.platform as 'xiaohongshu' | 'xianyu',
+            category: pubDrawer.row.category,
+            contentType: pubDrawer.row.contentType,
+            topic: pubDrawer.row.title,
+          }}
+          onTaskUpdated={() => handlePubDirectorTaskUpdated(pubDrawer.taskId)}
         />
       )}
     </>

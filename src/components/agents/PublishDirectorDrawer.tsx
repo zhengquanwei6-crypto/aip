@@ -148,6 +148,10 @@ interface BuildResp {
   imageFallbackNote?: string | null;
   contentModel?: string;
   styleModel?: string;
+  /** v0.9 b3 */
+  taskId?: string | null;
+  taskUpdated?: boolean;
+  taskUpdateError?: string | null;
   durationMs?: number;
   error?: string;
   raw?: string;
@@ -179,9 +183,16 @@ export interface PublishDirectorDrawerProps {
   open: boolean;
   onClose: () => void;
   initialForm?: Partial<FormState>;
+  /**
+   * v0.9 b3：从 /today 任务卡触发时传入 task.id，
+   * 后端会把 Post.taskId / Product.taskId 关联，并在全链成功后反写 task。
+   */
+  taskId?: string;
+  /** v0.9 b3：成功反写 task 后回调，用于父组件刷新列表 */
+  onTaskUpdated?: () => void;
 }
 
-export function PublishDirectorDrawer({ open, onClose, initialForm }: PublishDirectorDrawerProps) {
+export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTaskUpdated }: PublishDirectorDrawerProps) {
   const [form, setForm] = useState<FormState>({ ...DEFAULT_FORM, ...(initialForm || {}) });
   const [img, setImg] = useState<ImageOptions>({ ...DEFAULT_IMG });
   const [imgPanelOpen, setImgPanelOpen] = useState(true);
@@ -317,6 +328,7 @@ export function PublishDirectorDrawer({ open, onClose, initialForm }: PublishDir
             topic: form.topic,
             audience: form.audience,
             tone: form.tone,
+            taskId: taskId || undefined,
             imageOptions: payloadImg,
             regenerate,
             cachedContent: regenerate === 'style' || regenerate === 'image' ? content : undefined,
@@ -393,6 +405,14 @@ export function PublishDirectorDrawer({ open, onClose, initialForm }: PublishDir
                   ? `第 ${opts.regenSingleIdx + 1} 张已重生`
                   : '已生成新图';
         toast.success(okMsg);
+
+        // v0.9 b3：task 反写成功后通知父组件刷新（如 /today）
+        if (j.taskUpdated && onTaskUpdated) {
+          onTaskUpdated();
+        }
+        if (j.taskUpdateError) {
+          toast.error(`task 反写失败：${j.taskUpdateError}`);
+        }
       } catch (e) {
         setError((e as Error).message);
         toast.error((e as Error).message);
@@ -402,7 +422,7 @@ export function PublishDirectorDrawer({ open, onClose, initialForm }: PublishDir
         setStage('');
       }
     },
-    [busy, form, img, content, stylePrompt, editedSummary],
+    [busy, form, img, content, stylePrompt, editedSummary, taskId, onTaskUpdated],
   );
 
   if (!open) return null;
@@ -420,8 +440,19 @@ export function PublishDirectorDrawer({ open, onClose, initialForm }: PublishDir
           <div className="flex items-center gap-2">
             <span className="text-xl">🎯</span>
             <div>
-              <div className="font-semibold">发布导演 publish-director</div>
-              <div className="text-xs text-slate-500">文案 → 风格 → 图片，每段可单独重生（v0.9 b2 图片选项）</div>
+              <div className="font-semibold">
+                发布导演 publish-director
+                {taskId && (
+                  <span className="ml-2 text-xs bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 rounded px-1.5 py-0.5">
+                    🔗 task: {taskId.slice(0, 6)}…
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-slate-500">
+                {taskId
+                  ? '将关联到当前 task：成功后回写 status / title / body / coverText / imageUrl（v0.9 b3）'
+                  : '文案 → 风格 → 图片，每段可单独重生（v0.9 b2 图片选项）'}
+              </div>
             </div>
           </div>
           <button

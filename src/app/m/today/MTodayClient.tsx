@@ -2,9 +2,11 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { PLATFORM_LABEL, TASK_STATUSES } from '@/lib/constants';
 import { useToast } from '@/components/m/Toast';
 import { copyAll } from '@/lib/clipboard';
+import { PublishDirectorDrawer } from '@/components/agents/PublishDirectorDrawer';
 
 interface TaskRow {
   id: string;
@@ -37,6 +39,9 @@ export default function MTodayClient({
     label: string;
   } | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // v0.9 b3：publish-director 抽屉（移动端全屏）
+  const [pubDrawer, setPubDrawer] = useState<{ taskId: string; row: TaskRow } | null>(null);
+  const router = useRouter();
 
   function setTaskBusy(id: string, action: string) {
     setBusy((b) => ({ ...b, [id]: action }));
@@ -297,10 +302,40 @@ export default function MTodayClient({
                   📋 一键复制
                 </button>
               </div>
+
+              {/* v0.9 b3：publish-director 入口（移动端，绑当前 task） */}
+              <button
+                onClick={() => setPubDrawer({ taskId: t.id, row: t })}
+                disabled={!!action}
+                className="w-full rounded-md bg-amber-100 text-amber-800 text-xs py-2 active:bg-amber-200 disabled:opacity-60 inline-flex items-center justify-center gap-1"
+              >
+                🎯 用 publish-director 跑这个 task
+              </button>
             </div>
           </div>
         );
       })}
+
+      {/* v0.9 b3：publish-director 抽屉（移动端 sm:w-[680px] 在小屏自动全屏） */}
+      {pubDrawer && (
+        <PublishDirectorDrawer
+          open={true}
+          onClose={() => setPubDrawer(null)}
+          taskId={pubDrawer.taskId}
+          initialForm={{
+            platform: pubDrawer.row.platform as 'xiaohongshu' | 'xianyu',
+            category: pubDrawer.row.category,
+            contentType: pubDrawer.row.contentType,
+            topic: pubDrawer.row.title,
+          }}
+          onTaskUpdated={() => {
+            setTasks((arr) =>
+              arr.map((x) => (x.id === pubDrawer.taskId ? { ...x, status: 'generated' } : x)),
+            );
+            router.refresh();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Copy, Trash2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { Copy, Trash2, RefreshCw, ChevronDown, ChevronUp, Target } from 'lucide-react';
 import ListShell, { bulkSerial } from '@/components/ListShell';
 import { copyAll } from '@/lib/clipboard';
 import { toast } from '@/lib/toast';
@@ -36,7 +36,15 @@ const TYPE_FILTER_OPTIONS = [
   { value: 'image', label: '图片' },
   { value: 'image_prompt', label: '图片提示词' },
   { value: 'suggestion', label: '运营建议' },
+  // v0.9 b3：跨 type 的虚拟筛选（input 含 "via":"publish-director" 的所有条目）
+  { value: '__publish_director__', label: '🎯 发布导演（publish-director）' },
 ];
+
+/** v0.9 b3：检测是否来自 publish-director（看 input JSON 是否含 via:"publish-director"） */
+function isPublishDirector(row: HistoryRow): boolean {
+  if (!row.input) return false;
+  return row.input.includes('"via":"publish-director"');
+}
 
 function fmtDate(iso: string): string {
   try {
@@ -121,7 +129,10 @@ export default function HistoryClient({
             key: 'type',
             label: '类型',
             options: TYPE_FILTER_OPTIONS,
-            predicate: (r, v) => r.type === v,
+            predicate: (r, v) => {
+              if (v === '__publish_director__') return isPublishDirector(r);
+              return r.type === v;
+            },
           },
         ]}
         viewModes={['card']}
@@ -179,6 +190,28 @@ export default function HistoryClient({
         renderCard={(it) => {
           const inputOpen = expandedInput.has(it.id);
           const outputOpen = expandedOutput.has(it.id);
+          const fromPublishDirector = isPublishDirector(it);
+          // v0.9 b3：解析 publish-director 的 stylePrompt 输出展示
+          let pubDirStyleSummary: string | null = null;
+          let pubDirImageOptions: any = null;
+          let pubDirSeriesPlan: string | null = null;
+          if (fromPublishDirector) {
+            try {
+              const inp = JSON.parse(it.input);
+              if (inp?.imageOptions) pubDirImageOptions = inp.imageOptions;
+            } catch {
+              /* ignore */
+            }
+            if (it.type === 'image_prompt') {
+              try {
+                const out = JSON.parse(it.output);
+                if (typeof out?.styleSummary === 'string') pubDirStyleSummary = out.styleSummary;
+                if (typeof out?.seriesPlan === 'string') pubDirSeriesPlan = out.seriesPlan;
+              } catch {
+                /* ignore */
+              }
+            }
+          }
           return (
             <div className="card">
               <div className="card-body space-y-3 pl-8">
@@ -187,6 +220,12 @@ export default function HistoryClient({
                   <span className={TYPE_BADGE[it.type] ?? 'badge-gray'}>
                     {TYPE_LABEL[it.type] ?? it.type}
                   </span>
+                  {fromPublishDirector && (
+                    <span className="badge-yellow inline-flex items-center gap-1">
+                      <Target size={10} />
+                      publish-director
+                    </span>
+                  )}
                   {it.model && (
                     <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
                       {it.model}
@@ -196,6 +235,33 @@ export default function HistoryClient({
                     {fmtDate(it.createdAt)}
                   </span>
                 </div>
+
+                {/* v0.9 b3：publish-director 摘要（styleSummary + 图片选项 + seriesPlan） */}
+                {fromPublishDirector && (pubDirStyleSummary || pubDirImageOptions || pubDirSeriesPlan) && (
+                  <div className="text-xs bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded p-2 space-y-1">
+                    {pubDirStyleSummary && (
+                      <div>
+                        <span className="text-amber-700 dark:text-amber-300 font-medium">风格说明：</span>
+                        <span className="text-slate-700 dark:text-slate-200">{pubDirStyleSummary}</span>
+                      </div>
+                    )}
+                    {pubDirSeriesPlan && (
+                      <div>
+                        <span className="text-amber-700 dark:text-amber-300 font-medium">系列编排：</span>
+                        <span className="text-slate-700 dark:text-slate-200 whitespace-pre-wrap">{pubDirSeriesPlan}</span>
+                      </div>
+                    )}
+                    {pubDirImageOptions && (
+                      <div className="text-slate-600 dark:text-slate-400 font-mono">
+                        opts: n={pubDirImageOptions.n ?? 1}
+                        {pubDirImageOptions.asSeries ? ' · series' : ''}
+                        {pubDirImageOptions.primaryColor ? ` · primary=${pubDirImageOptions.primaryColor}` : ''}
+                        {pubDirImageOptions.accentColor ? ` · accent=${pubDirImageOptions.accentColor}` : ''}
+                        {pubDirImageOptions.textLanguage ? ` · text=${pubDirImageOptions.textLanguage}` : ''}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* input */}
                 <div>

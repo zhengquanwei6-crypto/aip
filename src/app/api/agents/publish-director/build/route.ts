@@ -1,5 +1,12 @@
 /**
- * /api/agents/publish-director/build · v0.9 b2
+ * /api/agents/publish-director/build · v0.9 b3
+ *
+ * v0.9 b3 (B1)：
+ *   - 新增 body.taskId：由 /today 任务卡触发时传入
+ *   - Post.create / Product.create 时把 taskId 写进去（schema 已有）
+ *   - step3 全成功 + regenerate==='all' 时调 prisma.task.update：
+ *       status='generated', title=titles[0]/title, body, coverText, imageUrl=assets[0]?.url
+ *   - 失败容忍：task.update 失败不影响整体响应（会写到响应里 taskUpdateError 字段）
  *
  * "先文案再图片"链式编排（含图片选项扩展）：
  *   step 1: buildContentMessages → generateText(json) → content（小红书/闲鱼 schema）
@@ -89,6 +96,12 @@ interface BuildBody {
   autoImage?: boolean;
   imageOptions?: ImageOptions;
   regenerate?: Regenerate;
+  /**
+   * v0.9 b3：可选关联 task。给定后：
+   *   - Post.create / Product.create 带 taskId
+   *   - 全链成功后反写 task（status='generated', title/body/coverText/imageUrl）
+   */
+  taskId?: string;
   /** 重生时复用上次结果 */
   cachedContent?: any;
   cachedStylePrompt?: {
@@ -439,6 +452,7 @@ async function persistContentAndStyle(args: {
     tasks.push(
       prisma.post.create({
         data: {
+          taskId: args.body.taskId || undefined,
           platform: 'xiaohongshu',
           title: titles[0] || args.body.topic || '',
           body: c.body ?? '',
@@ -454,6 +468,7 @@ async function persistContentAndStyle(args: {
     tasks.push(
       prisma.product.create({
         data: {
+          taskId: args.body.taskId || undefined,
           title: c.title ?? args.body.topic ?? '',
           description: c.description ?? '',
           coverText: c.coverText ?? '',
@@ -468,6 +483,48 @@ async function persistContentAndStyle(args: {
     );
   }
   return Promise.allSettled(tasks);
+}
+
+/**
+ * v0.9 b3：成功后反写 task。
+ *   - status = 'generated'
+ *   - title = titles[0]/title
+ *   - body = body / description
+ *   - coverText = coverText
+ *   - imageUrl = 第一张成功的 asset.url（如有）
+ * 失败容忍：内部 try/catch，错误返回字符串便于响应记录。
+ */
+async function writeBackTask(opts: {
+  taskId: string;
+  platform?: Platform;
+  content: any;
+  firstImageUrl?: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const c = opts.content ?? {};
+    let title = '';
+    let body = '';
+    let coverText = '';
+    if (opts.platform === 'xiaohongshu') {
+      const titles: string[] = Array.isArray(c.titles) ? c.titles : [];
+      title = (titles[0] || '').toString();
+      body = (c.body || '').toString();
+      coverText = (c.coverText || '').toString();
+    } else {
+      title = (c.title || '').toString();
+      body = (c.description || '').toString();
+      coverText = (c.coverText || '').toString();
+    }
+    const data: Record<string, any> = { status: 'generated' };
+    if (title) data.title = title;
+    if (body) data.body = body;
+    if (coverText) data.coverText = coverText;
+    if (opts.firstImageUrl) data.imageUrl = opts.firstImageUrl;
+    await prisma.task.update({ where: { id: opts.taskId }, data });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message || 'task.update failed' };
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -716,6 +773,26 @@ export async function POST(req: NextRequest) {
     const firstOk = assets.find((a) => a.url);
     const legacyAsset = firstOk ? { id: firstOk.id, url: firstOk.url } : null;
 
+    // v0.9 b3：若关联了 task 且全链成功，反写 task
+    let taskUpdateError: string | null = null;
+    let taskUpdated = false;
+    if (
+      body.taskId &&
+      regenerate === 'all' &&
+      content &&
+      stylePrompt &&
+      !stylePromptError
+    ) {
+      const wb = await writeBackTask({
+        taskId: body.taskId,
+        platform: body.platform,
+        content,
+        firstImageUrl: firstOk?.url,
+      });
+      if (wb.ok) taskUpdated = true;
+      else taskUpdateError = wb.error;
+    }
+
     return NextResponse.json({
       ok: true,
       stage: regenerate,
@@ -730,6 +807,9 @@ export async function POST(req: NextRequest) {
       imageFallbackNote,
       contentModel,
       styleModel,
+      taskId: body.taskId ?? null,
+      taskUpdated,
+      taskUpdateError,
       durationMs: Date.now() - t0,
     });
   } catch (err) {
