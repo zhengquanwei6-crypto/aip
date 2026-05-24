@@ -67,18 +67,22 @@ publish-director 抽屉里"风格模板"下拉选这条，photo-director 在 ste
 
 `Setting.IMAGE_DEFAULT_ADAPTER` 决定当前用哪条。改这个值之后**立即生效**。
 
-## 📐 尺寸与质量预设（v0.11 B7）
+## 📐 尺寸与质量预设（v0.11 B7 → B12 → B14 文档同步）
 
 每个 adapter 自带一组尺寸 / 质量预设池。三处图片 UI 抽屉打开时会读 `/api/health.imageDefaultAdapter` → `/api/adapters/<slug>` 拿到 `sizes` / `qualities` 数组，渲染成两个 select。
+
+> **v0.11 B12 起**：OpenAI gpt-image-1 协议（4router-gpt-image-2 / openai-gpt-img-2 / kie-gpt-image-2 共用此协议）真实只支持下表 3 档尺寸；B7 误塞 2K(2048) / 4K(3840×2160) 已修正。B14 把本文档表格也对齐到生产实际值。
 
 ### 池配置（src/lib/adapter-seed.ts）
 
 | Adapter | sizes | qualities |
 |---|---|---|
-| `kie-gpt-image-2` / `4router-gpt-image-2` / `openai-gpt-img-2` | 1K(1024) / 2K(2048) / 4K(3840×2160) | 低 / 中 / 高 |
+| `kie-gpt-image-2` / `4router-gpt-image-2` / `openai-gpt-img-2` | 方图 1024×1024 / 竖图 1024×1536（2:3）/ 横图 1536×1024（3:2） | 低 / 中 / 高 |
 | `kie-flux-kontext-pro` | 方图1024 / 竖图3:4(768x1024) / 竖图9:16(720x1280) | 标准 / 高清 |
 | `openai-dalle-3` | 方图1024 / 竖图1024x1792 / 横图1792x1024 | 标准 / 高清 |
 | `generic-openai-compatible` | 1024 | （无） |
+
+> 历史轨迹：B7 时把 OpenAI 系池误塞了 `2048x2048` / `3840x2160`（"2K/4K"），4router 中转站对非法 size 反向回模糊错误「分组 GptPro 下模型 gpt-image-2 的可用渠道不存在」（用户实拍）。B12 把池收紧到 OpenAI 官方 3 档；B14 把本文档表格 + 残留的硬编码 ratio select 一并对齐。
 
 ## 📐 图生图 + 比例预设（B9）
 
@@ -92,10 +96,12 @@ v0.11 B9 把图片生成扩展到两个新能力：**图生图（image-to-image�
 
 | Adapter | aspectRatios |
 |---|---|
-| `kie-gpt-image-2` / `4router-gpt-image-2` / `openai-gpt-img-2` | 1:1 / 16:9 / 9:16 / 4:3 / 3:4 |
+| `kie-gpt-image-2` / `4router-gpt-image-2` / `openai-gpt-img-2` | 1:1 / 3:2（最接近 16:9 的官方档）/ 2:3（最接近 9:16 的官方档）（B12 起 3 档，与 sizes 一一对应） |
 | `kie-flux-kontext-pro` | 1:1 / 16:9 / 9:16 / 4:3 / 3:4 / 21:9 |
 | `openai-dalle-3` | 1:1(1024x1024) / 16:9(1792x1024) / 9:16(1024x1792) |
 | `generic-openai-compatible` | 1:1(1024x1024) |
+
+> v0.11 B14：`/image` 与 `/m/image` 上原本还有一组硬编码 `<option value="3:4">` / `<option value="1:1">` 的比例 select（v0.6 老 platform→ratio 推断逻辑残留）。当前 4router-gpt-image-2 池没有 3:4，用户选了会触发 fallback 到 1:1，trace 注 `aspectRatioFallback=true`。B14 删掉硬编码 select，统一改用 adapter.aspectRatios 池驱动。
 
 #### 行为约定
 
@@ -179,11 +185,11 @@ v0.11 B9 把图片生成扩展到两个新能力：**图生图（image-to-image�
 ```jsonc
 {
   "imageCapabilitiesPerAdapter": {
-    "kie-gpt-image-2":           { "sizes": 3, "qualities": 3, "aspectRatios": 5, "supportsImg2Img": true },
+    "kie-gpt-image-2":           { "sizes": 3, "qualities": 3, "aspectRatios": 3, "supportsImg2Img": true },
     "kie-flux-kontext-pro":      { "sizes": 3, "qualities": 2, "aspectRatios": 6, "supportsImg2Img": true },
     "openai-dalle-3":            { "sizes": 3, "qualities": 2, "aspectRatios": 3, "supportsImg2Img": false },
-    "openai-gpt-img-2":          { "sizes": 3, "qualities": 3, "aspectRatios": 5, "supportsImg2Img": true },
-    "4router-gpt-image-2":       { "sizes": 3, "qualities": 3, "aspectRatios": 5, "supportsImg2Img": true },
+    "openai-gpt-img-2":          { "sizes": 3, "qualities": 3, "aspectRatios": 3, "supportsImg2Img": true },
+    "4router-gpt-image-2":       { "sizes": 3, "qualities": 3, "aspectRatios": 3, "supportsImg2Img": true },
     "generic-openai-compatible": { "sizes": 1, "qualities": 0, "aspectRatios": 1, "supportsImg2Img": false }
   },
   "imageSizesPerAdapter": { /* B7 兼容字段，仅 sizes/qualities */ }
@@ -220,3 +226,4 @@ prompt:        Apply the same minimalist white-background editorial layout to my
 - **持续失败**：去 `/api/health` 看 `recentFailures.image`
 - **size 兜底**：如果 trace 里看到 `sizeFallback: true` 或 `aspectRatioFallback: true`，说明你传的值不在当前 adapter 的池里
 - **i2i 兜底失败**：`adapter "openai-dalle-3" 不支持图生图` → 切 adapter 或关闭 i2i 开关
+- **ApiKey 池高失败但不自动 disable（v0.11 B14 修）**：上游返 200 + b64_json 但 saveImage 失败时旧 image-runner 没调 markKeyError，consecutiveErrors 不增长，自动 disable 阈值（默认 3）永远不到。B14 修后任何 ok=false 出口都补 markKeyError，且 markKeySuccess 不再清 lastError（保留作历史 audit）。
