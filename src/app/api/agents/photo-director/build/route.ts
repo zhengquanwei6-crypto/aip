@@ -11,12 +11,18 @@
  *   LLM 即便返回 '2048x2048' / '4K' / '3840x2160' 等历史 B7 老池字面量，
  *   也会被服务端 fallback 到 defaultSize(body)（不再 silent 透传）。
  *   配合 systemPrompt 里的【尺寸强约束 v0.11 B15.4】段，从 LLM 端 + API 端双重约束。
+ *
+ * v0.12 B2：systemPrompt 通过 getEffectiveAgentSystemPrompt 解析
+ *   先查 Setting `prompt:agent:photo-director:system` → 存在用覆盖 → 否则 fallback agent.systemPrompt
+ *   注意：用户覆盖 prompt 时，B15.4 size enum 强约束在 user 段也写了一份，
+ *   即便用户改写 system 也仍能从 user 段 + 服务端 normalizeRecommendedSize 双重兜底。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { findAgent } from '@/lib/agent-types';
 import { generateText, type ChatMessage } from '@/lib/ai/text';
 import { extractJSON } from '@/lib/ai/text';
+import { getEffectiveAgentSystemPrompt } from '@/lib/agents/system-prompt';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -127,8 +133,11 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as BuildBody;
     const userBlock = summarize(body);
 
+    // v0.12 B2：解析 effective systemPrompt（Setting 覆盖优先）
+    const systemPrompt = await getEffectiveAgentSystemPrompt(agent.slug, agent.systemPrompt);
+
     const messages: ChatMessage[] = [
-      { role: 'system', content: agent.systemPrompt },
+      { role: 'system', content: systemPrompt },
       {
         role: 'user',
         content:

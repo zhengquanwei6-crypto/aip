@@ -4,6 +4,10 @@
  * - 校验 slug 是否注册
  * - 按 slug 选择对应的 contextLoader 拼入 system
  * - 调当前 LLM 配置（DO router 默认）
+ *
+ * v0.12 B2：systemPrompt 通过 getEffectiveAgentSystemPrompt 解析：
+ *   先查 Setting `prompt:agent:<slug>:system` → 存在用覆盖 → 否则 fallback agent.systemPrompt
+ *   B15.5 docs 公共契约
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -19,6 +23,7 @@ import {
   loadTodayContext,
   loadClientContext,
 } from '@/lib/agents/context';
+import { getEffectiveAgentSystemPrompt } from '@/lib/agents/system-prompt';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -74,13 +79,17 @@ export async function POST(
     }
     const opts = (body.context && typeof body.context === 'object') ? body.context as Record<string, unknown> : {};
 
-    const contextBlock = await buildContext(agent.slug, opts);
+    // v0.12 B2：解析 effective systemPrompt（Setting 覆盖优先）
+    const [systemPrompt, contextBlock] = await Promise.all([
+      getEffectiveAgentSystemPrompt(agent.slug, agent.systemPrompt),
+      buildContext(agent.slug, opts),
+    ]);
 
     const llmMessages: ChatMessage[] = [
       {
         role: 'system',
         content:
-          agent.systemPrompt +
+          systemPrompt +
           (contextBlock
             ? '\n\n以下是平台当前状态快照（用于辅助回答；下方 API key 已脱敏，不要泄露）：\n\n' + contextBlock
             : ''),

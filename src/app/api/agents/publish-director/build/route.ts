@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { findAgent } from '@/lib/agent-types';
+import { getEffectiveAgentSystemPrompt } from '@/lib/agents/system-prompt';
 import { generateText, extractJSON, type ChatMessage } from '@/lib/ai/text';
 import { buildContentMessagesAsync } from '@/lib/ai/prompts';
 import { runImageGenerate, type ImageMode } from '@/lib/image-runner';
@@ -497,6 +498,11 @@ export async function POST(req: NextRequest) {
     if (!styleAgent || !directorAgent) {
       return NextResponse.json({ ok: false, error: 'agent unavailable' }, { status: 500 });
     }
+    // v0.12 B2：解析 effective systemPrompt（Setting `prompt:agent:photo-director:system` 覆盖优先）
+    const effectiveStyleSystemPrompt = await getEffectiveAgentSystemPrompt(
+      styleAgent.slug,
+      styleAgent.systemPrompt,
+    );
 
     const body = (await req.json()) as BuildBody;
     if (!body.platform || !['xiaohongshu', 'xianyu'].includes(body.platform)) {
@@ -631,7 +637,7 @@ export async function POST(req: NextRequest) {
       !stylePrompt ||
       (!stylePrompt.promptEn && !stylePrompt.seriesPrompts)
     ) {
-      const sr = await runStyleStep(styleAgent.systemPrompt, content, body, opts);
+      const sr = await runStyleStep(effectiveStyleSystemPrompt, content, body, opts);
       if (sr.ok) {
         stylePrompt = sr.result;
         styleModel = sr.model;
