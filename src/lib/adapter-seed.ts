@@ -1,28 +1,24 @@
 /**
- * v0.11 B7 + B9：内置 adapter 预设种子
+ * v0.11 B7 + B9 + B11：内置 adapter 预设种子
  *
  * v0.11 B7：sizes / qualities 池（已有）
- * v0.11 B9：aspectRatios / supportsImg2Img / img2imgFlow（本批新增）
+ * v0.11 B9：aspectRatios / supportsImg2Img / img2imgFlow（图生图）
+ * v0.11 B11：i2i 真生图 bug 修复 —
+ *   用户实拍 /playground i2i 报错：
+ *     `未指定模型名称，模型名称不能为空 [adapter=4router-gpt-image-2, baseUrl=https://4router.net/v1]`
+ *   根因：B9 的 `OPENAI_EDITS_I2I_FLOW`（4router 共用）multipart fields 缺 `model` 字段。
+ *   OpenAI 兼容 `/v1/images/edits` 必须带 model；4router 中转站尤其严格。
+ *   修复：拆出 4router 专属 `FOUR_ROUTER_GPT_IMAGE_2_I2I_FLOW`（model='gpt-image-2'），
+ *         并把 `OPENAI_EDITS_I2I_FLOW` 改名为 `OPENAI_GENERIC_EDITS_I2I_FLOW`（保留作通用兜底）。
  *
  * Image-to-Image 文档调研（精简核对，详见 D:\xm\design-ai-ops-v0.11-b9-img2img-aspect-ratio.md §一）：
  *
  *   ✅ KIE.AI gpt-image-2          → /jobs/createTask 模型 'gpt-image-2-image-to-image'，input.image_urls[]（外链）
  *   ✅ KIE.AI flux-kontext-pro     → 同 /flux/kontext/generate，body.inputImage 字段（外链 / dataUri）
- *   ✅ OpenAI 兼容 gpt-image-2     → /v1/images/edits（multipart：image[] + prompt + size + quality）
- *   ✅ 4router-gpt-image-2         → 同 OpenAI /v1/images/edits（OpenAI 协议）
+ *   ✅ OpenAI 兼容 gpt-image-2     → /v1/images/edits（multipart：model='gpt-img-2' + image[] + prompt + size + quality）
+ *   ✅ 4router-gpt-image-2         → /v1/images/edits（multipart：**model='gpt-image-2'** + image + prompt + size + quality）
  *   ❌ OpenAI DALL-E 3              → API 层无 i2i（/v1/images/edits 不支持 dall-e-3 模型）
  *   ❌ generic-openai-compatible    → 占位 adapter，默认禁用 i2i（如需可手改 setting JSON）
- *
- * 注：multipart 路径的 i2i bodyTemplate 用一个 marker：
- *     bodyTemplate.__contentType === 'multipart/form-data' 时，adapter-runtime 会按 fields 数组拼 FormData。
- *
- * 比例预设（aspectRatios）按官方文档：
- *
- *   kie/4router/openai-gpt-img-2 (gpt-image-2)：1:1 / 16:9 / 9:16 / 4:3 / 3:4
- *     → sizeRule 留空（kie-* 用 aspect_ratio + resolution；OpenAI 无 sizeRule 也兜得住）
- *   openai-dalle-3：1:1 (1024x1024) / 16:9 (1792x1024) / 9:16 (1024x1792)（DALL-E 3 三档官方尺寸）
- *   kie-flux-kontext-pro：1:1 / 16:9 / 9:16 / 4:3 / 3:4 / 21:9
- *   generic-openai-compatible：1:1
  */
 
 import type {
@@ -103,7 +99,7 @@ const ASPECT_RATIOS_GENERIC: AspectRatioPreset[] = [
 ];
 
 // ──────────────────────────────────────────────────────────
-// v0.11 B9：图生图 flow 定义
+// v0.11 B9：图生图 flow 定义（B11 修补）
 // ──────────────────────────────────────────────────────────
 
 /**
@@ -147,8 +143,6 @@ const KIE_GPT_IMAGE_2_I2I_FLOW: AdapterFlow = {
 /**
  * KIE Flux Kontext Pro 主要就是 i2i 模型 — submit endpoint 与 t2i 完全一致，
  * 只是多了 inputImage 字段（kie quickstart 文档：inputImage 接外链 / data URI）。
- * 因此把 t2i flow 复制一份，bodyTemplate 多一个 inputImage 字段；
- * 当 inputImage 为空字符串时，flux-kontext-pro 会自动按 t2i 处理（向后兼容）。
  */
 const KIE_FLUX_I2I_FLOW: AdapterFlow = {
   type: 'async-polling',
@@ -181,11 +175,17 @@ const KIE_FLUX_I2I_FLOW: AdapterFlow = {
 };
 
 /**
- * OpenAI 兼容 /v1/images/edits（multipart）— 给 openai-gpt-img-2 / 4router-gpt-image-2 共用。
+ * v0.11 B11：通用 OpenAI 兼容 /v1/images/edits（multipart）— 兜底用，**不带 model 字段**。
+ *
  * 用 marker bodyTemplate.__contentType: 'multipart/form-data' 让 adapter-runtime 走 FormData 路径；
  * fields 数组每条 { name, value, filename? }，filename 非空表示是 file part（base64 解码后塞进去）。
+ *
+ * ⚠️ 注意：不带 model 字段，仅作为「通用兜底」。中转站若强制要求 model（如 4router）会报错，
+ * 应使用专属常量（FOUR_ROUTER_GPT_IMAGE_2_I2I_FLOW / OPENAI_GPT_IMG_2_I2I_FLOW）。
+ *
+ * （B9 时叫 OPENAI_EDITS_I2I_FLOW，B11 改名 + 收紧用途）
  */
-const OPENAI_EDITS_I2I_FLOW: AdapterFlow = {
+const OPENAI_GENERIC_EDITS_I2I_FLOW: AdapterFlow = {
   type: 'sync',
   endpoint: { method: 'POST', path: '/images/edits' },
   request: {
@@ -196,7 +196,7 @@ const OPENAI_EDITS_I2I_FLOW: AdapterFlow = {
         { name: 'prompt', value: '{prompt}' },
         { name: 'size', value: '{size}' },
         { name: 'quality', value: '{quality}' },
-        { name: 'n', value: '1' },
+        { name: 'n', value: '{n}' },
         { name: 'image', value: '{sourceImageBase64}', filename: 'source.png', contentType: 'image/png' },
       ],
     },
@@ -217,7 +217,37 @@ const OPENAI_GPT_IMG_2_I2I_FLOW: AdapterFlow = {
         { name: 'prompt', value: '{prompt}' },
         { name: 'size', value: '{size}' },
         { name: 'quality', value: '{quality}' },
-        { name: 'n', value: '1' },
+        { name: 'n', value: '{n}' },
+        { name: 'image', value: '{sourceImageBase64}', filename: 'source.png', contentType: 'image/png' },
+      ],
+    },
+  },
+  response: { imageUrlPath: 'data[*].url', errorPath: 'error.message' },
+};
+
+/**
+ * v0.11 B11：4router-gpt-image-2 专属 i2i flow。
+ *
+ *   - 路径：/images/edits（OpenAI 协议）
+ *   - multipart fields 第一项 `model: 'gpt-image-2'` —— 4router 中转站强制要求
+ *     （用户实测 B9 不带此字段直接报「未指定模型名称」400）
+ *   - 其余字段与 OpenAI 标准一致
+ *
+ * 注：4router 模型名约定为 `gpt-image-2`（不是 OpenAI 官方的 `gpt-img-2`，也不是 KIE 的 `gpt-image-2-image-to-image`）。
+ */
+const FOUR_ROUTER_GPT_IMAGE_2_I2I_FLOW: AdapterFlow = {
+  type: 'sync',
+  endpoint: { method: 'POST', path: '/images/edits' },
+  request: {
+    contentType: 'multipart/form-data',
+    bodyTemplate: {
+      __contentType: 'multipart/form-data',
+      fields: [
+        { name: 'model', value: 'gpt-image-2' },
+        { name: 'prompt', value: '{prompt}' },
+        { name: 'size', value: '{size}' },
+        { name: 'quality', value: '{quality}' },
+        { name: 'n', value: '{n}' },
         { name: 'image', value: '{sourceImageBase64}', filename: 'source.png', contentType: 'image/png' },
       ],
     },
@@ -352,7 +382,7 @@ export const PRESETS: AdapterConfig[] = [
     slug: 'openai-gpt-img-2',
     name: 'OpenAI 兼容 · GPT-IMG-2（t2i + i2i）',
     baseUrl: 'https://api.openai.com/v1',
-    description: 'OpenAI gpt-image-2 同步接口；i2i 走 /v1/images/edits（multipart：image + prompt + size + quality）。',
+    description: 'OpenAI gpt-image-2 同步接口；i2i 走 /v1/images/edits（multipart：model=gpt-img-2 + image + prompt + size + quality）。',
     auth: { type: 'bearer', headerName: 'Authorization', valueTemplate: 'Bearer {API_KEY}' },
     flow: {
       type: 'sync',
@@ -408,6 +438,8 @@ export const PRESETS: AdapterConfig[] = [
 /**
  * v0.11 B7：4router-gpt-image-2 不在 PRESETS，但用户在生产中已创建。
  * v0.11 B9：扩展 SLUG_PRESET_MAP，加 aspectRatios + supportsImg2Img + img2imgFlow。
+ * v0.11 B11：4router 改用 `FOUR_ROUTER_GPT_IMAGE_2_I2I_FLOW`（独立常量，含 model 字段），
+ *            修复 i2i 「未指定模型名称」400 报错。
  *
  * migrate-presets 端点把这些字段 merge 进现有 Setting JSON。
  */
@@ -454,12 +486,23 @@ export const SLUG_PRESET_MAP: Record<
     aspectRatios: ASPECT_RATIOS_GENERIC,
     supportsImg2Img: false,
   },
-  // 4router 与 kie-gpt-image-2 拓扑一致 → 用同一档位 + 同一 i2i flow（OpenAI /images/edits multipart）
+  // v0.11 B11：4router 改用专属 i2i flow（含 model='gpt-image-2'）。
+  // B9 沿用通用 OPENAI_EDITS_I2I_FLOW 缺 model → 中转站 400「未指定模型名称」。
   '4router-gpt-image-2': {
     sizes: SIZES_GPT_IMAGE_2,
     qualities: QUALITIES_GPT_IMAGE_2,
     aspectRatios: ASPECT_RATIOS_GPT_IMAGE_2,
     supportsImg2Img: true,
-    img2imgFlow: OPENAI_EDITS_I2I_FLOW,
+    img2imgFlow: FOUR_ROUTER_GPT_IMAGE_2_I2I_FLOW,
   },
+};
+
+// 通用兜底常量保留导出（未来若有用户自定义 adapter 需要 OpenAI multipart 编辑接口可复用）
+// 注意：B9 时叫 OPENAI_EDITS_I2I_FLOW，B11 改名 OPENAI_GENERIC_EDITS_I2I_FLOW（仅文件内使用，不导出）。
+export {
+  KIE_GPT_IMAGE_2_I2I_FLOW,
+  KIE_FLUX_I2I_FLOW,
+  OPENAI_GENERIC_EDITS_I2I_FLOW,
+  OPENAI_GPT_IMG_2_I2I_FLOW,
+  FOUR_ROUTER_GPT_IMAGE_2_I2I_FLOW,
 };

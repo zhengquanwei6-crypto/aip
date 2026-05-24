@@ -16,6 +16,12 @@
  *   - 若 ratio 对应的 sizeRule 非空 → size 自动按 sizeRule 覆盖（用户也可改）
  *   - i2i：若 adapter.supportsImg2Img===false → 拒绝并回退报错（不偷偷降级 t2i）
  *   - i2i 路径：若 adapter.img2imgFlow 存在 → 临时把 adapter.flow 替换为 img2imgFlow 后跑 runAdapter
+ *
+ * v0.11 B11（i2i 真生图 bug 修复）：
+ *   - 当 adapter.img2imgFlow.request.contentType === 'multipart/form-data' 且用户只传了 sourceImageUrl
+ *     时，自动 fetch URL → 转 base64 注入 sourceImageBase64，确保 multipart file part 真的塞进字节。
+ *     （4router-gpt-image-2 / openai-gpt-img-2 走 multipart，KIE 走 async-polling 用 URL 直接传）
+ *   - 同时把 multipart fields 里 n/quality 等数值类字段强制 String() 已在 adapter-runtime 模板插值阶段处理。
  */
 
 import { prisma } from '@/lib/db';
@@ -84,8 +90,10 @@ export interface RunTrace {
   mode?: ImageMode;
   aspectRatio?: string;
   aspectRatioFallback?: boolean;
-  i2iSource?: 'url' | 'base64' | 'none';
+  i2iSource?: 'url' | 'base64' | 'url+fetched-base64' | 'none';
   i2iFlow?: 't2i' | 'i2i-dedicated';
+  /** v0.11 B11：multipart adapter 把 url 转 base64 时的字节大小（便于排查） */
+  i2iFetchedBytes?: number;
 }
 
 export interface RunResult {
@@ -291,6 +299,46 @@ function adapterForMode(adapter: AdapterConfig, mode: ImageMode): { adapter: Ada
 }
 
 /**
+ * v0.11 B11：判断当前 i2i flow 是否走 multipart（4router / openai-gpt-img-2 等）。
+ * multipart 路径需要真实字节，单纯 URL 不够。
+ */
+function flowIsMultipart(flow: { request?: { contentType?: string; bodyTemplate?: any } } | undefined): boolean {
+  if (!flow || !flow.request) return false;
+  if (flow.request.contentType === 'multipart/form-data') return true;
+  const tmpl: any = flow.request.bodyTemplate;
+  if (tmpl && typeof tmpl === 'object' && tmpl.__contentType === 'multipart/form-data') return true;
+  return false;
+}
+
+/**
+ * v0.11 B11：把 sourceImageUrl 拉成 base64（用于 multipart 文件 part）。
+ *   - 支持绝对 URL 与 /uploads/... 相对路径（自动拼 origin）
+ *   - 失败时返回 null（caller 决定是否报错）
+ *   - 限制 ≤ 5MB（与 API 入口校验一致）
+ */
+async function fetchUrlToBase64(
+  url: string,
+  abortSignal?: AbortSignal,
+): Promise<{ base64: string; bytes: number } | null> {
+  let target = url;
+  if (target.startsWith('/')) {
+    const origin = (process.env.NEXT_PUBLIC_BASE_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '');
+    target = origin + target;
+  }
+  try {
+    const init: RequestInit = {};
+    if (abortSignal) (init as any).signal = abortSignal;
+    const resp = await fetch(target, init);
+    if (!resp.ok) return null;
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (buf.byteLength > 5 * 1024 * 1024) return null;
+    return { base64: buf.toString('base64'), bytes: buf.byteLength };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * v0.11 B9：源图 URL 处理。
  *   - 外链：直接传给 bodyTemplate 的 {sourceImage}（KIE Flux）/ {extra.imageUrls}（KIE GPT-2 i2i）
  *   - /uploads/... 相对路径：拼成完整 URL 给 KIE（KIE 端必须能拉到）→ 这里仅做 hint，由 caller 决定是否拼
@@ -390,6 +438,35 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
 
         // i2i：注入 sourceImage / imageUrls / sourceImageBase64 到 vars + extra
         const i2iVars = mode === 'i2i' ? buildI2iVars(opts) : { source: 'none' as const, sourceImage: '', sourceImageBase64: '', imageUrls: [] };
+        let i2iSourceTrace: NonNullable<RunTrace['i2iSource']> = i2iVars.source;
+        let i2iFetchedBytes: number | undefined;
+
+        // v0.11 B11：multipart adapter（4router / openai-gpt-img-2）只接受 file part 字节，不接受 URL；
+        //           若用户只给了 URL → 服务器端拉一次转 base64。
+        let effSourceImageBase64 = i2iVars.sourceImageBase64;
+        if (
+          mode === 'i2i' &&
+          i2iVars.source === 'url' &&
+          flowIsMultipart(adapter.flow as any)
+        ) {
+          const fetched = await fetchUrlToBase64(i2iVars.sourceImage, opts.abortSignal);
+          if (!fetched) {
+            return {
+              ok: false, savedUrls: [], via: 'adapter', adapterSlug: slug,
+              error: `i2i 源图 URL 拉取失败（adapter "${slug}" 走 multipart 必须能读到字节）：${i2iVars.sourceImage}` + adapterSummary(slug, adapter.baseUrl),
+              durationMs: Date.now() - t0,
+              trace: {
+                via: 'adapter', adapterSlug: slug, baseUrl: adapter.baseUrl, mode,
+                i2iSource: 'url', i2iFlow,
+                lastError: 'i2i 源图 URL fetch 失败 / 超 5MB',
+              },
+            };
+          }
+          effSourceImageBase64 = fetched.base64;
+          i2iSourceTrace = 'url+fetched-base64';
+          i2iFetchedBytes = fetched.bytes;
+        }
+
         if (mode === 'i2i') {
           // 写到 extra 让 runAdapter 注入到 vars.extra
           if (typeof userExtra.imageUrls === 'undefined') {
@@ -412,7 +489,8 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
           extra: mergedExtra,
           ...(mode === 'i2i' ? {
             sourceImageUrl: i2iVars.source === 'url' ? i2iVars.sourceImage : undefined,
-            sourceImageBase64: i2iVars.source === 'base64' ? i2iVars.sourceImageBase64 : undefined,
+            // v0.11 B11：multipart 时即使用户给 URL 也要传 base64 字节
+            ...(effSourceImageBase64 ? { sourceImageBase64: effSourceImageBase64 } : {}),
             aspectRatio: aspectR.value,
           } : {
             aspectRatio: aspectR.value,
@@ -439,8 +517,9 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
         if (aspectR.value) trace.aspectRatio = aspectR.value;
         if (aspectR.fallback) trace.aspectRatioFallback = true;
         if (mode === 'i2i') {
-          trace.i2iSource = i2iVars.source;
+          trace.i2iSource = i2iSourceTrace;
           trace.i2iFlow = i2iFlow;
+          if (typeof i2iFetchedBytes === 'number') trace.i2iFetchedBytes = i2iFetchedBytes;
         }
 
         if (!result.ok || result.imageUrls.length === 0) {
