@@ -1,3 +1,4 @@
 # design-ai-ops 是私有运营工作台，禁止任何爬虫抓取
+# v0.11 B16 final · v0.12 B1 重新校验
 User-agent: *
 Disallow: /

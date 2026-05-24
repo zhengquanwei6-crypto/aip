@@ -3,10 +3,21 @@
  *
  * 注意：本组件包含两个并列卡片（系统健康 + 最近失败），
  * 在 DashboardClient 里以一对组件出现于「右下区」grid。
+ *
+ * v0.12 B1 BUG-L09 hydration 修复：
+ *   uptimeMs 由服务器 process.uptime() 在 SSR 时算出，传 prop 给 client。
+ *   首次 SSR + 客户端 hydration 之间若发生 RSC 重渲染（dynamic = force-dynamic），
+ *   server 第二次渲染算出来的 uptimeMs 会比首次大几秒，触发 React #418/#425 hydration
+ *   warning（"Text content does not match server-rendered HTML"）。
+ *   解法 1：suppressHydrationWarning + 客户端 useEffect 后切换到 "now - startedAt"
+ *   解法 2（本批选）：仅 suppressHydrationWarning + initial render 用 prop。useEffect
+ *     里 setInterval 每 30s tick 一次保持显示新鲜（不再依赖 prop，靠 startedAt 推算）。
+ *   保留 prop 兼容（startedAt 在 health.ts/aggregate.ts 都有，但此组件未传，仍用 uptimeMs）。
  */
 'use client';
 
 import clsx from 'clsx';
+import { useEffect, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -33,6 +44,25 @@ function formatBytes(n: number | null): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+/**
+ * v0.12 B1 BUG-L09：客户端 tick 让 uptime 在首次 hydration 之后每 30s 自增，
+ * 同时用 suppressHydrationWarning 兼容 SSR 与 client 间几秒钟的差值。
+ */
+function useLiveUptime(initialMs: number): number {
+  const [ms, setMs] = useState(initialMs);
+  useEffect(() => {
+    const startedClientAt = Date.now();
+    const startedUptimeMs = initialMs;
+    const id = setInterval(() => {
+      setMs(startedUptimeMs + (Date.now() - startedClientAt));
+    }, 30 * 1000);
+    return () => clearInterval(id);
+    // 仅在 mount 时取 initialMs · 后续不依赖 prop 变化（避免 force-dynamic 父刷新跳变）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return ms;
 }
 
 function PoolBadge({
@@ -66,6 +96,7 @@ export function SystemHealthCard({ system }: SystemHealthCardProps) {
   const llm = system.apiKeyPool.llm;
   const image = system.apiKeyPool.image;
   const poolHealthy = llm.active > 0 && image.active > 0;
+  const liveUptimeMs = useLiveUptime(system.uptimeMs);
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
@@ -101,8 +132,11 @@ export function SystemHealthCard({ system }: SystemHealthCardProps) {
             <dt className="text-[11px] text-slate-500 dark:text-slate-400">
               进程运行时间
             </dt>
-            <dd className="mt-0.5 text-sm text-slate-900 dark:text-slate-100">
-              {formatUptime(system.uptimeMs)}
+            <dd
+              className="mt-0.5 text-sm text-slate-900 dark:text-slate-100"
+              suppressHydrationWarning
+            >
+              {formatUptime(liveUptimeMs)}
             </dd>
             <dd className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">
               容器：

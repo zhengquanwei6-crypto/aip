@@ -16,6 +16,12 @@ import { NextRequest, NextResponse } from 'next/server';
  * - /prompts  → 307 → /presets?tab=content
  * 这两条 redirect 必须放在 cookie / UA 判定之前 —— 否则 cookie=desktop 直接 next()，
  * cookie=mobile 又会先把它们变成 /m/pricing /m/prompts，永远走不到我们的整合页。
+ *
+ * v0.12 B1 BUG-M22 真 404 修复：
+ * - Next.js 14.2.18 standalone 下 server-component notFound() 仍会返回 200 + body
+ *   （streaming SSR 已写 header，notFound 改不了 status）。
+ * - 在 middleware 提前拦截不在白名单的 /docs/<slug> → 直接 NextResponse(404)。
+ * - 11 个合法 slug 透传，root /docs 透传，其它一切 /docs/<bogus> 都 404。
  */
 
 const MOBILE_RE =
@@ -49,6 +55,38 @@ const LEGACY_REDIRECTS: Record<string, string> = {
   '/prompts': '/presets?tab=content',
 };
 
+/**
+ * v0.12 B1：使用手册 11 篇合法 slug 白名单（与 src/lib/docs/index.ts DOCS_ENTRIES 一致）。
+ * 不在白名单的 /docs/<slug> 由 middleware 直接返回 404，避开 Next.js 14 standalone
+ * server-component notFound() 仍返回 200 的已知 bug。
+ */
+const VALID_DOC_SLUGS = new Set<string>([
+  '01-quick-start',
+  '02-modules-tour',
+  '03-workflow',
+  '04-image-best-practices',
+  '05-agents',
+  '06-shortcuts',
+  '07-faq',
+  '08-backup',
+  '09-troubleshooting',
+  '10-playground',
+  '11-market-trends',
+]);
+
+/** /docs/<bogus> → 真 404（中文 brand body · text/html · 0 依赖）。 */
+function notFoundResponse(): NextResponse {
+  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>未找到 · 使用手册</title><meta name="robots" content="noindex"></head><body style="font-family:system-ui,sans-serif;padding:48px;text-align:center;color:#475569;background:#f8fafc;"><h1 style="color:#0f172a;">找不到这篇文档</h1><p>这条 /docs 路径不存在。可能链接拼错了。</p><p><a href="/docs" style="color:#0ea5e9;">回到使用手册首页</a></p></body></html>`;
+  return new NextResponse(html, {
+    status: 404,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-robots-tag': 'noindex, nofollow',
+    },
+  });
+}
+
 export function middleware(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
   const ua = req.headers.get('user-agent') || '';
@@ -61,6 +99,17 @@ export function middleware(req: NextRequest) {
     pathname.includes('.') // 文件
   ) {
     return NextResponse.next();
+  }
+
+  // v0.12 B1 BUG-M22: 不在白名单的 /docs/<slug> 直接 404
+  // 注意：仅拦截 /docs/<single-segment>·/docs 根 + /docs/<slug>/<sub> 透传
+  // （目前没有 sub 路由，但保留兼容性）
+  if (pathname.startsWith('/docs/')) {
+    const tail = pathname.slice('/docs/'.length);
+    const slug = tail.split('/')[0];
+    if (slug && !VALID_DOC_SLUGS.has(slug)) {
+      return notFoundResponse();
+    }
   }
 
   // v0.11 B5: 旧 URL 精确重定向, 必须放在 cookie / UA 判定之前

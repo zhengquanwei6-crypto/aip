@@ -112,7 +112,7 @@ export interface DashboardSummary {
   diskUsage: DashboardSummaryDiskUsage;
 }
 
-const APP_VERSION = process.env.APP_VERSION || 'v0.11';
+const APP_VERSION = process.env.APP_VERSION || 'v0.12';
 const DB_PATH =
   (process.env.DATABASE_URL || '').replace(/^file:/, '').trim() || '/data/dev.db';
 const UPLOADS_DIR = '/app/public/uploads';
