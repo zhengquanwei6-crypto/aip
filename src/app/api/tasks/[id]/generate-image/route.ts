@@ -8,6 +8,9 @@
  *
  * v0.8 Batch 5：fail 时把 trace 透传（含 adapter / baseUrl / lastError / pollHistory）
  * v0.9.2 b1：走 async builder 接通 /prompts 模板编辑器
+ * v0.11 B7：body 可选接收 size?: string / quality?: string
+ *   - 不传 → 走 adapter 池 sizes[0] / qualities[0]
+ *   - 传了不在池里的值 → image-runner 内 fallback 到 sizes[0]
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -21,7 +24,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } },
 ) {
   try {
@@ -30,9 +33,23 @@ export async function POST(
       return NextResponse.json({ ok: false, error: '任务不存在' }, { status: 404 });
     }
 
+    // v0.11 B7：尝试解析 body 里的 size / quality（向后兼容：旧调用 body 可能为空 / 非 JSON）
+    let bodySize: string | undefined;
+    let bodyQuality: string | undefined;
+    try {
+      // req.json() 可能因 body 为空而抛错；忽略即可
+      const b = await req.json().catch(() => null);
+      if (b && typeof b === 'object') {
+        if (typeof b.size === 'string' && b.size.trim()) bodySize = b.size.trim();
+        if (typeof b.quality === 'string' && b.quality.trim()) bodyQuality = b.quality.trim();
+      }
+    } catch {
+      // 忽略
+    }
+
     const platform = task.platform as 'xiaohongshu' | 'xianyu';
     const ratio = platform === 'xiaohongshu' ? '3:4' : '1:1';
-    const size = platform === 'xiaohongshu' ? '1024x1536' : '1024x1024';
+    const fallbackSize = platform === 'xiaohongshu' ? '1024x1536' : '1024x1024';
 
     // 1) 让 LLM 生成图片提示词（v0.9.2 b1：async builder 路由 image:suggest）
     const messages = await buildImagePromptMessagesAsync({
@@ -60,9 +77,13 @@ export async function POST(
     }
 
     // 2) 调图片 API（走 image-runner，兼容 adapter / legacy）
+    //    优先级：body.size > parsed.size > fallbackSize
+    //    runImageGenerate 内仍会按 adapter.sizes 收敛 → 不在池里时回落 sizes[0]
+    const finalSize = bodySize ?? parsed.size ?? fallbackSize;
     const r = await runImageGenerate({
       prompt: parsed.prompt,
-      size: parsed.size || size,
+      size: finalSize,
+      ...(bodyQuality !== undefined ? { quality: bodyQuality } : {}),
       n: 1,
       extra: { aspectRatio: ratio },
     });
@@ -97,7 +118,12 @@ export async function POST(
     await prisma.aIOutput.create({
       data: {
         type: 'image',
-        input: JSON.stringify({ taskId: task.id, prompt: parsed.prompt }),
+        input: JSON.stringify({
+          taskId: task.id,
+          prompt: parsed.prompt,
+          size: finalSize,
+          quality: bodyQuality,
+        }),
         output: JSON.stringify({ url, via: r.via, adapterSlug: r.adapterSlug }),
         model: r.via === 'adapter' ? `adapter:${r.adapterSlug}` : (r.model ?? 'unknown'),
       },

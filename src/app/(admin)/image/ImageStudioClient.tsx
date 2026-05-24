@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { History as HistoryIcon, RotateCcw, X, Trash2 } from 'lucide-react';
 import {
   PLATFORMS,
@@ -52,6 +52,23 @@ interface QueueFailure {
   error: string;
 }
 
+/** v0.11 B7：尺寸 / 质量预设 */
+interface SizePreset {
+  label: string;
+  value: string;
+  tier?: string | null;
+}
+interface QualityPreset {
+  label: string;
+  value: string;
+}
+interface AdapterSummaryItem {
+  slug: string;
+  name?: string;
+  sizes?: SizePreset[] | null;
+  qualities?: QualityPreset[] | null;
+}
+
 const DEFAULT: FormState = {
   platform: 'xiaohongshu',
   ratio: '3:4',
@@ -93,6 +110,51 @@ export default function ImageStudioClient() {
   // B6.4 持久化 prompt 历史
   const { history: textHistory, push: pushTextHistory, clear: clearTextHistory } =
     usePromptHistory('image', 20);
+
+  // ─── v0.11 B7：尺寸 / 质量预设池 ───
+  const [adapterSummary, setAdapterSummary] = useState<AdapterSummaryItem | null>(null);
+  const [sizesPool, setSizesPool] = useState<SizePreset[]>([]);
+  const [qualitiesPool, setQualitiesPool] = useState<QualityPreset[]>([]);
+  const [selectedSize, setSelectedSize] = useState<string>(''); // adapter.sizes[*].value
+  const [selectedQuality, setSelectedQuality] = useState<string>(''); // adapter.qualities[*].value
+
+  // 拉默认 adapter（用于 size/quality 选择器）
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const h = await fetch('/api/health').then((r) => r.json()).catch(() => null);
+        const slug: string | null = h?.imageDefaultAdapter ?? null;
+        if (!slug) return;
+        const a = await fetch(`/api/adapters/${encodeURIComponent(slug)}`)
+          .then((r) => r.json()).catch(() => null);
+        if (!a?.ok || cancelled) return;
+        const ad: AdapterSummaryItem = {
+          slug,
+          name: typeof a.adapter?.name === 'string' ? a.adapter.name : slug,
+          sizes: Array.isArray(a.adapter?.sizes) ? a.adapter.sizes : null,
+          qualities: Array.isArray(a.adapter?.qualities) ? a.adapter.qualities : null,
+        };
+        setAdapterSummary(ad);
+        const sizes = (ad.sizes ?? []).filter((s) => s && typeof s.value === 'string');
+        const qs = (ad.qualities ?? []).filter((q) => q && typeof q.value === 'string');
+        setSizesPool(sizes);
+        setQualitiesPool(qs);
+        if (sizes.length > 0) {
+          setSelectedSize((prev) => prev && sizes.some((s) => s.value === prev) ? prev : sizes[0].value);
+          // 同时把 size 文本输入框也对齐到首项（用户自定义后可手动改）
+          setSize((prev) => prev && sizes.some((s) => s.value === prev) ? prev : sizes[0].value);
+        }
+        if (qs.length > 0) {
+          setSelectedQuality((prev) => prev && qs.some((q) => q.value === prev) ? prev : qs[0].value);
+        }
+      } catch {
+        // 静默：没有 adapter 池时回退老路径
+      }
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     fetch('/api/image-presets')
@@ -215,12 +277,16 @@ export default function ImageStudioClient() {
     setLastError(null);
     setLastTrace(null);
     try {
+      // v0.11 B7：优先用 selectedSize（adapter 池），其次 size 文本框
+      const finalSize = selectedSize || size;
+      const finalQuality = selectedQuality || undefined;
       const res = await fetch('/api/image/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: usePrompt,
-          size,
+          size: finalSize,
+          quality: finalQuality,
           platform: form.platform,
           category: form.category,
           imageType: form.imageType,
@@ -324,6 +390,11 @@ export default function ImageStudioClient() {
     setPrompt(text);
     toast.info('已填入历史提示词');
   }
+
+  const adapterLabel = useMemo(() => {
+    if (!adapterSummary) return '';
+    return adapterSummary.name || adapterSummary.slug;
+  }, [adapterSummary]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-6">
@@ -486,7 +557,48 @@ export default function ImageStudioClient() {
                 onChange={(e) => setNegativePrompt(e.target.value)}
               />
             </Field>
-            <Field label="尺寸">
+
+            {/* v0.11 B7：尺寸 / 质量预设池（仅当 adapter 池有数据时显示） */}
+            {sizesPool.length > 0 && (
+              <Field label={`尺寸预设${adapterLabel ? `（${adapterLabel}）` : ''}`}>
+                <select
+                  className="input"
+                  value={selectedSize}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setSelectedSize(v);
+                    if (v) setSize(v);
+                  }}
+                  data-size-preset-select
+                  aria-label="尺寸预设"
+                >
+                  {sizesPool.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            {qualitiesPool.length > 0 && (
+              <Field label="质量预设">
+                <select
+                  className="input"
+                  value={selectedQuality}
+                  onChange={(e) => setSelectedQuality(e.target.value)}
+                  data-quality-preset-select
+                  aria-label="质量预设"
+                >
+                  {qualitiesPool.map((q) => (
+                    <option key={q.value} value={q.value}>
+                      {q.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+
+            <Field label="尺寸（自定义可改，预设优先）">
               <input
                 className="input"
                 value={size}

@@ -17,12 +17,29 @@
  *   - 不改 adapter 选择逻辑（IMAGE_DEFAULT_ADAPTER 仍读 Setting）
  *   - 不改 wire format
  *   - 调用结果（adapter ok / fail）写回池（markKeySuccess / markKeyError）
+ *
+ * v0.11 B7：尺寸 / 质量预设池
+ *   - opts.size：用户从 adapter.sizes[*].value 里选的字符串（如 "2048x2048"）
+ *   - opts.quality：用户从 adapter.qualities[*].value 里选的字符串（如 "high" / "hd"）
+ *   - 旧调用（无 size/quality）→ 自动用 adapter.sizes[0] / adapter.qualities[0] 兜底（默认 1k + standard/medium）
+ *   - 用户传了非法值（不在 sizes/qualities 池里）→ 同上回落 sizes[0]，不抛错（trace 注 fallbackSize: true）
+ *   - extra.resolution：自动从 SizePreset.tier 注入（kie-* 系 bodyTemplate 用此占位）
+ *   - extra.aspectRatio：自动从 SizePreset.value (W x H) 推算（kie-* 系 bodyTemplate 用此占位）
+ *   - 不动既有 bodyTemplate（向后兼容；adapter Setting JSON 仍是 0 schema 改）
  */
 
 import { prisma } from '@/lib/db';
 import { generateImage as legacyGenerateImage } from '@/lib/ai/image';
 import { runAdapter } from '@/lib/adapter-runtime';
-import { adapterConfigSchema, adapterKey } from '@/lib/adapter-types';
+import {
+  adapterConfigSchema,
+  adapterKey,
+  defaultSizeFromPresets,
+  defaultQualityFromPresets,
+  type AdapterConfig,
+  type SizePreset,
+  type QualityPreset,
+} from '@/lib/adapter-types';
 import { saveImageFromBase64, saveImageFromUrl } from '@/lib/storage';
 import { normalizeSizeForAdapter, type NormalizedSize } from '@/lib/image-size';
 import {
@@ -35,6 +52,8 @@ import {
 export interface RunOptions {
   prompt: string;
   size?: string;
+  /** v0.11 B7：用户选的 quality（low/medium/high or standard/hd），无则用 adapter.qualities[0] */
+  quality?: string;
   n?: number;
   /** 透传给 adapter 的 extra（aspectRatio / resolution / outputFormat 等）*/
   extra?: Record<string, unknown>;
@@ -60,6 +79,12 @@ export interface RunTrace {
   keySource?: 'pool' | 'setting' | 'env' | 'none';
   /** v0.11 B1：池命中时的 key label（脱敏，不含明文）*/
   keyLabel?: string;
+  /** v0.11 B7：实际下发的 size / quality（含 fallback 标记）*/
+  size?: string;
+  sizeTier?: string;
+  sizeFallback?: boolean;
+  quality?: string;
+  qualityFallback?: boolean;
 }
 
 export interface RunResult {
@@ -181,6 +206,77 @@ function pickAdapterModelHint(adapter: any): string | undefined {
   return m?.[1];
 }
 
+/**
+ * v0.11 B7：根据 adapter.sizes 把用户传入的 size 收敛到合法值。
+ *   - 若用户没传 size → 用 sizes[0]
+ *   - 若用户传了但不在 sizes[*].value 列表里 → 也用 sizes[0]，标记 fallback=true
+ *   - adapter 没有 sizes 数组（旧 row）→ 直接放行用户传入的，不 fallback
+ */
+function resolveSize(
+  adapter: AdapterConfig,
+  userSize: string | undefined,
+): { value: string | undefined; tier: string | undefined; preset?: SizePreset; fallback: boolean } {
+  const list = Array.isArray(adapter.sizes) ? adapter.sizes : [];
+  if (list.length === 0) {
+    return { value: userSize, tier: undefined, fallback: false };
+  }
+  if (!userSize) {
+    const first = defaultSizeFromPresets(adapter);
+    return { value: first?.value, tier: first?.tier ?? undefined, preset: first ?? undefined, fallback: false };
+  }
+  const hit = list.find((s) => s.value === userSize);
+  if (hit) {
+    return { value: hit.value, tier: hit.tier ?? undefined, preset: hit, fallback: false };
+  }
+  // fallback to first
+  const first = list[0];
+  return { value: first.value, tier: first.tier ?? undefined, preset: first, fallback: true };
+}
+
+/**
+ * v0.11 B7：根据 adapter.qualities 收敛 quality（同上）。
+ */
+function resolveQuality(
+  adapter: AdapterConfig,
+  userQuality: string | undefined,
+): { value: string | undefined; preset?: QualityPreset; fallback: boolean } {
+  const list = Array.isArray(adapter.qualities) ? adapter.qualities : [];
+  if (list.length === 0) {
+    return { value: userQuality, fallback: false };
+  }
+  if (!userQuality) {
+    const first = defaultQualityFromPresets(adapter);
+    return { value: first?.value, preset: first ?? undefined, fallback: false };
+  }
+  const hit = list.find((q) => q.value === userQuality);
+  if (hit) return { value: hit.value, preset: hit, fallback: false };
+  const first = list[0];
+  return { value: first.value, preset: first, fallback: true };
+}
+
+/** 从 "1024x1024" / "1024x1536" 推 aspect ratio "1:1" / "2:3"（仅作 hint）*/
+function aspectRatioFromValue(v: string | undefined): string | undefined {
+  if (!v) return undefined;
+  const m = v.match(/^(\d+)\s*x\s*(\d+)$/i);
+  if (!m) return undefined;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  if (!w || !h) return undefined;
+  if (w === h) return '1:1';
+  if (w * 4 === h * 3) return '3:4';
+  if (h * 4 === w * 3) return '4:3';
+  if (w * 16 === h * 9) return '9:16';
+  if (h * 16 === w * 9) return '16:9';
+  if (w === 1024 && h === 1792) return '9:16';
+  if (w === 1792 && h === 1024) return '16:9';
+  if (w === 1024 && h === 1536) return '2:3';
+  if (w === 1536 && h === 1024) return '3:2';
+  if (w === 768 && h === 1024) return '3:4';
+  if (w === 720 && h === 1280) return '9:16';
+  // 兜底：返回 raw "WxH"
+  return `${w}:${h}`;
+}
+
 export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
   const t0 = Date.now();
 
@@ -202,15 +298,31 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
           };
         }
 
+        // v0.11 B7：先按 adapter.sizes / qualities 收敛
+        const sizeR = resolveSize(adapter, opts.size);
+        const qualityR = resolveQuality(adapter, opts.quality);
+
+        // 合并 extra：把 sizeTier → extra.resolution（如未指定）；aspect ratio → extra.aspectRatio（如未指定）
+        const userExtra = opts.extra ?? {};
+        const mergedExtra: Record<string, unknown> = { ...userExtra };
+        if (sizeR.tier && typeof userExtra.resolution === 'undefined') {
+          mergedExtra.resolution = sizeR.tier;
+        }
+        if (typeof userExtra.aspectRatio === 'undefined') {
+          const ar = aspectRatioFromValue(sizeR.value);
+          if (ar) mergedExtra.aspectRatio = ar;
+        }
+
         // 上游通常只接受固定尺寸；按 adapter 模型提示归一化
         const adapterModelHint = pickAdapterModelHint(adapter);
-        const normalized: NormalizedSize = normalizeSizeForAdapter(opts.size, adapterModelHint);
+        const normalized: NormalizedSize = normalizeSizeForAdapter(sizeR.value ?? opts.size, adapterModelHint);
 
         const result = await runAdapter(adapter, {
           prompt: opts.prompt,
           size: normalized.size,
+          quality: qualityR.value,
           n: opts.n ?? 1,
-          extra: opts.extra ?? {},
+          extra: mergedExtra,
         }, {
           apiKey,
           abortSignal: opts.abortSignal,
@@ -222,6 +334,12 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
         }
         trace.keySource = picked.source;
         if (picked.activeKey?.label) trace.keyLabel = picked.activeKey.label;
+        // v0.11 B7：trace 注尺寸 / 质量
+        if (sizeR.value) trace.size = sizeR.value;
+        if (sizeR.tier) trace.sizeTier = sizeR.tier;
+        if (sizeR.fallback) trace.sizeFallback = true;
+        if (qualityR.value) trace.quality = qualityR.value;
+        if (qualityR.fallback) trace.qualityFallback = true;
 
         if (!result.ok || result.imageUrls.length === 0) {
           // v0.11 B1：失败回写池

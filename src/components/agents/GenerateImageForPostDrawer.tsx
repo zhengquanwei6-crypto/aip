@@ -12,14 +12,16 @@
  *   4. 用户点「生成图片」→ 调 /api/image/generate（用 promptEn + negativeEn + size + n=1）
  *   5. 显示出图，提供「再来一张」「关闭」
  *
- * 设计取舍：
- *   - 用户层只看到 / 编辑中文；photo-director 内部翻译/扩写成英文 prompt
- *   - 中文风格说明持久化到 Asset.prompt（方便回看）；完整英文 prompt 仅写入 AIOutput.input/output
- *   - 默认 n=1，「再来一张」按钮触发再调一次 generate
+ * v0.11 B7：
+ *   - 抽屉打开时根据 IMAGE_DEFAULT_ADAPTER 拉 sizes/qualities 池
+ *   - 「图片选项」区新增 size + quality select（pool 有 ≥1 项才显示）
+ *   - 调 /api/image/generate 时把 size + quality 透传
+ *   - 老 imageOptions 用户没动 → 自动用 sizes[0] / qualities[0]（默认 1k + standard/medium）
+ *   - 用户选了不在 pool 的值 → 后端 image-runner 内 fallback（前端不阻挡）
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { X, Wand2, Loader2, RotateCw, Image as ImageIcon, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, Wand2, Loader2, RotateCw, Image as ImageIcon, ChevronDown, ChevronUp, Settings as SettingsIcon } from 'lucide-react';
 
 interface PostNotes {
   title?: string;
@@ -56,6 +58,23 @@ interface GeneratedImage {
   ts: number;
 }
 
+/** v0.11 B7：尺寸 / 质量预设 */
+interface SizePreset {
+  label: string;
+  value: string;
+  tier?: string | null;
+}
+interface QualityPreset {
+  label: string;
+  value: string;
+}
+interface AdapterSummary {
+  slug: string;
+  name?: string;
+  sizes: SizePreset[];
+  qualities: QualityPreset[];
+}
+
 export function GenerateImageForPostDrawer({
   open,
   onClose,
@@ -76,9 +95,14 @@ export function GenerateImageForPostDrawer({
   const [images, setImages] = useState<GeneratedImage[]>([]);
   const elapsedTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // v0.11 B7：adapter 池 + 用户选择
+  const [adapter, setAdapter] = useState<AdapterSummary | null>(null);
+  const [selectedSize, setSelectedSize] = useState<string>('');
+  const [selectedQuality, setSelectedQuality] = useState<string>('');
+
   const ranInitial = useRef(false);
 
-  // 第一次打开时自动跑 photo-director
+  // 第一次打开时自动跑 photo-director + 拉 adapter 池
   useEffect(() => {
     if (!open) {
       ranInitial.current = false;
@@ -87,6 +111,7 @@ export function GenerateImageForPostDrawer({
     if (ranInitial.current) return;
     ranInitial.current = true;
     void runBuild();
+    void loadAdapter();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -99,8 +124,39 @@ export function GenerateImageForPostDrawer({
       setImages([]);
       setGenErr(null);
       setShowEnPrompt(false);
+      setAdapter(null);
+      setSelectedSize('');
+      setSelectedQuality('');
     }
   }, [open]);
+
+  async function loadAdapter() {
+    try {
+      const h = await fetch('/api/health').then((r) => r.json()).catch(() => null);
+      const slug: string | null = h?.imageDefaultAdapter ?? null;
+      if (!slug) return;
+      const a = await fetch(`/api/adapters/${encodeURIComponent(slug)}`)
+        .then((r) => r.json()).catch(() => null);
+      if (!a?.ok) return;
+      const sizes: SizePreset[] = Array.isArray(a.adapter?.sizes)
+        ? a.adapter.sizes.filter((s: any) => s && typeof s.value === 'string' && typeof s.label === 'string')
+        : [];
+      const qualities: QualityPreset[] = Array.isArray(a.adapter?.qualities)
+        ? a.adapter.qualities.filter((q: any) => q && typeof q.value === 'string' && typeof q.label === 'string')
+        : [];
+      const summary: AdapterSummary = {
+        slug,
+        name: typeof a.adapter?.name === 'string' ? a.adapter.name : slug,
+        sizes,
+        qualities,
+      };
+      setAdapter(summary);
+      if (sizes.length > 0) setSelectedSize(sizes[0].value);
+      if (qualities.length > 0) setSelectedQuality(qualities[0].value);
+    } catch {
+      // 静默：没有 adapter 池时回退老路径
+    }
+  }
 
   async function runBuild(hint?: string) {
     setBuilding(true);
@@ -115,6 +171,11 @@ export function GenerateImageForPostDrawer({
           imageType,
           notes,
           styleSummaryHint: hint,
+          // v0.11 B7：透传当前选择，server 端目前仅回显
+          imageOptions: {
+            ...(selectedSize ? { size: selectedSize } : {}),
+            ...(selectedQuality ? { quality: selectedQuality } : {}),
+          },
         }),
       });
       const j = await r.json();
@@ -139,6 +200,9 @@ export function GenerateImageForPostDrawer({
       const promptForApi =
         build.promptEn +
         (build.negativeEn ? `\n\nNegative: ${build.negativeEn}` : '');
+      // v0.11 B7：用户在 select 选了 size 就用 select 值；否则用 LLM 推荐 build.recommendedSize
+      const finalSize = selectedSize || build.recommendedSize;
+      const finalQuality = selectedQuality || undefined;
       const r = await fetch('/api/image/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -148,7 +212,8 @@ export function GenerateImageForPostDrawer({
           platform,
           category,
           imageType: imageType || '封面图',
-          size: build.recommendedSize,
+          size: finalSize,
+          ...(finalQuality !== undefined ? { quality: finalQuality } : {}),
           n: 1,
           extra: {
             // 保留中文风格说明，便于在 Asset 表里回看
@@ -177,6 +242,9 @@ export function GenerateImageForPostDrawer({
 
   if (!open) return null;
 
+  const sizesPool = adapter?.sizes ?? [];
+  const qualitiesPool = adapter?.qualities ?? [];
+
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="flex-1 bg-black/30 backdrop-blur-sm" onClick={onClose} />
@@ -195,6 +263,55 @@ export function GenerateImageForPostDrawer({
         </header>
 
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          {/* v0.11 B7：图片选项（尺寸 / 质量 select） */}
+          {(sizesPool.length > 0 || qualitiesPool.length > 0) && (
+            <div className="rounded border border-amber-200 dark:border-amber-700/40 bg-amber-50/50 dark:bg-amber-900/10 p-3">
+              <div className="text-sm font-medium text-amber-800 dark:text-amber-200 inline-flex items-center gap-1 mb-2">
+                <SettingsIcon size={14} /> 图片选项{adapter?.name ? `（${adapter.name}）` : ''}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {sizesPool.length > 0 && (
+                  <div>
+                    <label className="label">尺寸预设</label>
+                    <select
+                      className="input"
+                      value={selectedSize}
+                      onChange={(e) => setSelectedSize(e.target.value)}
+                      disabled={building || generating}
+                      data-size-preset-select
+                      aria-label="尺寸预设"
+                    >
+                      {sizesPool.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {qualitiesPool.length > 0 && (
+                  <div>
+                    <label className="label">质量预设</label>
+                    <select
+                      className="input"
+                      value={selectedQuality}
+                      onChange={(e) => setSelectedQuality(e.target.value)}
+                      disabled={building || generating}
+                      data-quality-preset-select
+                      aria-label="质量预设"
+                    >
+                      {qualitiesPool.map((q) => (
+                        <option key={q.value} value={q.value}>
+                          {q.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* 1. 风格优化区 */}
           <div className="rounded border border-slate-200 dark:border-slate-700 p-3">
             <div className="flex items-center justify-between mb-2">
@@ -259,7 +376,10 @@ export function GenerateImageForPostDrawer({
                         <div className="text-slate-500">negative:</div>
                         <div className="whitespace-pre-wrap">{build.negativeEn}</div>
                       </div>
-                      <div className="text-slate-500">size: {build.recommendedSize}</div>
+                      <div className="text-slate-500">
+                        size: {selectedSize || build.recommendedSize}
+                        {selectedQuality ? ` · quality: ${selectedQuality}` : ''}
+                      </div>
                     </div>
                   )}
                 </div>

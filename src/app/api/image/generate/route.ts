@@ -9,6 +9,11 @@
  * v0.8 Batch 5：trace 字段在 success/fail 都返回（精简版，无 API key）
  *   - success：{ ok, asset, assets, via, adapterSlug, durationMs, trace }
  *   - fail   ：{ ok:false, error, via, adapterSlug, trace }
+ *
+ * v0.11 B7：尺寸 / 质量预设
+ *   - body 接收 size?: string · quality?: string（来自 ImageStudio 选择器）
+ *   - 透传给 runImageGenerate；不在此层做合法性校验（runImageGenerate 内 resolveSize 已 fallback）
+ *   - 老调用（无 size/quality）→ runImageGenerate 自动用每 adapter 的 sizes[0]/qualities[0]
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -29,12 +34,22 @@ export async function POST(req: NextRequest) {
     const platform: string | undefined = body.platform;
     const category: string | undefined = body.category;
     const imageType: string = body.imageType || '封面图';
-    const size: string = body.size || (platform === 'xiaohongshu' ? '1024x1536' : '1024x1024');
+    // v0.11 B7：size 现在按 adapter 池决定缺省（runImageGenerate 内 resolveSize），不再硬写 1024xN
+    const size: string | undefined =
+      typeof body.size === 'string' && body.size.trim()
+        ? body.size.trim()
+        : undefined;
+    // v0.11 B7：quality 同上
+    const quality: string | undefined =
+      typeof body.quality === 'string' && body.quality.trim()
+        ? body.quality.trim()
+        : undefined;
     const n: number = Math.min(Math.max(Number(body.n) || 1, 1), 4);
 
     const r = await runImageGenerate({
       prompt,
-      size,
+      ...(size !== undefined ? { size } : {}),
+      ...(quality !== undefined ? { quality } : {}),
       n,
       extra: body.extra ?? {},
     });
@@ -73,7 +88,7 @@ export async function POST(req: NextRequest) {
     await prisma.aIOutput.create({
       data: {
         type: 'image',
-        input: JSON.stringify({ prompt, size, platform, category, imageType, n }),
+        input: JSON.stringify({ prompt, size, quality, platform, category, imageType, n }),
         output: JSON.stringify({ urls: r.savedUrls, via: r.via, adapterSlug: r.adapterSlug }),
         model: r.via === 'adapter' ? `adapter:${r.adapterSlug}` : (r.model ?? 'unknown'),
       },

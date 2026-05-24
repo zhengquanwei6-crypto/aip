@@ -11,12 +11,17 @@
 // v0.11 Batch 1：
 //   - apiKeyPool: { llm: { total, active, lastError }, image: { total, active, lastError } }
 //
-// 所有新字段都是可选信息，任何失败都用 null/0 兜底，不影响 HTTP 200/503
+// v0.11 Batch 7：
+//   - imageSizesPerAdapter: { '<slug>': { sizes: N, qualities: M } }
+//     遍历 Setting WHERE key LIKE 'adapter:%'，从 JSON 读 sizes / qualities 数组长度
+//
+// 所有新字段都是可选信息，任何失败都用 null/0/{} 兜底，不影响 HTTP 200/503
 
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { AGENTS } from "@/lib/agent-types";
 import { summarizePool } from "@/lib/ai/keys";
+import { ADAPTER_SETTING_PREFIX } from "@/lib/adapter-types";
 
 const prisma = (globalThis as any).__prisma__ ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") {
@@ -128,17 +133,51 @@ async function readApiKeyPool(): Promise<{
   }
 }
 
+/** v0.11 B7：每个 adapter 的 sizes / qualities 数量 */
+async function readImageSizesPerAdapter(): Promise<Record<string, { sizes: number; qualities: number }>> {
+  try {
+    const rows = await prisma.setting.findMany({
+      where: { key: { startsWith: ADAPTER_SETTING_PREFIX } },
+    });
+    const out: Record<string, { sizes: number; qualities: number }> = {};
+    for (const row of rows) {
+      const slug = row.key.slice(ADAPTER_SETTING_PREFIX.length);
+      let sizes = 0;
+      let qualities = 0;
+      try {
+        const parsed = JSON.parse(row.value);
+        if (Array.isArray(parsed?.sizes)) sizes = parsed.sizes.length;
+        if (Array.isArray(parsed?.qualities)) qualities = parsed.qualities.length;
+      } catch {
+        // 留 0
+      }
+      out[slug] = { sizes, qualities };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export async function GET() {
   const t0 = Date.now();
   try {
     await prisma.setting.count();
 
-    const [imageDefaultAdapter, recentFailures, publishDirectorStats, customPromptCount, apiKeyPool] = await Promise.all([
+    const [
+      imageDefaultAdapter,
+      recentFailures,
+      publishDirectorStats,
+      customPromptCount,
+      apiKeyPool,
+      imageSizesPerAdapter,
+    ] = await Promise.all([
       readImageDefaultAdapter(),
       readRecentFailures(),
       readPublishDirectorStats(),
       readCustomPromptCount(),
       readApiKeyPool(),
+      readImageSizesPerAdapter(),
     ]);
 
     return NextResponse.json(
@@ -158,6 +197,8 @@ export async function GET() {
         customPromptCount,
         // v0.11 b1
         apiKeyPool,
+        // v0.11 b7
+        imageSizesPerAdapter,
       },
       { status: 200 },
     );

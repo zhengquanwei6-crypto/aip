@@ -1,11 +1,11 @@
 'use client';
 
 /**
- * <PublishDirectorDrawer> · v0.9 b2
+ * <PublishDirectorDrawer> · v0.9 b2 (+ v0.11 B7 size/quality presets)
  *
  * "全流程发布导演"抽屉（图片选项扩展版）：
  *
- * v0.9 b2 新增表单字段：
+ * v0.9 b2 表单字段：
  *   - 风格预设（从 /api/image-presets 拉取列表，含「自定义」选项）
  *   - styleKeywords（自定义模式可改）
  *   - negativePrompt（可改）
@@ -16,14 +16,11 @@
  *   - 同一风格 sameStyle（n>1 时显示）
  *   - 作为一套图 asSeries（n>1 + sameStyle 时显示）
  *
- * 第 ③ 区块改为多图网格：
- *   - n=1：单张
- *   - n>1：grid-cols-2（lg:3）+ 每张下方 scene 描述
- *   - 单张失败：显示该位置错误 + 「重生这张」按钮
- *   - 全部失败：显示整体错误
- *   - 「再来一张/全部重生」按钮根据 n 切换文字
- *
- * 不存任何 LLM key，仅前端。与 GenerateImageForPostDrawer 共存。
+ * v0.11 B7 新增：
+ *   - 尺寸预设 size（select；选项来源：当前 IMAGE_DEFAULT_ADAPTER 的 sizes 池）
+ *   - 质量预设 quality（select；选项来源：当前 IMAGE_DEFAULT_ADAPTER 的 qualities 池）
+ *   - adapter 切换时（用户去 /settings 改后回到这里）抽屉打开时重新拉取并 reset
+ *   - submit 时把 size + quality 进 imageOptions
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -65,6 +62,9 @@ interface ImageOptions {
   n: number;
   sameStyle: boolean;
   asSeries: boolean;
+  /** v0.11 B7 */
+  size: string;     // adapter.sizes[*].value
+  quality: string;  // adapter.qualities[*].value
 }
 
 interface FormState {
@@ -133,6 +133,23 @@ interface Preset {
   isDefault?: boolean;
 }
 
+/** v0.11 B7：尺寸 / 质量预设 */
+interface SizePreset {
+  label: string;
+  value: string;
+  tier?: string | null;
+}
+interface QualityPreset {
+  label: string;
+  value: string;
+}
+interface AdapterSummary {
+  slug: string;
+  name?: string;
+  sizes: SizePreset[];
+  qualities: QualityPreset[];
+}
+
 interface BuildResp {
   ok: boolean;
   stage?: string;
@@ -177,6 +194,9 @@ const DEFAULT_IMG: ImageOptions = {
   n: 1,
   sameStyle: true,
   asSeries: true,
+  // v0.11 B7：抽屉打开时根据 adapter 池 reset
+  size: '',
+  quality: '',
 };
 
 export interface PublishDirectorDrawerProps {
@@ -198,6 +218,10 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
   const [imgPanelOpen, setImgPanelOpen] = useState(true);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [presetsLoaded, setPresetsLoaded] = useState(false);
+
+  // v0.11 B7：当前 adapter 的 sizes/qualities 池
+  const [adapter, setAdapter] = useState<AdapterSummary | null>(null);
+  const [adapterLoaded, setAdapterLoaded] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [busyIdx, setBusyIdx] = useState<number | null>(null); // 单张重生时的索引
@@ -233,6 +257,60 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
       })
       .finally(() => setPresetsLoaded(true));
   }, [open, presetsLoaded]);
+
+  // v0.11 B7：拉当前默认 adapter 的 sizes/qualities 池
+  //   - 抽屉每次打开都重拉（不缓存到组件外，因为用户可能去 /settings 切了 adapter）
+  //   - 拿到后把 img.size/img.quality reset 到首项
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setAdapterLoaded(false);
+    async function load() {
+      try {
+        const h = await fetch('/api/health').then((r) => r.json()).catch(() => null);
+        const slug: string | null = h?.imageDefaultAdapter ?? null;
+        if (!slug) {
+          if (!cancelled) {
+            setAdapter(null);
+            setAdapterLoaded(true);
+          }
+          return;
+        }
+        const a = await fetch(`/api/adapters/${encodeURIComponent(slug)}`)
+          .then((r) => r.json()).catch(() => null);
+        if (cancelled) return;
+        const sizes: SizePreset[] = Array.isArray(a?.adapter?.sizes)
+          ? a.adapter.sizes.filter((s: any) => s && typeof s.value === 'string' && typeof s.label === 'string')
+          : [];
+        const qualities: QualityPreset[] = Array.isArray(a?.adapter?.qualities)
+          ? a.adapter.qualities.filter((q: any) => q && typeof q.value === 'string' && typeof q.label === 'string')
+          : [];
+        const summary: AdapterSummary = {
+          slug,
+          name: typeof a?.adapter?.name === 'string' ? a.adapter.name : slug,
+          sizes,
+          qualities,
+        };
+        setAdapter(summary);
+        setImg((s) => {
+          const next = { ...s };
+          if (sizes.length > 0 && (!s.size || !sizes.some((x) => x.value === s.size))) {
+            next.size = sizes[0].value;
+          }
+          if (qualities.length > 0 && (!s.quality || !qualities.some((x) => x.value === s.quality))) {
+            next.quality = qualities[0].value;
+          }
+          return next;
+        });
+      } catch {
+        if (!cancelled) setAdapter(null);
+      } finally {
+        if (!cancelled) setAdapterLoaded(true);
+      }
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, [open]);
 
   function up<K extends keyof FormState>(k: K, v: FormState[K]) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -285,6 +363,9 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
       n: img.n,
       sameStyle: img.n > 1 ? img.sameStyle : false,
       asSeries: img.n > 1 && img.sameStyle ? img.asSeries : false,
+      // v0.11 B7
+      size: img.size || undefined,
+      quality: img.quality || undefined,
     };
   }
 
@@ -428,6 +509,8 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
   const xy = content as XYContent | null;
   const showSameStyle = img.n > 1;
   const showSeries = img.n > 1 && img.sameStyle;
+  const sizesPool = adapter?.sizes ?? [];
+  const qualitiesPool = adapter?.qualities ?? [];
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -571,6 +654,48 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
               </button>
               {imgPanelOpen && (
                 <div className="px-2.5 pb-2.5 space-y-2 border-t border-amber-200 dark:border-amber-700/40">
+                  {/* v0.11 B7：尺寸 / 质量预设池（adapter 池有数据时显示） */}
+                  {(sizesPool.length > 0 || qualitiesPool.length > 0) && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {sizesPool.length > 0 && (
+                        <Field label={`尺寸预设${adapter?.name ? `（${adapter.name}）` : ''}`}>
+                          <select
+                            className="input"
+                            value={img.size}
+                            onChange={(e) => upImg('size', e.target.value)}
+                            disabled={busy}
+                            data-size-preset-select
+                            aria-label="尺寸预设"
+                          >
+                            {sizesPool.map((s) => (
+                              <option key={s.value} value={s.value}>
+                                {s.label}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                      )}
+                      {qualitiesPool.length > 0 && (
+                        <Field label="质量预设">
+                          <select
+                            className="input"
+                            value={img.quality}
+                            onChange={(e) => upImg('quality', e.target.value)}
+                            disabled={busy}
+                            data-quality-preset-select
+                            aria-label="质量预设"
+                          >
+                            {qualitiesPool.map((q) => (
+                              <option key={q.value} value={q.value}>
+                                {q.label}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                      )}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-2">
                     <Field label="风格预设">
                       <select

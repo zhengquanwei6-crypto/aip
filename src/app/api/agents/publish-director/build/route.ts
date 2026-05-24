@@ -1,5 +1,5 @@
 /**
- * /api/agents/publish-director/build · v0.9 b3 (+ v0.9.2 b1 async builders)
+ * /api/agents/publish-director/build · v0.9 b3 (+ v0.9.2 b1 async builders + v0.11 B7 size/quality)
  *
  * v0.9 b3 (B1)：
  *   - 新增 body.taskId：由 /today 任务卡触发时传入
@@ -11,6 +11,13 @@
  * v0.9.2 b1：
  *   - step1 改用 buildContentMessagesAsync，让 /prompts 编辑器编辑的
  *     xiaohongshu:case / xiaohongshu:tutorial / xianyu:product 真正影响下一次生成。
+ *
+ * v0.11 B7（图片尺寸/质量预设池）：
+ *   - imageOptions 新增 size?: string · quality?: string
+ *   - step3 调 runImageGenerate 时透传：runImageGenerate 内 resolveSize/resolveQuality 按
+ *     当前 IMAGE_DEFAULT_ADAPTER 的 sizes/qualities 池收敛
+ *   - LLM step2 输出的 recommendedSize 仍存在，但**仅作回显**：用户在 imageOptions 选了 size 时
+ *     用户优先（与 stylePresetSize 同优先级行为；避免出现 LLM 推荐 1024x1536 但用户选 2K 的不一致）
  *
  * "先文案再图片"链式编排（含图片选项扩展）：
  *   step 1: buildContentMessagesAsync → generateText(json) → content（小红书/闲鱼 schema）
@@ -28,7 +35,7 @@
  *   'style'    ← 跑 2
  *   'image'    ← 跑 3（用 cachedContent + cachedStylePrompt）
  *
- * v0.9 b2 新增 imageOptions：
+ * v0.9 b2 imageOptions：
  *   {
  *     autoImage?: boolean,        // 默认 true
  *     stylePresetId?: string,     // ImagePreset.id
@@ -40,6 +47,9 @@
  *     n?: number,                  // 1-4，默认 1
  *     sameStyle?: boolean,         // n>1 时生效，默认 true
  *     asSeries?: boolean,          // n>1 + sameStyle 时生效，默认 true
+ *     // v0.11 B7
+ *     size?: string,               // 来自 adapter.sizes[*].value
+ *     quality?: string,            // 来自 adapter.qualities[*].value
  *   }
  *
  * Response（v0.9 b2 改造）：
@@ -87,6 +97,10 @@ interface ImageOptions {
   n?: number;
   sameStyle?: boolean;
   asSeries?: boolean;
+  /** v0.11 B7：用户从 adapter.sizes 池里选的尺寸字符串（"1024x1024" / "2048x2048" / "768x1024" 等）*/
+  size?: string;
+  /** v0.11 B7：用户从 adapter.qualities 池里选的质量字符串（"low"/"medium"/"high" / "standard"/"hd"）*/
+  quality?: string;
 }
 
 interface BuildBody {
@@ -217,6 +231,9 @@ function summarizeForStyle(content: any, body: BuildBody, opts: ImageOptions): s
   if (opts.primaryColor) imgLines.push(`primaryColor: ${opts.primaryColor}`);
   if (opts.accentColor) imgLines.push(`accentColor: ${opts.accentColor}`);
   imgLines.push(`textLanguage: ${opts.textLanguage || 'en'}`);
+  // v0.11 B7：把 size/quality 也喂给 LLM 做参考（不强求 LLM 输出，仅作 hint）
+  if (opts.size) imgLines.push(`size(用户从 adapter 池选): ${opts.size}`);
+  if (opts.quality) imgLines.push(`quality(用户从 adapter 池选): ${opts.quality}`);
   const n = clampN(opts.n, 1);
   imgLines.push(`n: ${n}`);
   imgLines.push(`sameStyle: ${opts.sameStyle !== false}`);
@@ -353,11 +370,14 @@ async function runStyleStep(
 /**
  * 串行执行 N 次出图，每张失败独立记录。
  * - assets 始终是 N 长度（失败的位置 url 缺，error 填）
+ *
+ * v0.11 B7：传入 size / quality（来自 imageOptions），透传 runImageGenerate
  */
 async function runImagesSerial(opts: {
   prompts: { promptEn: string; scene?: string }[];
   negativeEn: string;
-  size: SizeStr;
+  size: string;
+  quality?: string;
   platform?: Platform;
   category?: string | null;
 }): Promise<{ assets: AssetEntry[]; errors: { idx: number; scene?: string; error: string }[] }> {
@@ -371,6 +391,7 @@ async function runImagesSerial(opts: {
       const ir = await runImageGenerate({
         prompt: promptForApi,
         size: opts.size,
+        ...(opts.quality !== undefined ? { quality: opts.quality } : {}),
         n: 1,
         extra: { sceneTag: p.scene },
       });
@@ -724,10 +745,19 @@ export async function POST(req: NextRequest) {
       }
 
       if (prompts.length > 0) {
+        // v0.11 B7：用户在 imageOptions 选了 size 时优先用户；否则用 stylePrompt.recommendedSize
+        const finalSize: string = (typeof opts.size === 'string' && opts.size.trim())
+          ? opts.size.trim()
+          : stylePrompt.recommendedSize;
+        const finalQuality: string | undefined =
+          typeof opts.quality === 'string' && opts.quality.trim()
+            ? opts.quality.trim()
+            : undefined;
         const r = await runImagesSerial({
           prompts,
           negativeEn: stylePrompt.negativeEn,
-          size: stylePrompt.recommendedSize,
+          size: finalSize,
+          ...(finalQuality !== undefined ? { quality: finalQuality } : {}),
           platform: body.platform,
           category: body.category ?? null,
         });

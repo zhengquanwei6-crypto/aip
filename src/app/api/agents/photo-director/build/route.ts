@@ -5,6 +5,10 @@
  *   { styleSummary, promptEn, negativeEn, recommendedSize, tips }
  *
  * 不返回普通对话文本；专门给 /content 页生图按钮用。
+ *
+ * v0.11 B7：body 透传 imageOptions.size / imageOptions.quality（仅记录到响应 metadata）。
+ *   - 真正使图片用上 size/quality 是 GenerateImageForPostDrawer → /api/image/generate 调用
+ *   - 本 endpoint 仅生成 prompt JSON，把用户选择回显给前端用于二段调用
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -15,6 +19,11 @@ import { extractJSON } from '@/lib/ai/text';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
+
+interface ImageOptionsLite {
+  size?: string;
+  quality?: string;
+}
 
 interface BuildBody {
   /** 平台：xiaohongshu | xianyu */
@@ -37,6 +46,8 @@ interface BuildBody {
   styleSummaryHint?: string;
   /** 已选 ImagePreset 的 styleKeywords，作为锚点 */
   styleKeywords?: string;
+  /** v0.11 B7：尺寸 / 质量预设（来自 adapter 池）。本 endpoint 仅回显，不影响 LLM 输出 */
+  imageOptions?: ImageOptionsLite;
 }
 
 interface BuildResult {
@@ -129,7 +140,21 @@ export async function POST(req: NextRequest) {
       tips: Array.isArray(parsed.tips) ? parsed.tips.filter((x) => typeof x === 'string') : undefined,
     };
 
-    return NextResponse.json({ ok: true, result, model: r.model });
+    // v0.11 B7：把用户选的 size/quality 回显（前端二段调用 /api/image/generate 时透传）
+    const echoImageOptions: ImageOptionsLite = {};
+    if (typeof body.imageOptions?.size === 'string' && body.imageOptions.size.trim()) {
+      echoImageOptions.size = body.imageOptions.size.trim();
+    }
+    if (typeof body.imageOptions?.quality === 'string' && body.imageOptions.quality.trim()) {
+      echoImageOptions.quality = body.imageOptions.quality.trim();
+    }
+
+    return NextResponse.json({
+      ok: true,
+      result,
+      model: r.model,
+      ...(Object.keys(echoImageOptions).length > 0 ? { imageOptions: echoImageOptions } : {}),
+    });
   } catch (err) {
     return NextResponse.json(
       { ok: false, error: (err as Error).message || 'unknown error' },

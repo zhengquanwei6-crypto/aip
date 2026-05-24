@@ -71,6 +71,62 @@ publish-director 抽屉里"风格模板"下拉选这条，photo-director 在 ste
 
 切 adapter 后第一次 publish-director 跑可能会慢 1-2 秒（image-runner 第一次连新 baseUrl 没复用 keep-alive），之后稳定。
 
+## 📐 尺寸与质量预设（v0.11 B7）
+
+每个 adapter 自带一组尺寸 / 质量预设池。三处图片 UI（**ImageStudio**、**publish-director Drawer**、**photo-director Drawer**）抽屉打开时会读 `/api/health.imageDefaultAdapter` → `/api/adapters/<slug>` 拿到当前 adapter 的 `sizes` / `qualities` 数组，渲染成两个 select。
+
+### 池配置（src/lib/adapter-seed.ts）
+
+| Adapter | sizes | qualities |
+|---|---|---|
+| `kie-gpt-image-2` / `4router-gpt-image-2` / `openai-gpt-img-2` | 1K(1024) / 2K(2048) / 4K(3840×2160) | 低 / 中 / 高 |
+| `kie-flux-kontext-pro` | 方图1024 / 竖图3:4(768x1024) / 竖图9:16(720x1280) | 标准 / 高清 |
+| `openai-dalle-3` | 方图1024 / 竖图1024x1792 / 横图1792x1024 | 标准 / 高清 |
+| `generic-openai-compatible` | 1024 | （无） |
+
+### 行为约定
+
+- **默认值**：用户没动 select → 自动用 `sizes[0]` / `qualities[0]`（默认 1k + standard 或 medium）
+- **adapter 切换**：用户在 /settings 改了 `IMAGE_DEFAULT_ADAPTER` 后回到任意图片抽屉，重新打开会**自动 reset** 选择到新 adapter 的 sizes[0]/qualities[0]
+- **非法值兜底**：用户传了不在池里的 size/quality（例如 prompt 里残留旧 1024x1536）→ image-runner 内 `resolveSize()` fallback 到 `sizes[0]`，`trace.sizeFallback=true` 标记
+- **bodyTemplate 占位**：image-runner 自动把 `SizePreset.tier` → `extra.resolution`（kie-* 系），`SizePreset.value` → `{size}`（openai-* 系），`extra.aspectRatio` 从 W×H 推算
+
+### 前端选择器
+
+publish-director Drawer 的「图片选项」分组顶部新增两个 select：
+
+```
+[尺寸预设（4router-gpt-image-2）]    [质量预设]
+  1K(1024)              ▾              低     ▾
+  2K(2048)                              中
+  4K(3840×2160)                         高
+```
+
+ImageStudio 的右侧「提示词」卡片同样新增 select；用户在 select 选了之后会同步到下面的「尺寸（自定义可改）」输入框，方便临时改。
+
+photo-director Drawer 的顶部新增「图片选项」卡片，与 publish-director 同结构。
+
+### /api/health 字段
+
+新增 `imageSizesPerAdapter` 反映当前 Setting 表里每个 adapter 的池容量：
+
+```jsonc
+{
+  "imageSizesPerAdapter": {
+    "kie-gpt-image-2":           { "sizes": 3, "qualities": 3 },
+    "kie-flux-kontext-pro":      { "sizes": 3, "qualities": 2 },
+    "openai-dalle-3":            { "sizes": 3, "qualities": 2 },
+    "openai-gpt-img-2":          { "sizes": 3, "qualities": 3 },
+    "4router-gpt-image-2":       { "sizes": 3, "qualities": 3 },
+    "generic-openai-compatible": { "sizes": 1, "qualities": 0 }
+  }
+}
+```
+
+### 一次性迁移
+
+push.sh 部署完会调一次 `POST /api/adapters/migrate-presets`，把 `sizes` / `qualities` 字段 merge 进现有 adapter Setting 行（按 slug 匹配 SLUG_PRESET_MAP）。**幂等**——重复调用不会破坏现有 baseUrl/auth/flow 等用户定制。
+
 ## 图片质量四层切入（v0.9.2 b4 路线图，部分 v0.11 已具备）
 
 | 层级         | 当前状态                                              |
@@ -88,6 +144,8 @@ category:      电商主图
 audience:      电商卖家
 preset:        极简白底高质感
 图片选项:
+  尺寸预设:   2K(2048)   ← v0.11 B7 新
+  质量预设:   高         ← v0.11 B7 新
   n: 3
   sameStyle: true
   asSeries: false
@@ -101,10 +159,11 @@ preset:        极简白底高质感
 
 ## 实操：怎么调"流程图"
 
-流程图基本是文字主导，gpt-image-2 类模型对文字幻觉率高。建议切 `kie-flux-kontext-pro` adapter（专攻文字图）+ ImagePreset 选"流程图清晰"那条，textLanguage 强写 `zh`。
+流程图基本是文字主导，gpt-image-2 类模型对文字幻觉率高。建议切 `kie-flux-kontext-pro` adapter（专攻文字图）+ ImagePreset 选"流程图清晰"那条，textLanguage 强写 `zh`。注意切 adapter 后池会自动从 1k/2k/4k 变成方图1024/竖图3:4/竖图9:16，这是预期行为。
 
 ## 失败重试
 
 - **单张失败**：抽屉里图片网格右下角"重生" → 不过 LLM，只过 image-runner
 - **整 batch 失败**：抽屉关掉重开 → 从 step1 重跑（会再过一次 LLM，**消耗一次 token**）
 - **持续失败**：去 `/api/health` 看 `recentFailures.image`，如果是 401 → key 错（去 /settings 改）；如果是 429 → 中转站限流（等几秒重试或加备用 IMAGE key 设 priority=1，参见 [快速开始](/docs/01-quick-start)）
+- **size 兜底**：如果 trace 里看到 `sizeFallback: true`，说明你传的 size 不在当前 adapter 的池里，已自动用 sizes[0]。换 adapter 或在 select 里重新选即可

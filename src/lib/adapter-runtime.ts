@@ -9,6 +9,12 @@
 //   - pollHistory 每条增加 ts（毫秒）和 ok（boolean）
 //   - 顶层 trace 增加 lastError / lastResponseSnippet / durationMs
 //   - 失败时 trace 仍会附带（之前已经如此），下游可以透传给前端
+//
+// v0.11 B7：image options 注入
+//   - GenerateInput.size / quality 通过 vars.size / vars.quality / vars.extra 注入到 bodyTemplate
+//   - kie-* 这类 bodyTemplate 用 {extra.resolution}：调用方按 SizePreset.tier 计算后写进 extra
+//   - openai-dalle-3 / openai-gpt-img-2 这类 bodyTemplate 直接用 {size} / {quality}
+//   - 本文件不替 caller 决定如何把 size/quality 映射到 bodyTemplate 占位符 — 仍由 adapter Setting JSON 决定
 
 import type {
   AdapterConfig,
@@ -166,6 +172,17 @@ export async function runAdapter(
 ): Promise<DryRunResult> {
   const t0 = Date.now();
   const trace: TraceCtx | undefined = opts.collectTrace ? emptyTraceCtx() : undefined;
+
+  // v0.11 B7：把 size/quality 同时塞 vars 顶层 + extra（兼容两种 bodyTemplate 写法）
+  //   - 写 {size} / {quality}                → 用 vars.size / vars.quality
+  //   - 写 {extra.size} / {extra.quality}    → 用 vars.extra.size / vars.extra.quality
+  //   - 写 {extra.resolution}（kie-*）       → 由 caller 在 input.extra.resolution 写好
+  //   - 写 {extra.aspectRatio}（kie-*）      → 同上
+  const inputExtra = input.extra ?? {};
+  const mergedExtra: Record<string, unknown> = { ...inputExtra };
+  if (input.size && typeof inputExtra.size === "undefined") mergedExtra.size = input.size;
+  if (input.quality && typeof inputExtra.quality === "undefined") mergedExtra.quality = input.quality;
+
   const vars: Record<string, unknown> = {
     API_KEY: opts.apiKey,
     prompt: input.prompt,
@@ -173,7 +190,7 @@ export async function runAdapter(
     n: input.n ?? 1,
     quality: input.quality ?? "standard",
     imageUrl: input.imageUrl ?? "",
-    extra: input.extra ?? {},
+    extra: mergedExtra,
   };
 
   try {
