@@ -16,6 +16,10 @@
 //   - bodyTemplate 支持 multipart：
 //       { __contentType: 'multipart/form-data', fields: [{ name, value, filename?, contentType? }, ...] }
 //     当 fields[i].filename 非空时，value 视为 base64（解码后塞入 file part）
+// v0.11 B11（i2i 真生图 bug 修复）：
+//   - normalizeUrls 升级支持 { url } / { b64_json } / { image_url } 对象（OpenAI /v1/images/edits 返回 b64_json）
+//   - 配合 imageUrlPath = 'data[*]'（先取整对象再判字段），新生成图片 → data:image/png;base64,xxx
+//     → image-runner.persistImages 走 saveImageFromBase64 → 落盘成功
 
 import type {
   AdapterConfig,
@@ -548,12 +552,50 @@ function buildRequest(
   };
 }
 
+/**
+ * v0.11 B11 fix-2：normalizeUrls 升级 — 支持 OpenAI /v1/images/edits 返回的 `b64_json` 字段。
+ *
+ * 输入形态：
+ *   - string                       → ['<that string>']
+ *   - string[]（含嵌套）            → flatten 后过滤非空字符串
+ *   - { url }                      → ['<url>']
+ *   - { b64_json }                 → ['data:image/png;base64,<b64>']
+ *   - 上述对象数组                  → 同上 map（4router / openai-gpt-img-2 i2i 走这里）
+ *
+ * 这样 image-runner.persistImages 就能直接 saveImageFromBase64 / saveImageFromUrl 而无需改它。
+ */
 function normalizeUrls(extracted: unknown): string[] {
-  if (typeof extracted === "string") return [extracted];
-  if (Array.isArray(extracted)) {
-    return extracted.flat(2).filter((x): x is string => typeof x === "string" && x.length > 0);
+  const acc: string[] = [];
+  pushExtracted(extracted, acc);
+  return acc;
+}
+
+function pushExtracted(item: unknown, acc: string[]): void {
+  if (item === null || item === undefined) return;
+  if (typeof item === "string") {
+    if (item.length > 0) acc.push(item);
+    return;
   }
-  return [];
+  if (Array.isArray(item)) {
+    for (const sub of item) pushExtracted(sub, acc);
+    return;
+  }
+  if (typeof item === "object") {
+    const o = item as Record<string, unknown>;
+    if (typeof o.url === "string" && o.url) {
+      acc.push(o.url);
+      return;
+    }
+    if (typeof o.b64_json === "string" && o.b64_json) {
+      acc.push("data:image/png;base64," + o.b64_json);
+      return;
+    }
+    if (typeof o.image_url === "string" && o.image_url) {
+      acc.push(o.image_url);
+      return;
+    }
+    // unknown shape · skip
+  }
 }
 
 function redactHeaders(h: Record<string, string>): Record<string, string> {

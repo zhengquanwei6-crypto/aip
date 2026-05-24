@@ -204,7 +204,12 @@ const OPENAI_GENERIC_EDITS_I2I_FLOW: AdapterFlow = {
   response: { imageUrlPath: 'data[*].url', errorPath: 'error.message' },
 };
 
-/** OpenAI 兼容 gpt-img-2 (/images/edits 强制 model 字段) */
+/**
+ * OpenAI 兼容 gpt-img-2 (/images/edits 强制 model 字段)
+ *
+ * v0.11 B11 fix-2：imageUrlPath 改成 `data[*]`（让 image-runner 拿到对象再判 url / b64_json）。
+ *   `/v1/images/edits` 默认返回 b64_json 而非 url（OpenAI 行为），原 `data[*].url` 永远拿不到。
+ */
 const OPENAI_GPT_IMG_2_I2I_FLOW: AdapterFlow = {
   type: 'sync',
   endpoint: { method: 'POST', path: '/images/edits' },
@@ -222,7 +227,7 @@ const OPENAI_GPT_IMG_2_I2I_FLOW: AdapterFlow = {
       ],
     },
   },
-  response: { imageUrlPath: 'data[*].url', errorPath: 'error.message' },
+  response: { imageUrlPath: 'data[*]', errorPath: 'error.message' },
 };
 
 /**
@@ -252,7 +257,9 @@ const FOUR_ROUTER_GPT_IMAGE_2_I2I_FLOW: AdapterFlow = {
       ],
     },
   },
-  response: { imageUrlPath: 'data[*].url', errorPath: 'error.message' },
+  // v0.11 B11 fix-2：4router /images/edits 也返回 b64_json（与 OpenAI 协议一致），
+  // imageUrlPath 改成 `data[*]` 让 image-runner 拿到对象后处理 url / b64_json。
+  response: { imageUrlPath: 'data[*]', errorPath: 'error.message' },
 };
 
 // ──────────────────────────────────────────────────────────
