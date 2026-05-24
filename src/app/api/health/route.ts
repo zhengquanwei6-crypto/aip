@@ -1,5 +1,9 @@
 // /api/health · 轻量健康检查
 //
+// v0.11 B15.7：
+//   - diskUsage: { rootPercent, rootBytes, rootUsedBytes, uploadsBytes, uploadsCount }
+//     (BUG-L12 闭环：磁盘 88% · uploads 59MB / 45 文件 / 给 dashboard DiskWarningCard 用)
+//
 // v0.11 B10：
 //   - marketTrendsModule: { enabled: true, platforms: [...], snapshotCount }
 //
@@ -21,6 +25,8 @@ import { summarizePool } from "@/lib/ai/keys";
 import { ADAPTER_SETTING_PREFIX } from "@/lib/adapter-types";
 import { countMarketSnapshots } from "@/lib/market/store";
 import { PLATFORM_SLUGS } from "@/lib/market/types";
+import { statfs, readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 
 const prisma = (globalThis as any).__prisma__ ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") {
@@ -30,6 +36,7 @@ if (process.env.NODE_ENV !== "production") {
 const STARTED_AT = new Date().toISOString();
 const STARTED_AT_MS = Date.now();
 const APP_VERSION = process.env.APP_VERSION || "v0.11";
+const UPLOADS_DIR = "/app/public/uploads";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -195,6 +202,69 @@ async function readMarketTrendsModule(): Promise<{
   };
 }
 
+/**
+ * v0.11 B15.7 · 磁盘 / uploads 用量
+ *
+ * - rootPercent: 容器 / 挂载点已用 % (整数)
+ * - rootBytes / rootUsedBytes: 总字节 / 已用字节
+ * - uploadsBytes: /app/public/uploads 累计 bytes
+ * - uploadsCount: 文件数（不含目录）
+ *
+ * 任一字段读不到时 fallback null（不阻塞 200 响应）。
+ * Dashboard DiskWarningCard 在 rootPercent ≥ 85 时显示「磁盘紧张」徽章 + 跳 /docs/08。
+ */
+async function readDiskUsage(): Promise<{
+  rootPercent: number | null;
+  rootBytes: number | null;
+  rootUsedBytes: number | null;
+  uploadsBytes: number | null;
+  uploadsCount: number | null;
+}> {
+  const out = {
+    rootPercent: null as number | null,
+    rootBytes: null as number | null,
+    rootUsedBytes: null as number | null,
+    uploadsBytes: null as number | null,
+    uploadsCount: null as number | null,
+  };
+  try {
+    // statfs 在 node 18.15+ 可用（容器是 node 20）
+    const s: any = await (statfs as any)("/");
+    const blockSize = Number(s.bsize) || 0;
+    const total = Number(s.blocks) * blockSize;
+    const free = Number(s.bfree) * blockSize;
+    const used = total - free;
+    if (total > 0) {
+      out.rootBytes = total;
+      out.rootUsedBytes = used;
+      out.rootPercent = Math.round((used / total) * 100);
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const entries = await readdir(UPLOADS_DIR);
+    let bytes = 0;
+    let count = 0;
+    for (const name of entries) {
+      try {
+        const st = await stat(join(UPLOADS_DIR, name));
+        if (st.isFile()) {
+          bytes += st.size;
+          count++;
+        }
+      } catch {
+        /* skip unreadable */
+      }
+    }
+    out.uploadsBytes = bytes;
+    out.uploadsCount = count;
+  } catch {
+    /* ignore — uploads dir may not exist */
+  }
+  return out;
+}
+
 export async function GET() {
   const t0 = Date.now();
   try {
@@ -208,6 +278,7 @@ export async function GET() {
       apiKeyPool,
       caps,
       marketTrendsModule,
+      diskUsage,
     ] = await Promise.all([
       readImageDefaultAdapter(),
       readRecentFailures(),
@@ -216,6 +287,7 @@ export async function GET() {
       readApiKeyPool(),
       readImageCapabilitiesPerAdapter(),
       readMarketTrendsModule(),
+      readDiskUsage(),
     ]);
 
     return NextResponse.json(
@@ -243,6 +315,8 @@ export async function GET() {
         imageCapabilitiesPerAdapter: caps.capabilities,
         // v0.11 b10
         marketTrendsModule,
+        // v0.11 b15.7
+        diskUsage,
       },
       { status: 200 },
     );

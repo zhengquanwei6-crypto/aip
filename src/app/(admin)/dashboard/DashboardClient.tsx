@@ -1,8 +1,10 @@
 /**
  * v0.11 B3 · Dashboard 客户端组件
  * v0.11 B10 · 加入第 5 区：市场趋势卡（MarketTrendsCard）
+ * v0.11 B15.7 · 加 DiskWarningCard（顶部条件渲染 · BUG-L12 闭环）
  *
  * 4 区 + 第 5 区布局（max-w-[1400px] 由 B2 容器控制，本组件用 grid）：
+ *   0)   B15.7 磁盘警告（仅 rootPercent ≥ 85% 时渲染 · 否则不占位）
  *   1) 顶部欢迎条（今日日期 / 周X / 待办数量）
  *   2) 6 KPI 小卡：待办 / 已生成 / 已发布 / AIOutput / 图片 / 客户
  *   3) 4 快速操作：新建任务 / 写文案 / 出图 / 全流程发布
@@ -32,6 +34,7 @@ import {
   RecentFailuresCard,
 } from './components/SystemHealthCard';
 import MarketTrendsCard from './components/MarketTrendsCard';
+import DiskWarningCard from './components/DiskWarningCard';
 import type { DashboardSummary } from '@/app/api/dashboard/summary/aggregate';
 import { PLATFORM_SLUGS } from '@/lib/market/types';
 
@@ -40,11 +43,14 @@ export interface DashboardClientProps {
 }
 
 export default function DashboardClient({ data }: DashboardClientProps) {
-  const { today, kpi, todayTasks, recentAIOutputs, system, marketTrends } =
+  const { today, kpi, todayTasks, recentAIOutputs, system, marketTrends, diskUsage } =
     data;
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {/* 0) v0.11 B15.7 磁盘警告（≥ 85% 才渲染） */}
+      <DiskWarningCard diskUsage={diskUsage} />
+
       {/* 1) 顶部欢迎条 */}
       <header className="rounded-lg border border-slate-200 bg-white p-4 sm:p-5 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center gap-3">

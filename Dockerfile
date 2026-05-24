@@ -2,6 +2,7 @@
 # design-ai-ops · 多阶段构建 Dockerfile
 # Next.js standalone + 编译后的 seed.js
 # v0.11 B11: 加 market-seed.js（启动期 PlatformInfo 兜底）
+# v0.11 B15.7: 加 scripts/cleanup-assets.mjs（手动 / cron 跑 dry-run + --apply）
 # =============================================
 
 # ---------- 1) 依赖阶段 ----------
@@ -65,6 +66,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modul
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
+
+# v0.11 B15.7: scripts/ 目录（asset 清理脚本，手动 / cron 调）
+COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
 
 COPY --chown=nextjs:nodejs docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

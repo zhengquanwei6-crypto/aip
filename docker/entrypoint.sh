@@ -34,5 +34,14 @@ if [ -f /app/prisma/market-seed.js ]; then
   node /app/prisma/market-seed.js 2>&1 || echo "[entrypoint] market-seed failed (non-fatal)"
 fi
 
+# v0.11 B15.7: 启动时跑一次 asset cleanup dry-run，把候选数 + 释放预期写到 docker logs
+# 用户不会被自动删任何东西 — dry-run 只读 prisma + fs.stat。
+# 真清理需要 host crontab 主动调 `docker exec design-ai-ops node /app/scripts/cleanup-assets.mjs --apply`
+# (详见 /docs/08-backup §「💾 磁盘清理 (v0.11 B15.7)」)。
+if [ -f /app/scripts/cleanup-assets.mjs ]; then
+  echo "[entrypoint] B15.7 asset cleanup dry-run (read-only · 不删任何文件)"
+  node /app/scripts/cleanup-assets.mjs 2>&1 | sed 's/^/[cleanup-dry-run] /' || echo "[entrypoint] cleanup dry-run failed (non-fatal)"
+fi
+
 echo "[entrypoint] starting Next.js"
 exec "$@"
