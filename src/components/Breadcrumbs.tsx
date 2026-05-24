@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { ChevronRight } from 'lucide-react';
 import { NAV_ITEMS } from '@/lib/constants';
 
@@ -10,13 +10,40 @@ import { NAV_ITEMS } from '@/lib/constants';
  * - 第一级用 NAV_ITEMS 找中文 label
  * - 第二级如果是 cuid（25 字符 a-z0-9）显示「详情」
  * - 最后一段加粗、其余半透明
+ *
+ * v0.12 B3.3：
+ *   - /create?tab=content/image/publish 显示三级 [创作 → 文案/图片/全流程发布]
+ *   - /clients?tab=pricing 也支持子级显示
+ *   - /presets?tab=image/content/agent 也支持子级显示
  */
+
+const TAB_LABEL: Record<string, Record<string, string>> = {
+  '/create': {
+    content: '文案',
+    image: '图片',
+    publish: '全流程发布',
+  },
+  '/clients': {
+    pricing: '报价方案',
+  },
+  '/presets': {
+    image: '图片模板',
+    content: '文案模板',
+    agent: 'Agent 模板',
+  },
+  '/workspace': {
+    history: '历史输出',
+    assets: '素材库',
+  },
+};
+
 export default function Breadcrumbs({
   className = '',
 }: {
   className?: string;
 }) {
   const pathname = usePathname() || '';
+  const searchParams = useSearchParams();
   const parts = pathname.split('/').filter(Boolean);
   if (parts.length === 0) return null;
 
@@ -38,8 +65,16 @@ export default function Breadcrumbs({
     label: navItem?.label ?? parts[0],
   });
 
-  // 第二级（如果有）
-  if (parts.length >= 2) {
+  // v0.12 B3.3 · 优先解析 ?tab=xxx 为子面包屑（如 /create?tab=content）
+  const tabValue = searchParams?.get('tab');
+  const tabMap = TAB_LABEL[firstHref];
+  if (tabValue && tabMap && tabMap[tabValue]) {
+    crumbs.push({
+      href: `${firstHref}?tab=${tabValue}`,
+      label: tabMap[tabValue],
+    });
+  } else if (parts.length >= 2) {
+    // 第二级路径段（仅当没有 ?tab= 时）
     const seg = parts[1];
     const isCuid = /^c[a-z0-9]{24}$/i.test(seg) || /^[a-z0-9]{25}$/i.test(seg);
     const label = isCuid ? '详情' : SECOND_LABEL[seg] ?? seg;

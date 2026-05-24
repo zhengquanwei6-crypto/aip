@@ -85,6 +85,13 @@ export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
 /**
  * 侧栏导航 (v0.11 B5: 22 → 14 整合 · B6: +/docs = 15 · B8: +/playground = 16).
  *
+ * v0.12 B3.3：合并 /content + /image → /create（三 tab：content / image / publish）。
+ *   NAV 项目 16 → 15（去掉「文案生成」+「图片生成」两项，加「创作」一项）。
+ *   旧 URL /content + /image 由 middleware.ts 强制 307 redirect 到 /create?tab=*。
+ *
+ * v0.12 B3.2：把 15 项 NAV 分到 4 组（常用 / 资源 / 工具 / 系统），
+ *   常用永远展开，其他三组 localStorage 记忆折叠状态。
+ *
  * 合并策略 (B5):
  *   - /clients   含「客户列表 / 报价方案」tabs (吸收 /pricing)
  *   - /presets   含「图片 / 文案 / Agent」tabs   (吸收 /prompts)
@@ -95,6 +102,8 @@ export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
  * 旧 URL 兼容:
  *   /pricing  → /clients?tab=pricing  (middleware 307 + page-level redirect)
  *   /prompts  → /presets?tab=content  (middleware 307 + page-level redirect)
+ *   /content  → /create?tab=content   (middleware 307 · v0.12 B3.3)
+ *   /image    → /create?tab=image     (middleware 307 · v0.12 B3.3)
  *   /history /assets /weekly-report /calculator /contents /suggestions
  *      —— URL 保留 (deeplink 多), 仅从 NAV 移除
  *
@@ -109,20 +118,68 @@ export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
 export const NAV_ITEMS: { href: string; label: string }[] = [
   { href: '/dashboard', label: '首页看板' },
   { href: '/today', label: '今日任务' },
-  { href: '/calendar', label: '发布日历' },
-  { href: '/content', label: '文案生成' },
-  { href: '/image', label: '图片生成' },
-  { href: '/playground', label: 'AI 对话' },
+  { href: '/create', label: '创作' },
   { href: '/workspace', label: '工作区' },
   { href: '/clients', label: '客户' },
   { href: '/keywords', label: '关键词库' },
   { href: '/scripts', label: '私信话术' },
-  { href: '/presets', label: '模板' },
-  { href: '/adapters', label: 'API 适配器' },
+  { href: '/suggestions', label: '运营建议' },
   { href: '/analytics', label: '数据复盘' },
-  { href: '/tools', label: '综合工具' },
+  { href: '/playground', label: 'AI 对话' },
+  { href: '/calendar', label: '发布日历' },
+  { href: '/adapters', label: 'API 适配器' },
+  { href: '/presets', label: '模板' },
   { href: '/docs', label: '使用手册' },
   { href: '/settings', label: '设置' },
+];
+
+/**
+ * v0.12 B3.2 · NAV 分组（4 组）：
+ *   - 常用：用户日常 90% 操作（仪表盘/今日/创作/工作区/客户）— 永远展开
+ *   - 资源：周月级别（关键词/话术/建议/数据复盘）— 默认折叠，localStorage 记忆
+ *   - 工具：偶尔用（AI 对话/日历/适配器/模板）— 默认折叠，localStorage 记忆
+ *   - 系统：配置 + 文档（使用手册/设置）— 默认折叠，localStorage 记忆
+ *
+ * 桌面 + /m 共用同一份 NAV_GROUPS。slug 用作 localStorage 折叠 key 后缀。
+ *
+ * 注意：NAV_ITEMS 顺序保持不变（兼容 Breadcrumbs / iconFor 查找），
+ * NAV_GROUPS 是渲染层重排，单一数据源仍是 NAV_ITEMS。
+ */
+export const NAV_GROUPS: {
+  slug: 'core' | 'resources' | 'tools' | 'system';
+  label: string;
+  emoji: string;
+  defaultCollapsed: boolean;
+  hrefs: string[];
+}[] = [
+  {
+    slug: 'core',
+    label: '常用',
+    emoji: '🚀',
+    defaultCollapsed: false,
+    hrefs: ['/dashboard', '/today', '/create', '/workspace', '/clients'],
+  },
+  {
+    slug: 'resources',
+    label: '资源',
+    emoji: '📦',
+    defaultCollapsed: true,
+    hrefs: ['/keywords', '/scripts', '/suggestions', '/analytics'],
+  },
+  {
+    slug: 'tools',
+    label: '工具',
+    emoji: '🛠️',
+    defaultCollapsed: true,
+    hrefs: ['/playground', '/calendar', '/adapters', '/presets'],
+  },
+  {
+    slug: 'system',
+    label: '系统',
+    emoji: '⚙️',
+    defaultCollapsed: true,
+    hrefs: ['/docs', '/settings'],
+  },
 ];
 
 export const PLATFORM_LABEL: Record<string, string> = {

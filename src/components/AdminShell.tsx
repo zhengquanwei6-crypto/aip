@@ -34,22 +34,27 @@ import {
   BookOpen,
   HelpCircle,
   Settings as SettingsIcon,
+  ChevronDown,
+  ChevronRight,
+  Wand2,
 } from 'lucide-react';
-import { NAV_ITEMS } from '@/lib/constants';
+import { NAV_ITEMS, NAV_GROUPS } from '@/lib/constants';
 import ThemeToggle from './ThemeToggle';
 import Breadcrumbs from './Breadcrumbs';
 
 const SIDEBAR_COLLAPSED_KEY = 'sidebar:collapsed';
+const NAV_GROUP_COLLAPSED_KEY = 'nav-collapsed'; // 完整 key: nav-collapsed-<slug>
 
 /**
  * NAV 路径 → lucide icon。
- * v0.11 B5：新增 /workspace（合并 history+assets）+ /tools（合并 weekly+calculator），
- * 旧 /history /assets /weekly-report /calculator /contents /pricing /prompts /suggestions
- * 仍保留映射以便深链可读到 breadcrumb / topbar 标题（NAV 不再列），即使从 NAV 移除也不影响 URL 可达。
  *
- * v0.11 B6：新增 /docs (BookOpen) — 内部使用手册 9 篇。
- *
+ * v0.11 B5：新增 /workspace（合并 history+assets）+ /tools（合并 weekly+calculator）。
+ * v0.11 B6：新增 /docs (BookOpen) — 内部使用手册 11 篇。
  * v0.11 B8：新增 /playground (MessageSquare) — AI 对话三 tab 即时调用。
+ * v0.12 B3.3：新增 /create (Wand2) — 文案 + 图片 + 全流程发布三合一。
+ *
+ * 旧 /content /image /history /assets /weekly-report /calculator /contents /pricing
+ * /prompts /suggestions 仍保留映射（NAV 不列，但 Breadcrumb 仍能解析中文 label）。
  */
 function iconFor(href: string) {
   switch (href) {
@@ -57,6 +62,8 @@ function iconFor(href: string) {
       return Home;
     case '/today':
       return CheckSquare;
+    case '/create':
+      return Wand2;
     case '/calendar':
       return Calendar;
     case '/content':
@@ -236,6 +243,168 @@ export default function AdminShell({
   );
 }
 
+/**
+ * v0.12 B3.2 · 单个分组（折叠组），4 组共用此组件。
+ * - core 组（常用）：永远展开，不渲染 details，标题给个静默节
+ * - 其他 3 组：localStorage 记忆 nav-collapsed-<slug>
+ */
+function NavGroup({
+  pathname,
+  group,
+  collapsed,
+}: {
+  pathname: string;
+  group: (typeof NAV_GROUPS)[number];
+  /** sidebar 整体折叠态（lg:w-14）— 折叠态下分组标题隐藏，全部 icon 平铺 */
+  collapsed: boolean;
+}) {
+  const items = group.hrefs
+    .map((h) => NAV_ITEMS.find((i) => i.href === h))
+    .filter((x): x is { href: string; label: string } => Boolean(x));
+
+  const [open, setOpen] = useState(!group.defaultCollapsed);
+  const storageKey = `${NAV_GROUP_COLLAPSED_KEY}-${group.slug}`;
+
+  // hydrate localStorage 记忆
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const v = window.localStorage.getItem(storageKey);
+      if (v === '1') setOpen(false);
+      else if (v === '0') setOpen(true);
+    } catch {
+      /* noop */
+    }
+  }, [storageKey]);
+
+  function toggle() {
+    setOpen((cur) => {
+      const next = !cur;
+      try {
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(storageKey, next ? '0' : '1');
+        }
+      } catch {
+        /* noop */
+      }
+      return next;
+    });
+  }
+
+  // sidebar 折叠态：分组标题隐藏，所有 item 直接平铺成 icon-only 链接
+  if (collapsed) {
+    return (
+      <div data-nav-group={group.slug} className="py-1">
+        {items.map((it) => {
+          const active =
+            pathname === it.href || pathname.startsWith(it.href + '/');
+          const Icon = iconFor(it.href);
+          return (
+            <Link
+              key={it.href}
+              href={it.href}
+              title={it.label}
+              aria-label={it.label}
+              aria-current={active ? 'page' : undefined}
+              className={clsx(
+                'flex items-center justify-center mx-2 my-0.5 h-9 rounded text-sm',
+                active
+                  ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800',
+              )}
+            >
+              <Icon size={16} aria-hidden="true" />
+            </Link>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // 常用组：永远展开 + 静态标题
+  if (group.slug === 'core') {
+    return (
+      <div data-nav-group={group.slug} className="pt-1 pb-2">
+        <div className="px-5 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 select-none flex items-center gap-1.5">
+          <span aria-hidden>{group.emoji}</span>
+          <span>{group.label}</span>
+        </div>
+        <div>
+          {items.map((it) => {
+            const active =
+              pathname === it.href || pathname.startsWith(it.href + '/');
+            const Icon = iconFor(it.href);
+            return (
+              <Link
+                key={it.href}
+                href={it.href}
+                aria-current={active ? 'page' : undefined}
+                className={clsx(
+                  'flex items-center gap-2 px-5 py-2 text-sm border-l-2',
+                  active
+                    ? 'bg-brand-50 text-brand-700 border-brand-600 font-medium dark:bg-brand-900/30 dark:text-brand-300'
+                    : 'text-slate-600 dark:text-slate-300 border-transparent hover:bg-slate-50 dark:hover:bg-slate-800',
+                )}
+              >
+                <Icon size={14} aria-hidden="true" className="shrink-0" />
+                <span className="truncate">{it.label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // 资源 / 工具 / 系统：可折叠
+  return (
+    <div data-nav-group={group.slug} className="pb-1">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        data-nav-group-toggle={group.slug}
+        className="w-full px-5 py-2 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 select-none transition-colors"
+      >
+        <span className="flex items-center gap-1.5">
+          <span aria-hidden>{group.emoji}</span>
+          <span>{group.label}</span>
+        </span>
+        {open ? (
+          <ChevronDown size={12} aria-hidden="true" />
+        ) : (
+          <ChevronRight size={12} aria-hidden="true" />
+        )}
+      </button>
+      {open && (
+        <div>
+          {items.map((it) => {
+            const active =
+              pathname === it.href || pathname.startsWith(it.href + '/');
+            const Icon = iconFor(it.href);
+            return (
+              <Link
+                key={it.href}
+                href={it.href}
+                aria-current={active ? 'page' : undefined}
+                className={clsx(
+                  'flex items-center gap-2 px-5 py-2 text-sm border-l-2',
+                  active
+                    ? 'bg-brand-50 text-brand-700 border-brand-600 font-medium dark:bg-brand-900/30 dark:text-brand-300'
+                    : 'text-slate-600 dark:text-slate-300 border-transparent hover:bg-slate-50 dark:hover:bg-slate-800',
+                )}
+              >
+                <Icon size={14} aria-hidden="true" className="shrink-0" />
+                <span className="truncate">{it.label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SidebarContent({
   pathname,
   className,
@@ -287,47 +456,19 @@ function SidebarContent({
           </button>
         )}
       </div>
-      <nav className="py-3 flex-1 overflow-y-auto" aria-label="primary">
-        {NAV_ITEMS.map((it) => {
-          const active =
-            pathname === it.href || pathname.startsWith(it.href + '/');
-          const Icon = iconFor(it.href);
-          if (collapsed) {
-            return (
-              <Link
-                key={it.href}
-                href={it.href}
-                title={it.label}
-                aria-label={it.label}
-                aria-current={active ? 'page' : undefined}
-                className={clsx(
-                  'flex items-center justify-center mx-2 my-0.5 h-9 rounded text-sm',
-                  active
-                    ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300'
-                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800',
-                )}
-              >
-                <Icon size={16} aria-hidden="true" />
-              </Link>
-            );
-          }
-          return (
-            <Link
-              key={it.href}
-              href={it.href}
-              aria-current={active ? 'page' : undefined}
-              className={clsx(
-                'flex items-center gap-2 px-5 py-2.5 text-sm border-l-2',
-                active
-                  ? 'bg-brand-50 text-brand-700 border-brand-600 font-medium dark:bg-brand-900/30 dark:text-brand-300'
-                  : 'text-slate-600 dark:text-slate-300 border-transparent hover:bg-slate-50 dark:hover:bg-slate-800',
-              )}
-            >
-              <Icon size={14} aria-hidden="true" className="shrink-0" />
-              <span className="truncate">{it.label}</span>
-            </Link>
-          );
-        })}
+      <nav
+        className="py-2 flex-1 overflow-y-auto"
+        aria-label="primary"
+        data-v012-b3-nav-groups
+      >
+        {NAV_GROUPS.map((g) => (
+          <NavGroup
+            key={g.slug}
+            pathname={pathname}
+            group={g}
+            collapsed={collapsed}
+          />
+        ))}
       </nav>
       {/* v0.11 B6: 底部"?" 图标 → /docs 快速跳转使用手册（移动+桌面通用，折叠态也保留） */}
       <div className="border-t border-slate-200 dark:border-slate-800 p-2 flex flex-col gap-1.5">
