@@ -92,6 +92,16 @@ export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
  * v0.12 B3.2：把 15 项 NAV 分到 4 组（常用 / 资源 / 工具 / 系统），
  *   常用永远展开，其他三组 localStorage 记忆折叠状态。
  *
+ * v0.12 B4.1：摆设功能前端 NAV 隐藏（hidden:true · URL 仍 200）。
+ *   - /clients     → Client=0 / ClientNote=0 真实零数据，「客户管理」纯摆设（用户明示）
+ *   - /clients?tab=pricing → 同 /clients，「报价方案」用户明示流程上不用
+ *   - /scripts     → Script=11 全是内置（用户从未编辑过自定义话术），decorative
+ *   - /suggestions → AIOutput suggestion=12 但 UI 只是只读列表，对真实流程无影响
+ *   - /analytics   → Metric=1 placeholder，没真接入数据源（未来 v0.13+ 重做）
+ *   sidebar NAV 4 分组下渲染时 .filter((it) => !it.hidden) 即可。
+ *   /clients /scripts /suggestions /analytics 直接 GET 仍 HTTP 200（兼容书签 / 旧 deeplink），
+ *   不动后端、不动 page.tsx、不动 middleware redirect。
+ *
  * 合并策略 (B5):
  *   - /clients   含「客户列表 / 报价方案」tabs (吸收 /pricing)
  *   - /presets   含「图片 / 文案 / Agent」tabs   (吸收 /prompts)
@@ -115,16 +125,20 @@ export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
  *               复用 B1 池 + B7 sizes/qualities + 8 agents，0 schema 改
  *               位于 /image 后面，方便切换"任务式生成"和"即时调试"
  */
-export const NAV_ITEMS: { href: string; label: string }[] = [
+export const NAV_ITEMS: { href: string; label: string; hidden?: boolean }[] = [
   { href: '/dashboard', label: '首页看板' },
   { href: '/today', label: '今日任务' },
   { href: '/create', label: '创作' },
   { href: '/workspace', label: '工作区' },
-  { href: '/clients', label: '客户' },
+  // v0.12 B4.1 hidden（用户明示 + 自动盘点 zero-data）
+  { href: '/clients', label: '客户', hidden: true },
   { href: '/keywords', label: '关键词库' },
-  { href: '/scripts', label: '私信话术' },
-  { href: '/suggestions', label: '运营建议' },
-  { href: '/analytics', label: '数据复盘' },
+  // v0.12 B4.1 hidden（Script=11 全内置，无用户自定义）
+  { href: '/scripts', label: '私信话术', hidden: true },
+  // v0.12 B4.1 hidden（suggestion 列表对真实流程无 actionable 价值）
+  { href: '/suggestions', label: '运营建议', hidden: true },
+  // v0.12 B4.1 hidden（Metric=1 placeholder，数据源未接）
+  { href: '/analytics', label: '数据复盘', hidden: true },
   { href: '/playground', label: 'AI 对话' },
   { href: '/calendar', label: '发布日历' },
   { href: '/adapters', label: 'API 适配器' },
@@ -134,11 +148,26 @@ export const NAV_ITEMS: { href: string; label: string }[] = [
 ];
 
 /**
+ * v0.12 B4.1 · NAV 隐藏 hrefs 集合（NavGroup 渲染时过滤用，单一数据源派生）。
+ * 等价于 NAV_ITEMS.filter(i => i.hidden).map(i => i.href).
+ * 公共契约：URL 仍 HTTP 200，仅 NAV 不显示。
+ */
+export const HIDDEN_NAV_HREFS = new Set<string>(
+  NAV_ITEMS.filter((i) => i.hidden).map((i) => i.href),
+);
+
+/**
  * v0.12 B3.2 · NAV 分组（4 组）：
  *   - 常用：用户日常 90% 操作（仪表盘/今日/创作/工作区/客户）— 永远展开
  *   - 资源：周月级别（关键词/话术/建议/数据复盘）— 默认折叠，localStorage 记忆
  *   - 工具：偶尔用（AI 对话/日历/适配器/模板）— 默认折叠，localStorage 记忆
  *   - 系统：配置 + 文档（使用手册/设置）— 默认折叠，localStorage 记忆
+ *
+ * v0.12 B4.1：常用组从 [/dashboard /today /create /workspace /clients] →
+ *   [/dashboard /today /create /workspace]（去掉 /clients · hidden=true）。
+ *   NAV_GROUPS 的 hrefs 数组保留 hidden 项是为了兼容（NavGroup 自己 filter），
+ *   但 core 组明确把 /clients 拿走避免空 group 视觉。
+ *   resources 组保留全部（hidden 项会被 filter 掉，组本身能折叠不会空）。
  *
  * 桌面 + /m 共用同一份 NAV_GROUPS。slug 用作 localStorage 折叠 key 后缀。
  *
@@ -157,14 +186,16 @@ export const NAV_GROUPS: {
     label: '常用',
     emoji: '🚀',
     defaultCollapsed: false,
-    hrefs: ['/dashboard', '/today', '/create', '/workspace', '/clients'],
+    hrefs: ['/dashboard', '/today', '/create', '/workspace'],
   },
   {
     slug: 'resources',
     label: '资源',
     emoji: '📦',
     defaultCollapsed: true,
-    hrefs: ['/keywords', '/scripts', '/suggestions', '/analytics'],
+    // /clients /scripts /suggestions /analytics 都 hidden=true（v0.12 B4.1），
+    // NavGroup 自动 filter 掉，剩下 /keywords 一项可见。组保留以便后续恢复。
+    hrefs: ['/keywords', '/scripts', '/suggestions', '/analytics', '/clients'],
   },
   {
     slug: 'tools',

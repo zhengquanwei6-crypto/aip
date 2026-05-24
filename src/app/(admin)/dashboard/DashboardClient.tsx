@@ -117,8 +117,8 @@ export default function DashboardClient({ data }: DashboardClientProps) {
             href="/today"
           />
         </div>
-        {/* 内容沉淀 3 卡 */}
-        <div className="grid grid-cols-3 gap-3">
+        {/* 内容沉淀 2 卡 · v0.12 B4.1：客户 KPI 隐藏 */}
+        <div className="grid grid-cols-2 gap-3">
           <KpiCard
             label="AI 输出"
             value={kpi.aioutputs}
@@ -133,13 +133,7 @@ export default function DashboardClient({ data }: DashboardClientProps) {
             tone="pink"
             href="/workspace?tab=assets"
           />
-          <KpiCard
-            label="客户"
-            value={kpi.clients}
-            icon={<Users className="h-4 w-4" />}
-            tone="slate"
-            href="/clients"
-          />
+          {/* v0.12 B4.1 V012_B4_HIDDEN_CLIENT_KPI · 客户 KPI 隐藏（Client=0 真实零数据） */}
         </div>
       </section>
 
