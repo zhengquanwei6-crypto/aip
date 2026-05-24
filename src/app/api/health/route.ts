@@ -1,5 +1,10 @@
 // /api/health · 轻量健康检查
 //
+// v0.12 B0：
+//   - lastBackupAt: { iso, dir } · 读 Setting `system:lastBackupAt`
+//     B0 backup 写入格式 `<ISO>|<dir>`，无 sep 时 fallback iso=value/dir=null
+//   - APP_VERSION fallback 升 "v0.12"
+//
 // v0.11 B15.7：
 //   - diskUsage: { rootPercent, rootBytes, rootUsedBytes, uploadsBytes, uploadsCount }
 //     (BUG-L12 闭环：磁盘 88% · uploads 59MB / 45 文件 / 给 dashboard DiskWarningCard 用)
@@ -35,7 +40,7 @@ if (process.env.NODE_ENV !== "production") {
 
 const STARTED_AT = new Date().toISOString();
 const STARTED_AT_MS = Date.now();
-const APP_VERSION = process.env.APP_VERSION || "v0.11";
+const APP_VERSION = process.env.APP_VERSION || "v0.12";
 const UPLOADS_DIR = "/app/public/uploads";
 
 export const dynamic = "force-dynamic";
@@ -265,6 +270,31 @@ async function readDiskUsage(): Promise<{
   return out;
 }
 
+/**
+ * v0.12 B0 · 上次备份时间戳
+ *
+ * Setting `system:lastBackupAt` 写入格式：`<ISO 8601>|<backup dir>`
+ *   - 由 B0 push.sh + 后续 cron 备份脚本写
+ *   - 没 `|` 分隔时 fallback iso=value, dir=null
+ *
+ * 用于 dashboard SystemHealth 卡显示「上次备份距今 X 小时」+ 老化告警。
+ */
+async function readLastBackupAt(): Promise<{
+  iso: string | null;
+  dir: string | null;
+}> {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: "system:lastBackupAt" } });
+    const v = row?.value?.trim();
+    if (!v) return { iso: null, dir: null };
+    const sep = v.indexOf("|");
+    if (sep < 0) return { iso: v, dir: null };
+    return { iso: v.slice(0, sep) || null, dir: v.slice(sep + 1) || null };
+  } catch {
+    return { iso: null, dir: null };
+  }
+}
+
 export async function GET() {
   const t0 = Date.now();
   try {
@@ -279,6 +309,7 @@ export async function GET() {
       caps,
       marketTrendsModule,
       diskUsage,
+      lastBackupAt,
     ] = await Promise.all([
       readImageDefaultAdapter(),
       readRecentFailures(),
@@ -288,6 +319,7 @@ export async function GET() {
       readImageCapabilitiesPerAdapter(),
       readMarketTrendsModule(),
       readDiskUsage(),
+      readLastBackupAt(),
     ]);
 
     return NextResponse.json(
@@ -317,6 +349,8 @@ export async function GET() {
         marketTrendsModule,
         // v0.11 b15.7
         diskUsage,
+        // v0.12 b0
+        lastBackupAt,
       },
       { status: 200 },
     );
