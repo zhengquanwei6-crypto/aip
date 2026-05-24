@@ -88,7 +88,7 @@ URL 持久化：`/playground?tab=llm|image|agent`，刷新保留 tab。三个面
 |-------------|-----------------------------------------------------|
 | IMAGE Key   | 选池里某条 image key                                 |
 | Adapter     | 多 adapter 时显示；切换会写 `IMAGE_DEFAULT_ADAPTER`（与 /image / publish-director 共用） |
-| 尺寸预设    | 按 adapter.sizes 池下拉（B7：1k/2k/4k 或 方图/竖图） |
+| 尺寸预设    | 按 adapter.sizes 池下拉（B12 起 OpenAI 系真实 3 档；详见 [/docs/04](/docs/04-image-best-practices)） |
 | 质量预设    | 按 adapter.qualities 池下拉（可能为空）              |
 | n           | 1..4                                                 |
 
@@ -107,7 +107,7 @@ prompt textarea + 生成按钮。每次生成出 n 张图，缩略图按时间�
   "keyId": "cmpij5...",
   "adapterSlug": "4router-gpt-image-2",
   "prompt": "...",
-  "size": "2048x2048",
+  "size": "1024x1024",
   "quality": "high",
   "n": 1
 }
@@ -142,7 +142,7 @@ prompt 必填。响应同 `/api/image/generate`：
 
 每个 agent 有独立对话历史（slug 切换时 historyMap 各保留），相当于同时打开 8 个 chat。
 
-下方折叠组「System Prompt（只读）」展示当前 agent 的 systemPrompt 全文，用作"为什么 agent 这样回答"的依据，但不能改（要改去 `/presets?tab=agent`，v0.9.2 b2 落地）。
+下方折叠组「System Prompt（只读）」展示当前 agent 的 systemPrompt 全文，用作"为什么 agent 这样回答"的依据，但不能改（要改去 [/presets?tab=agent](/presets?tab=agent)，B15.5 加文档入口；详见 [/docs/05 §自定义 prompt 模板](/docs/05-agents)）。
 
 ### 后端
 
@@ -197,11 +197,16 @@ B8 起 `playgroundEnabled: true` 标记上线：
   "version": "v0.11",
   "playgroundEnabled": true,
   "apiKeyPool": { ... },
-  "imageSizesPerAdapter": { ... }
+  "imageSizesPerAdapter": { ... },
+  "imageCapabilitiesPerAdapter": { ... },
+  "marketTrendsModule": { "enabled": true, "platforms": 3, "snapshotCount": ... },
+  "diskUsage": { "rootPercent": ..., "uploadsBytes": ..., "uploadsCount": ... }
 }
 ```
 
 如果你看到 `playgroundEnabled` 为 `undefined`，说明部署没上 B8。重跑 push.sh。
+
+> v0.11 B16 起 `/api/health` 还含 `diskUsage`（B15.7 加）和 `marketTrendsModule`（B10 加），分别对应 dashboard `DiskWarningCard`（≥85% 才显）+ market trends 第 5 区。详见 [/docs/08 §磁盘清理](/docs/08-backup) 和 [/docs/11](/docs/11-market-trends)。
 
 ## 移动端
 

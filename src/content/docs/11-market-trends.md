@@ -1,6 +1,8 @@
 # 市场趋势数据
 
 > v0.11 B10 上线 · 当前阶段是 UI 框架 + 手填 + 内置说明，未来 v0.10 Chrome 扩展会自动喂数据。
+> v0.11 B15.3：entrypoint 启动自动 seed 三平台 PlatformInfo + 当天 placeholder snapshot（避免空 dashboard）。
+> v0.11 B15.6：/settings 顶部加「市场平台编辑」卡（`data-b15-6-market-platforms-card`）+ `PUT /api/market/platforms/<slug>` API，可以改 displayName / description / kpiKeys。
 
 ## 三平台是什么、为什么我们关注它们
 
@@ -14,9 +16,9 @@
 
 ## 趋势数据从哪儿来
 
-当前 v0.11 B10 阶段：
+当前 v0.11 B10/B15.3 阶段：
 
-1. **内置说明**：三平台的定位 / 用户画像 / 适合品类 / 推荐工作流，固定写在代码里（`src/lib/market/seed.ts`），随版本更新一次。
+1. **内置说明**：三平台的定位 / 用户画像 / 适合品类 / 推荐工作流，固定写在代码里（`src/lib/market/seed.ts`）。**B15.3 起容器启动 entrypoint 会自动 seed 一次** PlatformInfo 行 + 当天 placeholder snapshot；如果你想改三平台的 displayName / description / 推荐 KPI，去 `/settings` 顶部「市场平台」卡（B15.6）改。
 2. **手填**：dashboard 第 5 区每个平台有「编辑数据」按钮，弹小 modal 让你直接填 KPI 数值（例：今日热门关键词数 = 38、近 7 天 GMV = 12000、平均客单价 = 168）。
    - 落到 `Setting` 表 key `market:snapshot:<platform>:<YYYY-MM-DD>`
    - 一天一行，再次填会覆盖（不重复入库）
@@ -98,6 +100,7 @@ publish-director 三步 → 拿到带「极简日杂」字的封面候选
 | 路径 | 方法 | 用途 |
 |---|---|---|
 | `/api/market/platforms` | GET | 三平台 PlatformInfo（介绍 + 推荐 KPI） |
+| `/api/market/platforms/<slug>` | PUT | **B15.6 NEW** · 更新 PlatformInfo（displayName / description / kpiKeys） |
 | `/api/market/trends?platform=xiaohongshu` | GET | 平台最近 N 条 snapshot |
 | `/api/market/trends?platform=xiaohongshu&limit=30` | GET | 平台最近 30 条 |
 | `/api/market/trends` | POST | 写入新 snapshot（body: `{platform, date?, dataPoints, source?, placeholder?, note?}`） |
@@ -115,7 +118,7 @@ POST 校验：
 - 「编辑数据」一天写一次（按 `YYYY-MM-DD` 覆盖），同一天多次保存会覆盖；想保留历史就手动改前一天的 date 后再保存
 - placeholder=true 的 snapshot 卡片会打「📝 示例」徽章，避免误以为是真数据
 - 当前数据**不**入 prisma 表，只在 `Setting` 表里活动；`Setting` 表是 SQLite，自动跟着 `dev.db` 备份
-- 未来要扩展品类（例加视频号 / 抖音）时，改三处：`PLATFORM_SLUGS` 加 slug + `seed.ts` 加 PlatformInfo + 推 push.sh seed 一次
+- 未来要扩展品类（例加视频号 / 抖音）时，改三处：`PLATFORM_SLUGS` 加 slug + `seed.ts` 加 PlatformInfo + 推 push.sh seed 一次（B15.3 后 entrypoint 也会跟着重新 seed 一次）
 
 ## 不会做的
 
