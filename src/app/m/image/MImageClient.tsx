@@ -6,7 +6,14 @@ import { useToast } from '@/components/m/Toast';
 import { copyAll } from '@/lib/clipboard';
 
 type Platform = 'xiaohongshu' | 'xianyu';
-type Ratio = '3:4' | '1:1';
+
+/**
+ * v0.11 B14（BUG-L11 修）：删掉硬编码的 `<option value="3:4">` / `<option value="1:1">`
+ *   ratio select。
+ *   - 改用 adapter.aspectRatios 池驱动（与桌面 ImageStudioClient 同源）
+ *   - 移动端拉一次 /api/health → /api/adapters/<slug> 获取 aspectRatios 池，渲染 select
+ *   - 池为空时整个 Field 隐藏，server-side /api/image/prompt 仍按 platform 推 size 兜底
+ */
 
 interface ImagePreset {
   id: string;
@@ -18,13 +25,18 @@ interface ImagePreset {
   isDefault: boolean;
 }
 
+interface AspectRatioPreset {
+  label: string;
+  ratio: string;
+  sizeRule?: string | null;
+}
+
 export default function MImageClient() {
   const toast = useToast();
   const [step, setStep] = useState<1 | 2>(1);
   const [presets, setPresets] = useState<ImagePreset[]>([]);
   const [form, setForm] = useState({
     platform: 'xiaohongshu' as Platform,
-    ratio: '3:4' as Ratio,
     imageType: '封面图',
     category: 'Logo',
     coverTitle: '',
@@ -35,6 +47,10 @@ export default function MImageClient() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading1, setLoading1] = useState(false);
   const [loading2, setLoading2] = useState(false);
+
+  // v0.11 B14：adapter aspectRatios 池
+  const [aspectRatiosPool, setAspectRatiosPool] = useState<AspectRatioPreset[]>([]);
+  const [selectedAspectRatio, setSelectedAspectRatio] = useState<string>('');
 
   useEffect(() => {
     fetch('/api/image-presets')
@@ -56,14 +72,33 @@ export default function MImageClient() {
       .catch(() => {});
   }, []);
 
-  function up<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
-    setForm((f) => {
-      const next = { ...f, [k]: v };
-      if (k === 'platform') {
-        next.ratio = v === 'xiaohongshu' ? '3:4' : '1:1';
+  // v0.11 B14：拉默认 adapter 的 aspectRatios 池（与桌面同源）
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const h = await fetch('/api/health').then((r) => r.json()).catch(() => null);
+        const slug: string | null = h?.imageDefaultAdapter ?? null;
+        if (!slug) return;
+        const a = await fetch(`/api/adapters/${encodeURIComponent(slug)}`)
+          .then((r) => r.json()).catch(() => null);
+        if (!a?.ok || cancelled) return;
+        const ars: AspectRatioPreset[] = (Array.isArray(a.adapter?.aspectRatios) ? a.adapter.aspectRatios : [])
+          .filter((r: any) => r && typeof r.ratio === 'string');
+        setAspectRatiosPool(ars);
+        if (ars.length > 0) {
+          setSelectedAspectRatio((prev) => prev && ars.some((r) => r.ratio === prev) ? prev : ars[0].ratio);
+        }
+      } catch {
+        /* silent */
       }
-      return next;
-    });
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, []);
+
+  function up<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
+    setForm((f) => ({ ...f, [k]: v }));
   }
 
   function applyPreset(p: ImagePreset) {
@@ -112,6 +147,7 @@ export default function MImageClient() {
         body: JSON.stringify({
           prompt,
           size,
+          aspectRatio: selectedAspectRatio || undefined,
           platform: form.platform,
           category: form.category,
           imageType: form.imageType,
@@ -153,16 +189,31 @@ export default function MImageClient() {
                 ))}
               </select>
             </Field>
-            <Field label="比例">
-              <select
-                className="m-input"
-                value={form.ratio}
-                onChange={(e) => up('ratio', e.target.value as Ratio)}
-              >
-                <option value="3:4">3:4 竖图</option>
-                <option value="1:1">1:1 方图</option>
-              </select>
-            </Field>
+            {/* v0.11 B14（BUG-L11 修）：比例改为 adapter.aspectRatios 池驱动 */}
+            {aspectRatiosPool.length > 0 && (
+              <Field label="比例预设">
+                <select
+                  className="m-input"
+                  value={selectedAspectRatio}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setSelectedAspectRatio(v);
+                    const rule = aspectRatiosPool.find((r) => r.ratio === v)?.sizeRule;
+                    if (rule && rule.trim()) {
+                      setSize(rule.trim());
+                    }
+                  }}
+                  data-aspect-ratio-select
+                  aria-label="比例预设"
+                >
+                  {aspectRatiosPool.map((r) => (
+                    <option key={r.ratio} value={r.ratio}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
             <Field label="图片类型">
               <select
                 className="m-input"

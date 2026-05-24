@@ -13,11 +13,16 @@ import ImageLightbox from '@/components/ImageLightbox';
 import { usePromptHistory } from '@/hooks/usePromptHistory';
 
 type Platform = 'xiaohongshu' | 'xianyu';
-type Ratio = '3:4' | '1:1';
+
+/**
+ * v0.11 B14（BUG-L11 修）：删掉 v0.6 老的硬编码 `<option value="3:4">` / `<option value="1:1">`
+ *   ratio select。原来与 adapter.aspectRatios 池脱节，4router-gpt-image-2 池
+ *   只有 1:1/3:2/2:3，用户选「3:4」会触发 fallback 到 1:1。
+ *   现在统一改用 selectedAspectRatio 池驱动（与 publish-director / playground 同源）。
+ */
 
 interface FormState {
   platform: Platform;
-  ratio: Ratio;
   imageType: string;
   category: string;
   coverTitle: string;
@@ -79,7 +84,6 @@ interface AdapterSummaryItem {
 
 const DEFAULT: FormState = {
   platform: 'xiaohongshu',
-  ratio: '3:4',
   imageType: '封面图',
   category: 'Logo',
   coverTitle: '',
@@ -218,13 +222,7 @@ export default function ImageStudioClient() {
   }, [batchRunning]);
 
   function up<K extends keyof FormState>(k: K, v: FormState[K]) {
-    setForm((f) => {
-      const next = { ...f, [k]: v };
-      if (k === 'platform') {
-        next.ratio = v === 'xiaohongshu' ? '3:4' : '1:1';
-      }
-      return next;
-    });
+    setForm((f) => ({ ...f, [k]: v }));
   }
 
   function applyPreset(p: ImagePreset) {
@@ -453,12 +451,7 @@ export default function ImageStudioClient() {
               {PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
           </Field>
-          <Field label="比例（小红书/闲鱼默认）">
-            <select className="input" value={form.ratio} onChange={(e) => up('ratio', e.target.value as Ratio)}>
-              <option value="3:4">3:4（小红书竖图）</option>
-              <option value="1:1">1:1（闲鱼方图）</option>
-            </select>
-          </Field>
+          {/* v0.11 B14（BUG-L11 修）：删掉硬编码 ratio select，统一用下方「比例预设」(adapter.aspectRatios 池) */}
           <Field label="图片类型">
             <select className="input" value={form.imageType} onChange={(e) => up('imageType', e.target.value)}>
               {IMAGE_TYPES.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -511,7 +504,7 @@ export default function ImageStudioClient() {
               <textarea className="input min-h-[60px]" value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)} />
             </Field>
 
-            {/* v0.11 B7 + B9：尺寸 / 质量 / 比例三个 select */}
+            {/* v0.11 B7 + B9：尺寸 / 质量 / 比例三个 select（B14 起此处是唯一 ratio 入口） */}
             {(sizesPool.length > 0 || qualitiesPool.length > 0 || aspectRatiosPool.length > 0) && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {aspectRatiosPool.length > 0 && (
