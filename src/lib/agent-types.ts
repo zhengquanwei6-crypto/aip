@@ -2,7 +2,7 @@
  * lib/agent-types.ts — 站内 LLM Agent 注册表
  *
  * 添加新 agent 时只需：
- *   1. 在 AGENTS 里加一项（slug / name / icon / scope / systemPrompt）
+ *   1. 在 AGENTS 里加一项（slug / name / icon / scope / systemPrompt / vertical）
  *   2. 在 lib/agents/context.ts 里加对应的 contextLoader（如果需要服务端上下文）
  *   3. 在 /api/agents/[slug]/chat/route.ts 的 switch 里把 contextLoader 串起来
  *   4. 在目标页面挂 <AgentLauncher slug="..." variant="floating" />
@@ -22,7 +22,39 @@
  *     仅允许 '1024x1024' | '1024x1536' | '1536x1024' | 'auto'，
  *     绝对禁止返回 2048x2048 / 3840x2160 / 4K / 2K 等历史 B7 池里的非法字面量。
  *     来源：B13 self-check §十一 #4 + §三 #8（B12 修后池只保留 OpenAI gpt-image-1 三档）。
+ *
+ * v0.12 B5.3 · vertical 字段（v0.13 多 vertical 起步预备）:
+ *   - 加 `vertical?: string`（optional 公共契约，老消费方 0 破坏）
+ *   - 当前 8 个 agent 全部归到 'jiedan'（接单助手 vertical · 用户原话「平面设计接单工作室」）
+ *   - vision §五 v0.13 起会加 'study'（学习助手）/ 'code'（代码助手）等 vertical
+ *   - **本批不动 systemPrompt 文本**（避免影响 LLM 行为 / 验证 a/b 对照），只加字段标记
+ *   - vertical 字段会在 /api/agents/list 的 response 里暴露（供前端筛选 / 分组用）
+ *   - 后续 v0.13+ 会把 vertical 拆为独立 enum + seed，本批仅做字符串字面量起步
  */
+
+/**
+ * v0.12 B5.3 · agent 所属垂直场景（vertical / track）。
+ *
+ * - 'jiedan'  接单助手（小红书/闲鱼平面设计接单工作室 · 当前 8 agent 全在这里）
+ * - 后续：'study' 学习助手 · 'code' 代码助手 · 'doc' 文档助手 ⋯（见 vision §三）
+ *
+ * 公共契约：optional · 老消费方（findAgent / contextLoader / chat route）不读 vertical 不破坏。
+ * 如果 agent 没标 vertical（理论上 v0.13+ 后所有 agent 都应标），UI 默认按 'jiedan' 兜底渲染。
+ */
+export type AgentVerticalSlug = 'jiedan' | 'study' | 'code' | 'doc' | string;
+
+export const DEFAULT_AGENT_VERTICAL: AgentVerticalSlug = 'jiedan';
+
+/**
+ * v0.12 B5.3 · vertical → 中文标签 + emoji（前端 UI 展示用）
+ * 老消费方不必读这个 map（vertical 字段本身就是字符串）。
+ */
+export const AGENT_VERTICAL_LABEL: Record<string, { label: string; emoji: string }> = {
+  jiedan: { label: '接单助手', emoji: '🎨' },
+  study: { label: '学习助手', emoji: '📚' },
+  code: { label: '代码助手', emoji: '💻' },
+  doc: { label: '文档助手', emoji: '📝' },
+};
 
 export interface AgentDefinition {
   slug: string;
@@ -31,6 +63,11 @@ export interface AgentDefinition {
   icon: string;
   systemPrompt: string;
   scope?: string[];
+  /**
+   * v0.12 B5.3 · 所属垂直场景（optional · 默认 'jiedan'）。
+   * 详见上面 AgentVerticalSlug 注释。
+   */
+  vertical?: AgentVerticalSlug;
 }
 
 export const AGENTS: AgentDefinition[] = [
@@ -40,6 +77,7 @@ export const AGENTS: AgentDefinition[] = [
     description: '帮你接入新 API、诊断 adapter 错误、解读上游报错。',
     icon: '🩺',
     scope: ['/adapters', '/settings'],
+    vertical: 'jiedan', // v0.12 B5.3
     systemPrompt: `你是 design-ai-ops 平台的「API 接入助手」。
 
 任务范围：
@@ -60,6 +98,7 @@ export const AGENTS: AgentDefinition[] = [
     description: '把粗略想法重写成高质量的图像提示词，可加风格/光线/镜头。',
     icon: '✨',
     scope: ['/image'],
+    vertical: 'jiedan', // v0.12 B5.3
     systemPrompt: `你是图像生成的「提示词优化教练」。
 
 任务：
@@ -75,6 +114,7 @@ export const AGENTS: AgentDefinition[] = [
     description: '小红书 / 闲鱼接单文案改写、扩写、风格切换。',
     icon: '📝',
     scope: ['/content'],
+    vertical: 'jiedan', // v0.12 B5.3
     systemPrompt: `你是小红书 + 闲鱼平面设计接单工作室的「文案专员」。
 
 任务：帮用户写 / 改 / 润色：小红书笔记（标题 + 正文 + tags）、闲鱼商品（标题 + 描述 + 价格档位 + 包含项 + 修改规则）
@@ -87,6 +127,7 @@ export const AGENTS: AgentDefinition[] = [
     description: '基于价格表 + 客户预算给出报价话术与三档方案。',
     icon: '💰',
     scope: ['/pricing', '/clients'],
+    vertical: 'jiedan', // v0.12 B5.3
     systemPrompt: `你是接单工作室的「报价专员」。
 
 任务：看用户给的需求（品类、数量、用途、客户预算、紧急度），结合系统里的 PricePackage 表，输出三档报价：引流款 / 标准款 / 利润款。每档包含：建议价格、交付物清单、修改次数、交付时长、不包含项。
@@ -99,6 +140,7 @@ export const AGENTS: AgentDefinition[] = [
     description: '看你今天的任务进度，提醒优先级、超期、下一步。',
     icon: '📅',
     scope: ['/today', '/dashboard'],
+    vertical: 'jiedan', // v0.12 B5.3
     systemPrompt: `你是工作室的「日程教练」。
 
 任务：上下文中给出了今日的 Task 列表，你要快速汇总：还没做的 pending 任务有几个、最优先哪个、超期任务、建议的下一步。
@@ -111,6 +153,7 @@ export const AGENTS: AgentDefinition[] = [
     description: '基于客户历史报价 / 备注，给沟通建议、议价话术。',
     icon: '💬',
     scope: ['/clients'],
+    vertical: 'jiedan', // v0.12 B5.3
     systemPrompt: `你是工作室的「客户沟通教练」。
 
 上下文里给出了一个 Client 的资料和最近备注。用户问"怎么回 / 怎么报价 / 怎么挽回 / 怎么升单"等，你结合该客户的 status 给：
@@ -127,6 +170,7 @@ export const AGENTS: AgentDefinition[] = [
     description: '把已写好的中文文案/商品信息转成英文 image prompt（只做图片提示词，不写文案）。',
     icon: '🎬',
     scope: ['/content', '/image'],
+    vertical: 'jiedan', // v0.12 B5.3
     systemPrompt: `你是「拍摄总监」（photo-director）。
 
 身份：小红书 + 闲鱼平面设计接单工作室的资深视觉总监。
@@ -240,6 +284,7 @@ recommendedSize 必须是 '1024x1024' / '1024x1536' / '1536x1024' / 'auto' 之�
     description: '一次性产出小红书/闲鱼的文案 + 配图 prompt + 配图（可选风格/色调/数量/系列），三步可单独重生。',
     icon: '🎯',
     scope: ['/content', '/today', '/image'],
+    vertical: 'jiedan', // v0.12 B5.3
     systemPrompt: `你是「发布导演」（publish-director）。
 
 身份：小红书 + 闲鱼平面设计接单工作室的发布全流程导演。
