@@ -1,7 +1,17 @@
-// v0.11 B11 · 启动时 seed market platforms (B10 followup #7 闭环)
-// 容器换 DB 卷或全新部署时,  Setting 表 market:platform:* 行不存在 — 这里幂等写一次。
+// v0.11 B11 + B15.3 · 启动时 seed market platforms + today snapshots
+// (B10 followup #7 闭环 / B13 self-check §十一 #3 闭合)
+//
+// 容器换 DB 卷或全新部署时,  Setting 表 market:platform:* / market:snapshot:* 行不存在 — 这里幂等写一次。
 // 由 docker/entrypoint.sh 在 prisma db push 之后调用。
 // 0 LLM/IMAGE 消耗。
+//
+// B15.3 新增：除 PlatformInfo 三行外，再为「今天」写一条 placeholder snapshot
+//   key: market:snapshot:<slug>:<YYYY-MM-DD>（Asia/Shanghai 日期）
+//   value: { platform, date, dataPoints: [...recommendedKpis 占位 0 值], source: 'placeholder', placeholder: true }
+//   通过 marketSnapshotSchema 校验（src/lib/market/types.ts），保证读端解得开。
+//
+//   这样新部署冷启动后 /api/health.marketTrendsModule.snapshotCount = 3
+//   （而不是 0），/market 页直接渲染「示例数据」徽章卡片。
 
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -81,13 +91,47 @@ const PLATFORMS = [
   },
 ];
 
+// ─── B15.3: today 日期（Asia/Shanghai）──────────────────────────────
+// 不引第三方 tz 库；直接用 +08:00 偏移把 UTC 当下时间换成本地日期串。
+function todayShanghaiDate() {
+  const nowUtc = Date.now();
+  const shMs = nowUtc + 8 * 3600 * 1000; // shift to UTC+8
+  const d = new Date(shMs);
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// 给每个 platform 拼一条 placeholder snapshot（dataPoints = recommendedKpis 占位 0 值）
+function buildPlaceholderSnapshot(platform, date) {
+  const dataPoints = (platform.recommendedKpis || []).map((k) => ({
+    key: k.key,
+    label: k.label,
+    value: 0,
+    unit: k.unit ?? '',
+    trend: '示例',
+    hint: k.hint,
+  }));
+  return {
+    platform: platform.slug,
+    date,
+    dataPoints,
+    source: 'placeholder',
+    placeholder: true,
+    note: 'v0.11 B15.3 启动时自动写入的占位 snapshot，POST /api/market/trends 后会被覆盖。',
+    capturedAt: new Date().toISOString(),
+  };
+}
+
 (async () => {
-  let seeded = 0, skipped = 0;
+  // ① PlatformInfo（B11 行为，保持不变）
+  let platformSeeded = 0, platformSkipped = 0;
   for (const p of PLATFORMS) {
     const key = `market:platform:${p.slug}`;
     const existing = await prisma.setting.findUnique({ where: { key } }).catch(() => null);
     if (existing) {
-      skipped++;
+      platformSkipped++;
       continue;
     }
     await prisma.setting.create({
@@ -95,9 +139,32 @@ const PLATFORMS = [
     }).catch((e) => {
       console.error(`[market-seed] failed to create ${key}:`, e?.message ?? e);
     });
-    seeded++;
+    platformSeeded++;
   }
-  console.log(`[market-seed] seeded=${seeded} skipped=${skipped} (total ${PLATFORMS.length} platforms)`);
+
+  // ② B15.3: today snapshot（一平台一条 placeholder · 幂等）
+  const today = todayShanghaiDate();
+  let snapSeeded = 0, snapSkipped = 0;
+  for (const p of PLATFORMS) {
+    const key = `market:snapshot:${p.slug}:${today}`;
+    const existing = await prisma.setting.findUnique({ where: { key } }).catch(() => null);
+    if (existing) {
+      snapSkipped++;
+      continue;
+    }
+    const snap = buildPlaceholderSnapshot(p, today);
+    await prisma.setting.create({
+      data: { key, value: JSON.stringify(snap) },
+    }).catch((e) => {
+      console.error(`[market-seed] failed to create ${key}:`, e?.message ?? e);
+    });
+    snapSeeded++;
+  }
+
+  console.log(
+    `[market-seed] platforms seeded=${platformSeeded} skipped=${platformSkipped} ` +
+      `(total ${PLATFORMS.length}); snapshots[${today}] seeded=${snapSeeded} skipped=${snapSkipped}`
+  );
   await prisma.$disconnect();
 })().catch((e) => {
   console.error('[market-seed] error:', e?.message ?? e);

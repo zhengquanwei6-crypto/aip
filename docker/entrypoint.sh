@@ -19,12 +19,18 @@ if [ ! -f "$SEED_MARK" ]; then
   fi
 fi
 
-# v0.11 B11: 启动时种 PlatformInfo（B10 followup #7 闭环）
-# 容器换 DB 卷或全新部署时, Setting 表 market:platform:* 行不存在,
-# 用一个内联 node 脚本直接写 3 行 Setting (idempotent).
-# 不依赖 Next.js 起服务后才能调 API.
+# v0.11 B11 + B15.3: 启动时种 market:platform:* + market:snapshot:*:<today>
+# (B10 followup #7 闭环，B13 self-check §十一 #3 闭合)
+#
+# B11 原版只 seed PlatformInfo 三行；B15.3 扩展为：
+#   ① 缺 market:platform:<slug> 就写（idempotent，B11 行为）
+#   ② 缺 market:snapshot:<slug>:<today YYYY-MM-DD> 就写一条 placeholder
+#      （source='placeholder' / placeholder=true，UI 会打「示例数据」徽章）
+# 这样新部署冷启动后 /api/health.marketTrendsModule.snapshotCount ≥ 3，
+# /market 页直接渲染示例数据卡片，不会出现「无数据」空白态。
+# 不依赖 Next.js 起服务后才能调 /api/market/platforms?seedIfMissing=1。
 if [ -f /app/prisma/market-seed.js ]; then
-  echo "[entrypoint] seeding market platforms if missing (idempotent)"
+  echo "[entrypoint] seeding market platforms + today snapshots if missing (idempotent)"
   node /app/prisma/market-seed.js 2>&1 || echo "[entrypoint] market-seed failed (non-fatal)"
 fi
 
