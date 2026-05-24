@@ -20,6 +20,15 @@
  * 不在本模块做的事：
  *   - 不直接发 LLM/IMAGE 请求（generate 文件做）
  *   - 不删旧 Setting 路径（保留作 fallback，由 text.ts / image.ts 调用方处理）
+ *
+ * v0.11 B14（BUG-M26 修）：
+ *   - markKeySuccess 不再把 lastError 直接置 null，保留历史值作 audit。理由：
+ *     即使最近一次成功，运维仍需要知道这个 key 历史上最近一次失败信息（截断 120 字符），
+ *     否则在「成功-失败-成功」抖动场景下，运维永远看不到失败痕迹（B13 自检暴露 IMAGE
+ *     key 9 reqs / 6 errors / lastError=null 即此症状）。consecutiveErrors=0 仍然重置，
+ *     这是 disable 阈值的语义（连续 N 次失败才 disable）。
+ *   - 不改 disable 阈值（保持 3 次连续失败）；image-runner 端会在每个 ok=false 出口
+ *     都调 markKeyError（含 storage 失败这种"上游 200 但本地落盘失败"），保证染色不漏。
  */
 
 import { prisma } from '@/lib/db';
@@ -74,6 +83,10 @@ export async function getActiveImageKey(): Promise<ActiveKey | null> {
 /**
  * 标记一次成功调用：
  *   consecutiveErrors=0, lastUsedAt=now, totalRequests++
+ *
+ * v0.11 B14：不再清 lastError（保留历史 audit）。
+ *   旧版：lastError: null  → 用户在 /api/health 看不到上一次失败信息
+ *   新版：保留 lastError 字段，仅 markKeyError 与 /api/settings/keys 的"重置错误"按钮可清
  */
 export async function markKeySuccess(id: string): Promise<void> {
   if (!id) return;
@@ -83,7 +96,7 @@ export async function markKeySuccess(id: string): Promise<void> {
       data: {
         consecutiveErrors: 0,
         lastUsedAt: new Date(),
-        lastError: null,
+        // v0.11 B14（BUG-M26 修）：不再 lastError: null
         totalRequests: { increment: 1 },
       },
     });

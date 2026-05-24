@@ -22,6 +22,21 @@
  *     时，自动 fetch URL → 转 base64 注入 sourceImageBase64，确保 multipart file part 真的塞进字节。
  *     （4router-gpt-image-2 / openai-gpt-img-2 走 multipart，KIE 走 async-polling 用 URL 直接传）
  *   - 同时把 multipart fields 里 n/quality 等数值类字段强制 String() 已在 adapter-runtime 模板插值阶段处理。
+ *
+ * v0.11 B14（BUG-M26 修：IMAGE ApiKey 池失败染色逻辑漏调）：
+ *   - 旧版 adapter 成功路径：
+ *       1) runAdapter ok=true 且 result.imageUrls 非空
+ *       2) 立刻 markKeySuccess（清 consecutiveErrors=0）
+ *       3) 再 persistImages（saveImageFromUrl/Base64）
+ *       4) 若 step3 全失败 → 返回 ok:false / "远程图片下载失败" 但 markKeyError 已被遗忘
+ *     症状（B13 自检暴露）：IMAGE pool 9 reqs / 6 errors / fail 67%，但 active=true /
+ *     lastError=null / consecutiveErrors=0 → 永远不会触发 disable 阈值（默认 3）。
+ *   - B14 修：
+ *       a) 把 markKeySuccess 推迟到 persistImages 之后，且仅在 savedUrls 非空时才调用。
+ *       b) persistImages 失败时（savedUrls.length === 0）→ 走 markKeyError 路径。
+ *       c) 不动 disable 阈值（仍 3 次连续）；keys.ts 的 markKeySuccess 也不再清 lastError
+ *          （保留历史 audit）。
+ *   - legacy 路径不走池（仅当池无 active key 时回 Setting 单 key），无需染色。
  */
 
 import { prisma } from '@/lib/db';
@@ -451,6 +466,10 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
         ) {
           const fetched = await fetchUrlToBase64(i2iVars.sourceImage, opts.abortSignal);
           if (!fetched) {
+            // v0.11 B14：i2i 源图拉取失败也是 key/network 故障路径，染色一次
+            if (picked.activeKey) {
+              await markKeyError(picked.activeKey.id, 'i2i 源图 URL fetch 失败 / 超 5MB');
+            }
             return {
               ok: false, savedUrls: [], via: 'adapter', adapterSlug: slug,
               error: `i2i 源图 URL 拉取失败（adapter "${slug}" 走 multipart 必须能读到字节）：${i2iVars.sourceImage}` + adapterSummary(slug, adapter.baseUrl),
@@ -534,18 +553,31 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
             trace,
           };
         }
-        if (picked.activeKey) {
-          await markKeySuccess(picked.activeKey.id);
-        }
+
+        // v0.11 B14（BUG-M26 修）：先 persistImages，再决定染色
+        //   旧版 bug：上游 200 + b64_json，但 saveImage 失败时函数返 ok:false，
+        //            可 markKeySuccess 已被调过 → consecutiveErrors 重置，永不 disable。
+        //   新版：persistImages 完成后再判断；非空走 markKeySuccess，空（落盘失败）走 markKeyError。
         const savedUrls = await persistImages(result.imageUrls);
+        const persistOk = savedUrls.length > 0;
+        if (picked.activeKey) {
+          if (persistOk) {
+            await markKeySuccess(picked.activeKey.id);
+          } else {
+            await markKeyError(
+              picked.activeKey.id,
+              '上游返回成功但本地 saveImage 失败（持久化阶段）',
+            );
+          }
+        }
         return {
-          ok: savedUrls.length > 0,
+          ok: persistOk,
           savedUrls,
           remoteUrls: result.imageUrls,
           durationMs: Date.now() - t0,
           via: 'adapter',
           adapterSlug: slug,
-          error: savedUrls.length === 0 ? '远程图片下载失败' + adapterSummary(slug, adapter.baseUrl) : undefined,
+          error: persistOk ? undefined : '远程图片下载失败' + adapterSummary(slug, adapter.baseUrl),
           trace,
         };
       }
