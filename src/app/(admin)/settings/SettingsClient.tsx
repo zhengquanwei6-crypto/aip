@@ -3,6 +3,10 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from '@/lib/toast';
+import PlatformEditModal, {
+  type PlatformInfoLite,
+  type PlatformSlug,
+} from '@/components/market/PlatformEditModal';
 
 interface Form {
   LLM_API_BASE_URL: string;
@@ -109,6 +113,12 @@ export default function SettingsClient({
   const [keyBusy, setKeyBusy] = useState<string | null>(null); // 行上正在跑的操作 id
   const [draftSaving, setDraftSaving] = useState(false);
 
+  // === v0.11 B15.6 · 市场平台编辑 ===
+  const [platforms, setPlatforms] = useState<PlatformInfoLite[]>([]);
+  const [platformsLoading, setPlatformsLoading] = useState(false);
+  const [platformsErr, setPlatformsErr] = useState<string | null>(null);
+  const [editingPlatform, setEditingPlatform] = useState<PlatformInfoLite | null>(null);
+
   async function refreshPool() {
     setPoolLoading(true);
     setPoolErr(null);
@@ -125,6 +135,25 @@ export default function SettingsClient({
   }
   useEffect(() => {
     void refreshPool();
+  }, []);
+
+  // v0.11 B15.6 · 拉 PlatformInfo 列表（用于「市场平台」卡片）
+  async function refreshPlatforms() {
+    setPlatformsLoading(true);
+    setPlatformsErr(null);
+    try {
+      const res = await fetch('/api/market/platforms', { cache: 'no-store' });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '加载失败');
+      setPlatforms((j.platforms ?? []) as PlatformInfoLite[]);
+    } catch (e) {
+      setPlatformsErr((e as Error).message);
+    } finally {
+      setPlatformsLoading(false);
+    }
+  }
+  useEffect(() => {
+    void refreshPlatforms();
   }, []);
 
   function openCreate(provider: 'llm' | 'image') {
@@ -664,6 +693,82 @@ export default function SettingsClient({
           )}
         </div>
       </div>
+
+      {/* v0.11 B15.6 · 市场平台编辑卡片（放在 IMAGE provider section 下方）*/}
+      <div
+        className="card border-violet-200 dark:border-violet-800"
+        data-b15-6-market-platforms-card=""
+      >
+        <div className="card-header bg-violet-50/40 dark:bg-violet-900/20 flex-wrap gap-2">
+          <h2 className="font-semibold flex items-center gap-2">
+            <span>📊</span>
+            <span>市场平台</span>
+            <span className="text-xs text-slate-400 font-normal">v0.11 B15.6</span>
+          </h2>
+          <div className="text-xs text-slate-500">
+            编辑 PlatformInfo（介绍 / 推荐 KPI / 推荐工作流）。写入 Setting 表 key
+            <span className="font-mono"> market:platform:&lt;slug&gt;</span>。
+          </div>
+        </div>
+        <div className="card-body space-y-2">
+          {platformsErr && (
+            <div className="text-sm text-red-600">{platformsErr}</div>
+          )}
+          {platformsLoading && (
+            <div className="text-xs text-slate-400">刷新中…</div>
+          )}
+          {!platformsLoading && platforms.length === 0 && !platformsErr && (
+            <div className="text-xs text-slate-400">
+              暂无平台数据。请检查 entrypoint 是否已自动 seed 三平台。
+            </div>
+          )}
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {platforms.map((p) => (
+              <div
+                key={p.slug}
+                className="flex items-center justify-between gap-3 py-2"
+                data-b15-6-platform-row={p.slug}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span aria-hidden className="text-base">{p.icon}</span>
+                  <span className="font-medium text-sm">{p.name}</span>
+                  <span className="text-xs text-slate-400 font-mono">({p.slug})</span>
+                  <span className="text-xs text-slate-500 truncate hidden sm:inline">
+                    · {p.tagline}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="text-xs text-brand-600 hover:underline shrink-0"
+                  onClick={() => setEditingPlatform(p)}
+                  data-b15-6-edit-button={p.slug}
+                >
+                  编辑
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-slate-400 pt-1 leading-relaxed">
+            提示：保存后立即生效，dashboard 的 MarketTrendsCard 下次拉取会显示新值。
+            entrypoint 自动 seed 检测到此 key 已存在会跳过覆盖（idempotent）。
+          </p>
+        </div>
+      </div>
+
+      {/* v0.11 B15.6 · Modal */}
+      {editingPlatform && (
+        <PlatformEditModal
+          open={!!editingPlatform}
+          slug={editingPlatform.slug as PlatformSlug}
+          current={editingPlatform}
+          onClose={() => setEditingPlatform(null)}
+          onSaved={(next) => {
+            setPlatforms((list) =>
+              list.map((it) => (it.slug === next.slug ? next : it)),
+            );
+          }}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* LLM */}
