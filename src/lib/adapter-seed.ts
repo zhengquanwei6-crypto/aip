@@ -1,15 +1,26 @@
 /**
- * v0.11 B7 + B9 + B11：内置 adapter 预设种子
+ * v0.11 B7 + B9 + B11 + B12：内置 adapter 预设种子
  *
  * v0.11 B7：sizes / qualities 池（已有）
  * v0.11 B9：aspectRatios / supportsImg2Img / img2imgFlow（图生图）
- * v0.11 B11：i2i 真生图 bug 修复 —
- *   用户实拍 /playground i2i 报错：
- *     `未指定模型名称，模型名称不能为空 [adapter=4router-gpt-image-2, baseUrl=https://4router.net/v1]`
- *   根因：B9 的 `OPENAI_EDITS_I2I_FLOW`（4router 共用）multipart fields 缺 `model` 字段。
- *   OpenAI 兼容 `/v1/images/edits` 必须带 model；4router 中转站尤其严格。
- *   修复：拆出 4router 专属 `FOUR_ROUTER_GPT_IMAGE_2_I2I_FLOW`（model='gpt-image-2'），
- *         并把 `OPENAI_EDITS_I2I_FLOW` 改名为 `OPENAI_GENERIC_EDITS_I2I_FLOW`（保留作通用兜底）。
+ * v0.11 B11：i2i 真生图 bug 修复（4router multipart 缺 model 字段 + b64_json 解析）
+ *
+ * v0.11 B12：sizes 池配置 bug 修复 ─────────────────────────
+ *   用户实拍 /playground 选「4K(3840×2160) + 9:16」做 i2i 报错：
+ *     `分组 GptPro 下模型 gpt-image-2 的可用渠道不存在（retry）`
+ *   根因：v0.11 B7 给 SIZES_GPT_IMAGE_2 / ASPECT_RATIOS_GPT_IMAGE_2 池里塞了
+ *   2K(2048x2048) / 4K(3840x2160)，但 OpenAI 官方 gpt-image-1（gpt-image-2 / gpt-img-2 共用此协议）
+ *   /v1/images/generations 和 /v1/images/edits 真实只支持 3 档：
+ *     - 1024x1024 (方图)
+ *     - 1024x1536 (竖图，2:3)
+ *     - 1536x1024 (横图，3:2)
+ *     - 'auto'
+ *   非法尺寸被中转站（4router）反向回 "可用渠道不存在"。
+ *   B7 时是配置 bug，本批修正。
+ *   修法：把 SIZES_GPT_IMAGE_2 收紧到 OpenAI 官方 3 档，
+ *         ASPECT_RATIOS_GPT_IMAGE_2 收紧到与 size 一一对应的 3 档（1:1 / 3:2 / 2:3）。
+ *         KIE / Flux / DALL-E 3 / generic 不动（KIE 上游不是 OpenAI 协议；DALL-E 3 已正确）。
+ * ────────────────────────────────────────────────────────
  *
  * Image-to-Image 文档调研（精简核对，详见 D:\xm\design-ai-ops-v0.11-b9-img2img-aspect-ratio.md §一）：
  *
@@ -33,24 +44,36 @@ import type {
 // 共享池常量
 // ──────────────────────────────────────────────────────────
 
-/** kie-gpt-image-2 / openai-gpt-img-2 / 4router-gpt-image-2 共用 */
+/**
+ * v0.11 B12：kie-gpt-image-2 / openai-gpt-img-2 / 4router-gpt-image-2 共用。
+ *
+ * OpenAI gpt-image-1 协议（4router / openai-gpt-img-2 同协议）/v1/images/{generations,edits}
+ * 真实只接受这 3 档 + 'auto'。B7 时误塞 2K(2048) / 4K(3840×2160) 是配置 bug，B12 修正。
+ *
+ * KIE 上游虽然走 /jobs/createTask 不直传 size（用 aspect_ratio + resolution），
+ * 但前端选择器仍走这个池 → 用户选「方图 1024×1024」体验最稳；保持池统一更易维护。
+ */
 const SIZES_GPT_IMAGE_2: SizePreset[] = [
-  { label: '1K(1024)', value: '1024x1024', tier: '1k' },
-  { label: '2K(2048)', value: '2048x2048', tier: '2k' },
-  { label: '4K(3840×2160)', value: '3840x2160', tier: '4k' },
+  { label: '方图 1024×1024', value: '1024x1024', tier: '1k' },
+  { label: '竖图 1024×1536（2:3）', value: '1024x1536', tier: '1k' },
+  { label: '横图 1536×1024（3:2）', value: '1536x1024', tier: '1k' },
 ];
 const QUALITIES_GPT_IMAGE_2: QualityPreset[] = [
   { label: '低', value: 'low' },
   { label: '中', value: 'medium' },
   { label: '高', value: 'high' },
 ];
-/** kie / 4router / openai-gpt-img-2：5 档比例（gpt-image-2 官方支持 1:1 / 16:9 / 9:16 / 4:3 / 3:4） */
+/**
+ * v0.11 B12：与 SIZES_GPT_IMAGE_2 一一对应的 3 档比例。
+ * gpt-image-1 在 /v1/images/generations 实际就这 3 档；
+ * 16:9 / 9:16 / 4:3 / 3:4 都不在白名单，B7 配置 bug 一并修。
+ *
+ * 用户网页端 9:16 体验降级为「2:3 竖图（最接近 9:16）」，由 image-size.ts 兜底。
+ */
 const ASPECT_RATIOS_GPT_IMAGE_2: AspectRatioPreset[] = [
   { label: '正方形 1:1', ratio: '1:1', sizeRule: '1024x1024' },
-  { label: '横屏 16:9', ratio: '16:9', sizeRule: '' },
-  { label: '竖屏 9:16', ratio: '9:16', sizeRule: '' },
-  { label: '标准 4:3', ratio: '4:3', sizeRule: '' },
-  { label: '竖标准 3:4', ratio: '3:4', sizeRule: '' },
+  { label: '横屏 3:2（最接近 16:9）', ratio: '3:2', sizeRule: '1536x1024' },
+  { label: '竖屏 2:3（最接近 9:16）', ratio: '2:3', sizeRule: '1024x1536' },
 ];
 
 /** kie-flux-kontext-pro */
@@ -447,6 +470,8 @@ export const PRESETS: AdapterConfig[] = [
  * v0.11 B9：扩展 SLUG_PRESET_MAP，加 aspectRatios + supportsImg2Img + img2imgFlow。
  * v0.11 B11：4router 改用 `FOUR_ROUTER_GPT_IMAGE_2_I2I_FLOW`（独立常量，含 model 字段），
  *            修复 i2i 「未指定模型名称」400 报错。
+ * v0.11 B12：SIZES_GPT_IMAGE_2 / ASPECT_RATIOS_GPT_IMAGE_2 重写到 OpenAI 官方 3 档；
+ *            migrate-presets 端点会因 deepEqual 不等触发 4 个 OpenAI/4router 行 update。
  *
  * migrate-presets 端点把这些字段 merge 进现有 Setting JSON。
  */
