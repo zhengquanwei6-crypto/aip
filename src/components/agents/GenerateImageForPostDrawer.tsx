@@ -7,6 +7,15 @@
  *
  * v0.11 B7：尺寸 / 质量 select
  * v0.11 B9：比例 select + 图生图开关 + 源图选择器
+ *
+ * v0.11 B15.1（仅微调）：
+ *   - 按 self-check §十一 spec 重排「图片选项」三 select 顺序为 size → aspect → quality
+ *     （之前是 aspect → size → quality；语义不变，仅 grid 顺序）
+ *   - 「比例预设」label 加 adapter 名称（与 PublishDirectorDrawer 对齐）
+ *   - 比例 select 加 title 提示当前 adapter 可选比例池
+ *   - data-aspect-ratio-select / data-size-preset-select / data-quality-preset-select
+ *     hook 保留（walk smoke 仍可定位）
+ *   - 0 schema · 0 LLM/IMAGE 消耗 · 不动 photo-director slug
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -277,6 +286,10 @@ export function GenerateImageForPostDrawer({
   const qualitiesPool = adapter?.qualities ?? [];
   const aspectRatiosPool = adapter?.aspectRatios ?? [];
   const supportsImg2Img = !!adapter?.supportsImg2Img;
+  // v0.11 B15.1：title hover 提示当前 adapter 可选比例池
+  const aspectRatioTitle = aspectRatiosPool.length > 0
+    ? `当前 adapter 可选比例：${aspectRatiosPool.map((r) => r.ratio).join(' / ')}`
+    : '';
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -296,28 +309,31 @@ export function GenerateImageForPostDrawer({
         </header>
 
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          {/* 图片选项（比例 + 尺寸 + 质量） */}
+          {/*
+            v0.11 B15.1：图片选项 grid 顺序按 spec 重排为 size → aspect → quality
+            （之前是 aspect → size → quality；语义不变，仅 DOM 顺序）
+          */}
           {(aspectRatiosPool.length > 0 || sizesPool.length > 0 || qualitiesPool.length > 0) && (
             <div className="rounded border border-amber-200 dark:border-amber-700/40 bg-amber-50/50 dark:bg-amber-900/10 p-3">
               <div className="text-sm font-medium text-amber-800 dark:text-amber-200 inline-flex items-center gap-1 mb-2">
                 <SettingsIcon size={14} /> 图片选项{adapter?.name ? `（${adapter.name}）` : ''}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                {aspectRatiosPool.length > 0 && (
-                  <div>
-                    <label className="label">比例预设</label>
-                    <select className="input" value={selectedAspectRatio} onChange={(e) => onAspectChange(e.target.value)}
-                      disabled={building || generating} data-aspect-ratio-select aria-label="比例预设">
-                      {aspectRatiosPool.map((r) => <option key={r.ratio} value={r.ratio}>{r.label}</option>)}
-                    </select>
-                  </div>
-                )}
                 {sizesPool.length > 0 && (
                   <div>
                     <label className="label">尺寸预设</label>
                     <select className="input" value={selectedSize} onChange={(e) => setSelectedSize(e.target.value)}
                       disabled={building || generating} data-size-preset-select aria-label="尺寸预设">
                       {sizesPool.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    </select>
+                  </div>
+                )}
+                {aspectRatiosPool.length > 0 && (
+                  <div>
+                    <label className="label">{`比例预设${adapter?.name ? `（${adapter.name}）` : ''}`}</label>
+                    <select className="input" value={selectedAspectRatio} onChange={(e) => onAspectChange(e.target.value)}
+                      disabled={building || generating} data-aspect-ratio-select aria-label="比例预设" title={aspectRatioTitle}>
+                      {aspectRatiosPool.map((r) => <option key={r.ratio} value={r.ratio}>{r.label}</option>)}
                     </select>
                   </div>
                 )}
