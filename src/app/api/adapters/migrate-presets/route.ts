@@ -1,20 +1,12 @@
 /**
- * /api/adapters/migrate-presets · v0.11 B7
+ * /api/adapters/migrate-presets · v0.11 B7 + B9
  *
- * 一次性 merge sizes/qualities 字段进已有的 adapter Setting row，幂等。
- *   - 读 Setting WHERE key LIKE 'adapter:%'
- *   - 按 slug 找 SLUG_PRESET_MAP 对应的 sizes/qualities 池
- *   - 解析 row.value JSON，把 sizes/qualities merge 进去（保留 sourceUrl/baseUrl/auth/flow/enabled 等）
- *   - 重写 row.value，updatedAt 更新
+ * v0.11 B7：merge sizes/qualities 进 adapter Setting JSON
+ * v0.11 B9：同时 merge aspectRatios + supportsImg2Img + img2imgFlow（幂等）
  *
- * 调用：POST 一次即可（push.sh build 完之后 curl 一次）
+ * 调用：POST 一次（push.sh build 完后 curl 一次）
  *
  * 0 LLM/IMAGE 消耗 · 0 schema 改动
- *
- * 幂等性：
- *   - 已经有 sizes/qualities 字段的 row 仍会被 merge（pool 是权威），但 value 字符串等价
- *     时不重写（避免 updatedAt 抖动）
- *   - SLUG_PRESET_MAP 没匹配的 slug → 跳过（标 unknown）
  */
 
 import { NextResponse } from 'next/server';
@@ -28,9 +20,33 @@ export const dynamic = 'force-dynamic';
 interface MigrateRow {
   slug: string;
   status: 'updated' | 'skipped' | 'unknown' | 'parse-error';
-  before?: { sizes: number; qualities: number };
-  after?: { sizes: number; qualities: number };
+  before?: { sizes: number; qualities: number; aspectRatios: number; supportsImg2Img: boolean };
+  after?: { sizes: number; qualities: number; aspectRatios: number; supportsImg2Img: boolean };
   error?: string;
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a && b && typeof a === 'object') {
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (!deepEqual(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    const ak = Object.keys(a as Record<string, unknown>).sort();
+    const bk = Object.keys(b as Record<string, unknown>).sort();
+    if (ak.length !== bk.length) return false;
+    for (let i = 0; i < ak.length; i++) {
+      if (ak[i] !== bk[i]) return false;
+      if (!deepEqual((a as any)[ak[i]], (b as any)[bk[i]])) return false;
+    }
+    return true;
+  }
+  return false;
 }
 
 export async function POST() {
@@ -61,42 +77,47 @@ export async function POST() {
     }
     const beforeSizes = Array.isArray(parsed.sizes) ? parsed.sizes.length : 0;
     const beforeQualities = Array.isArray(parsed.qualities) ? parsed.qualities.length : 0;
+    const beforeAspectRatios = Array.isArray(parsed.aspectRatios) ? parsed.aspectRatios.length : 0;
+    const beforeSupportsImg2Img = parsed.supportsImg2Img === true;
 
     const merged = {
       ...parsed,
       sizes: preset.sizes,
       qualities: preset.qualities,
+      aspectRatios: preset.aspectRatios,
+      supportsImg2Img: preset.supportsImg2Img,
+      ...(preset.img2imgFlow ? { img2imgFlow: preset.img2imgFlow } : {}),
       updatedAt: new Date().toISOString(),
     };
     const newValue = JSON.stringify(merged);
 
-    // 幂等：如果原 sizes/qualities 已经一致，且只是 updatedAt 不同 → 也算 updated（一次性）
-    // 这里不做字符串等价判断，每次 POST 都强写 sizes/qualities + 更新 updatedAt
-    if (beforeSizes === preset.sizes.length && beforeQualities === preset.qualities.length) {
-      // 已经有了，跳过实际 update（避免 updatedAt 抖）
-      // 但也要确保 sizes 内容完全一致；保险起见仍写一次（成本 < 1ms）
-      const sameSizes =
-        Array.isArray(parsed.sizes) &&
-        parsed.sizes.length === preset.sizes.length &&
-        parsed.sizes.every((s: any, i: number) =>
-          s?.value === preset.sizes[i].value && s?.label === preset.sizes[i].label,
-        );
-      const sameQualities =
-        Array.isArray(parsed.qualities) &&
-        parsed.qualities.length === preset.qualities.length &&
-        parsed.qualities.every((q: any, i: number) =>
-          q?.value === preset.qualities[i].value && q?.label === preset.qualities[i].label,
-        );
-      if (sameSizes && sameQualities) {
-        skipped++;
-        results.push({
-          slug,
-          status: 'skipped',
-          before: { sizes: beforeSizes, qualities: beforeQualities },
-          after: { sizes: preset.sizes.length, qualities: preset.qualities.length },
-        });
-        continue;
-      }
+    // 幂等：所有目标字段相等时跳过
+    const sameSizes = deepEqual(parsed.sizes, preset.sizes);
+    const sameQualities = deepEqual(parsed.qualities, preset.qualities);
+    const sameAspectRatios = deepEqual(parsed.aspectRatios, preset.aspectRatios);
+    const sameSupports = parsed.supportsImg2Img === preset.supportsImg2Img;
+    const sameI2iFlow = preset.img2imgFlow
+      ? deepEqual(parsed.img2imgFlow, preset.img2imgFlow)
+      : true;
+    if (sameSizes && sameQualities && sameAspectRatios && sameSupports && sameI2iFlow) {
+      skipped++;
+      results.push({
+        slug,
+        status: 'skipped',
+        before: {
+          sizes: beforeSizes,
+          qualities: beforeQualities,
+          aspectRatios: beforeAspectRatios,
+          supportsImg2Img: beforeSupportsImg2Img,
+        },
+        after: {
+          sizes: preset.sizes.length,
+          qualities: preset.qualities.length,
+          aspectRatios: preset.aspectRatios.length,
+          supportsImg2Img: preset.supportsImg2Img,
+        },
+      });
+      continue;
     }
 
     try {
@@ -108,8 +129,18 @@ export async function POST() {
       results.push({
         slug,
         status: 'updated',
-        before: { sizes: beforeSizes, qualities: beforeQualities },
-        after: { sizes: preset.sizes.length, qualities: preset.qualities.length },
+        before: {
+          sizes: beforeSizes,
+          qualities: beforeQualities,
+          aspectRatios: beforeAspectRatios,
+          supportsImg2Img: beforeSupportsImg2Img,
+        },
+        after: {
+          sizes: preset.sizes.length,
+          qualities: preset.qualities.length,
+          aspectRatios: preset.aspectRatios.length,
+          supportsImg2Img: preset.supportsImg2Img,
+        },
       });
     } catch (e) {
       results.push({
@@ -128,10 +159,6 @@ export async function POST() {
   });
 }
 
-/**
- * GET：仅返回当前 adapter row 是否含 sizes/qualities（不动数据）。
- * 方便 walk.mjs / push.sh 验证 migrate 状态。
- */
 export async function GET() {
   const rows = await prisma.setting.findMany({
     where: { key: { startsWith: ADAPTER_SETTING_PREFIX } },
@@ -142,12 +169,14 @@ export async function GET() {
     try {
       parsed = JSON.parse(row.value);
     } catch {
-      // ignore
+      /* ignore */
     }
     return {
       slug,
       sizes: Array.isArray(parsed?.sizes) ? parsed.sizes.length : 0,
       qualities: Array.isArray(parsed?.qualities) ? parsed.qualities.length : 0,
+      aspectRatios: Array.isArray(parsed?.aspectRatios) ? parsed.aspectRatios.length : 0,
+      supportsImg2Img: parsed?.supportsImg2Img === true,
       preset: SLUG_PRESET_MAP[slug] ? 'known' : 'unknown',
     };
   });

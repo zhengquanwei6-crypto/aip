@@ -2,19 +2,20 @@
 //
 // 三个核心能力：
 //   1. 模板插值 — {prompt} {API_KEY} {taskId} {extra.foo} 等
-//   2. JSONPath 提取 — "data.foo[0].url" / "data.json>>resultUrls[*]"（双 >> 表示先 JSON.parse 再取）
+//   2. JSONPath 提取 — "data.foo[0].url" / "data.json>>resultUrls[*]"
 //   3. 同步/异步执行 — sync 一次返回，async-polling 调度轮询直到 done/fail/timeout
 //
-// v0.8 Batch 5：trace 增强
-//   - pollHistory 每条增加 ts（毫秒）和 ok（boolean）
-//   - 顶层 trace 增加 lastError / lastResponseSnippet / durationMs
-//   - 失败时 trace 仍会附带（之前已经如此），下游可以透传给前端
-//
-// v0.11 B7：image options 注入
-//   - GenerateInput.size / quality 通过 vars.size / vars.quality / vars.extra 注入到 bodyTemplate
-//   - kie-* 这类 bodyTemplate 用 {extra.resolution}：调用方按 SizePreset.tier 计算后写进 extra
-//   - openai-dalle-3 / openai-gpt-img-2 这类 bodyTemplate 直接用 {size} / {quality}
-//   - 本文件不替 caller 决定如何把 size/quality 映射到 bodyTemplate 占位符 — 仍由 adapter Setting JSON 决定
+// v0.8 B5：trace 增强（pollHistory ts/ok/lastError/lastResponseSnippet）
+// v0.11 B7：image options 注入（size/quality/extra）
+// v0.11 B9（图生图 + 比例预设）：
+//   - GenerateInput 加 sourceImageUrl / sourceImageBase64 / aspectRatio
+//   - vars 同步加 sourceImage / sourceImageBase64 / aspectRatio
+//     · sourceImage：URL 或 'data:image/png;base64,xxx' 形式（KIE Flux 用）
+//     · sourceImageBase64：裸 base64（OpenAI multipart 用）
+//     · aspectRatio：用户选的比例字符串（已合并进 extra.aspectRatio，但顶层也暴露便于 {aspectRatio} 占位）
+//   - bodyTemplate 支持 multipart：
+//       { __contentType: 'multipart/form-data', fields: [{ name, value, filename?, contentType? }, ...] }
+//     当 fields[i].filename 非空时，value 视为 base64（解码后塞入 file part）
 
 import type {
   AdapterConfig,
@@ -137,17 +138,11 @@ function readPath(obj: Record<string, unknown>, path: string): unknown {
 interface RunOptions {
   apiKey: string;
   abortSignal?: AbortSignal;
-  /** dry-run 时把请求/响应都收集到 trace 里 */
   collectTrace?: boolean;
 }
 
-/**
- * trace 内部用对象（运行时持有）。
- * 之所以单独定义而不直接用 DryRunResult["trace"]，是为了能塞 lastError / lastResponseSnippet
- * 这种 schema 没声明的字段（schema 是 nullish + 宽松的）。返回给上层时仍按原 schema 形状返回。
- */
 interface TraceCtx {
-  submitRequest?: { url: string; headers: Record<string, string>; body?: string };
+  submitRequest?: { url: string; headers: Record<string, string>; body?: string; multipart?: { fieldCount: number; hasFile: boolean } };
   submitResponse?: unknown;
   pollHistory: { at: string; ts: number; status?: string; ok: boolean; raw?: unknown }[];
   lastError?: string;
@@ -173,15 +168,27 @@ export async function runAdapter(
   const t0 = Date.now();
   const trace: TraceCtx | undefined = opts.collectTrace ? emptyTraceCtx() : undefined;
 
-  // v0.11 B7：把 size/quality 同时塞 vars 顶层 + extra（兼容两种 bodyTemplate 写法）
-  //   - 写 {size} / {quality}                → 用 vars.size / vars.quality
-  //   - 写 {extra.size} / {extra.quality}    → 用 vars.extra.size / vars.extra.quality
-  //   - 写 {extra.resolution}（kie-*）       → 由 caller 在 input.extra.resolution 写好
-  //   - 写 {extra.aspectRatio}（kie-*）      → 同上
+  // v0.11 B7：把 size/quality 同时塞 vars 顶层 + extra
+  // v0.11 B9：把 sourceImageUrl / sourceImageBase64 / aspectRatio 也注入 vars
   const inputExtra = input.extra ?? {};
   const mergedExtra: Record<string, unknown> = { ...inputExtra };
   if (input.size && typeof inputExtra.size === "undefined") mergedExtra.size = input.size;
   if (input.quality && typeof inputExtra.quality === "undefined") mergedExtra.quality = input.quality;
+  if (input.aspectRatio && typeof inputExtra.aspectRatio === "undefined") mergedExtra.aspectRatio = input.aspectRatio;
+
+  // sourceImage 顶层占位（KIE Flux 的 bodyTemplate 用 {sourceImage}）
+  // 优先级：sourceImageUrl > 'data:image/png;base64,' + sourceImageBase64 > ''
+  const sourceImage =
+    (input.sourceImageUrl ?? '').trim() ||
+    (input.sourceImageBase64 ? `data:image/png;base64,${input.sourceImageBase64}` : '');
+
+  // imageUrls 数组（KIE GPT-2 i2i 的 bodyTemplate 用 {extra.imageUrls}）
+  if (typeof inputExtra.imageUrls === "undefined" && (input.sourceImageUrl ?? '').trim()) {
+    mergedExtra.imageUrls = [input.sourceImageUrl];
+  }
+  if (typeof inputExtra.sourceImage === "undefined" && sourceImage) {
+    mergedExtra.sourceImage = sourceImage;
+  }
 
   const vars: Record<string, unknown> = {
     API_KEY: opts.apiKey,
@@ -190,6 +197,11 @@ export async function runAdapter(
     n: input.n ?? 1,
     quality: input.quality ?? "standard",
     imageUrl: input.imageUrl ?? "",
+    aspectRatio: input.aspectRatio ?? "",
+    // v0.11 B9：图生图占位
+    sourceImage,
+    sourceImageUrl: input.sourceImageUrl ?? '',
+    sourceImageBase64: input.sourceImageBase64 ?? '',
     extra: mergedExtra,
   };
 
@@ -218,19 +230,12 @@ export async function runAdapter(
 // sync 执行
 // ──────────────────────────────────────────────────────────
 
-
-// BUG-1 retry: gateway blips (e.g. 503 "channel unavailable" from upstream
-// proxies like 4router) are common and usually clear within a few seconds.
-// Retry on:
-//   - 5xx HTTP status
-//   - HTTP 200 with body matching gateway-channel-failure patterns
-// up to 2 extra times with exponential backoff.
 const RETRY_BODY_PATTERNS = [
   /get_channel_failed/i,
   /channel.*not.*available/i,
   /channel.*unavailable/i,
   /no.*available.*channel/i,
-  /可用渠道不存在/, // 中文：可用渠道不存在
+  /可用渠道不存在/,
 ];
 async function fetchWithRetry(
   url: string,
@@ -243,27 +248,23 @@ async function fetchWithRetry(
   let lastBody: string | undefined;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const resp = await fetchWithSignal(url, init, signal);
-    // Read body once so we can inspect AND return it via clone.
     let bodyText: string | undefined;
     let shouldRetry = false;
     if (!resp.ok && resp.status >= 500) {
       shouldRetry = true;
     } else if (resp.ok) {
-      // Peek body to detect upstream gateway errors that come as HTTP 200.
       try {
         bodyText = await resp.clone().text();
         if (bodyText && RETRY_BODY_PATTERNS.some((re) => re.test(bodyText!))) {
           shouldRetry = true;
         }
-      } catch {
-        // ignore body read failures
-      }
+      } catch {}
     }
     if (!shouldRetry) return resp;
     lastResp = resp;
     lastBody = bodyText;
     if (attempt < MAX_ATTEMPTS) {
-      const backoffMs = 2000 * attempt; // 2s, 4s
+      const backoffMs = 2000 * attempt;
       if (trace) {
         const reason = resp.status >= 500
           ? `HTTP ${resp.status}`
@@ -293,13 +294,20 @@ async function runSync(
 ): Promise<string[]> {
   if (adapter.flow.type !== "sync") throw new Error("not sync");
   const flow = adapter.flow;
-  const { url, headers, body } = buildRequest(adapter, flow.endpoint, flow.request, vars);
-  if (trace) trace.submitRequest = { url, headers: redactHeaders(headers), body };
+  const built = buildRequest(adapter, flow.endpoint, flow.request, vars);
+  if (trace) {
+    trace.submitRequest = {
+      url: built.url,
+      headers: redactHeaders(built.headers),
+      ...(built.body !== undefined ? { body: typeof built.body === 'string' ? built.body : '<binary multipart>' } : {}),
+      ...(built.multipart ? { multipart: built.multipart } : {}),
+    };
+  }
 
-  const resp = await fetchWithRetry(url, {
+  const resp = await fetchWithRetry(built.url, {
     method: flow.endpoint.method,
-    headers,
-    body,
+    headers: built.headers,
+    ...(built.body !== undefined ? { body: built.body } : {}),
   }, opts.abortSignal, trace);
   const json = await resp.json();
   if (trace) {
@@ -337,14 +345,20 @@ async function runAsyncPolling(
   if (adapter.flow.type !== "async-polling") throw new Error("not async-polling");
   const flow = adapter.flow;
 
-  // 1. 提交
   const sub = buildRequest(adapter, flow.submit.endpoint, flow.submit.request, vars);
-  if (trace) trace.submitRequest = { url: sub.url, headers: redactHeaders(sub.headers), body: sub.body };
+  if (trace) {
+    trace.submitRequest = {
+      url: sub.url,
+      headers: redactHeaders(sub.headers),
+      ...(sub.body !== undefined ? { body: typeof sub.body === 'string' ? sub.body : '<binary multipart>' } : {}),
+      ...(sub.multipart ? { multipart: sub.multipart } : {}),
+    };
+  }
 
   const subResp = await fetchWithSignal(sub.url, {
     method: flow.submit.endpoint.method,
     headers: sub.headers,
-    body: sub.body,
+    ...(sub.body !== undefined ? { body: sub.body } : {}),
   }, opts.abortSignal);
   const subJson = await subResp.json();
   if (trace) {
@@ -367,7 +381,6 @@ async function runAsyncPolling(
     throw new Error(m);
   }
 
-  // 2. 轮询
   const pollVars = { ...vars, taskId };
   const start = Date.now();
   const intervalMs = flow.poll.intervalMs;
@@ -391,7 +404,7 @@ async function runAsyncPolling(
     const status = String(jsonPath(pollJson, flow.poll.statusPath) ?? "");
     const isFail = flow.poll.failStatuses.includes(status);
     const isDone = flow.poll.doneStatuses.includes(status);
-    const okFlag = !isFail; // 既非失败即视为 ok（含 done / pending）
+    const okFlag = !isFail;
 
     if (trace) {
       trace.pollHistory.push({
@@ -435,12 +448,21 @@ async function runAsyncPolling(
 // 工具
 // ──────────────────────────────────────────────────────────
 
+interface BuiltRequest {
+  url: string;
+  headers: Record<string, string>;
+  /** body 可能是 string（JSON）/ FormData（multipart）/ undefined（GET） */
+  body?: string | FormData;
+  /** 仅 multipart 路径会填，便于 trace */
+  multipart?: { fieldCount: number; hasFile: boolean };
+}
+
 function buildRequest(
   adapter: AdapterConfig,
   endpoint: { method: string; path: string; queryTemplate?: Record<string, string> | undefined },
   request: { contentType?: string; bodyTemplate?: unknown },
   vars: Record<string, unknown>,
-): { url: string; headers: Record<string, string>; body?: string } {
+): BuiltRequest {
   const interpolatedPath = interpolate(endpoint.path, vars) as string;
   let url = adapter.baseUrl.replace(/\/+$/, "") + (interpolatedPath.startsWith("/") ? "" : "/") + interpolatedPath;
 
@@ -464,19 +486,66 @@ function buildRequest(
     url += (url.includes("?") ? "&" : "?") + qs.join("&");
   }
 
-  let body: string | undefined;
+  let body: string | FormData | undefined;
+  let multipartTrace: { fieldCount: number; hasFile: boolean } | undefined;
+
   if (endpoint.method !== "GET" && endpoint.method !== "DELETE" && request.bodyTemplate !== undefined) {
     const ct = request.contentType ?? "application/json";
-    headers["Content-Type"] = ct;
-    if (ct.includes("json")) {
-      body = JSON.stringify(interpolate(request.bodyTemplate, vars));
+
+    // v0.11 B9：multipart 分支（bodyTemplate.__contentType === 'multipart/form-data'）
+    const tmpl = request.bodyTemplate as any;
+    if (
+      tmpl &&
+      typeof tmpl === 'object' &&
+      tmpl.__contentType === 'multipart/form-data' &&
+      Array.isArray(tmpl.fields)
+    ) {
+      const form = new FormData();
+      let hasFile = false;
+      let fieldCount = 0;
+      for (const fld of tmpl.fields) {
+        if (!fld || typeof fld.name !== 'string') continue;
+        const interpolatedValue = String(interpolate(String(fld.value ?? ''), vars));
+        if (fld.filename) {
+          // 视为 file part：value 是裸 base64
+          if (!interpolatedValue) continue; // 缺源图直接跳过（runImageGenerate 已校验过）
+          try {
+            const bytes = Uint8Array.from(atob(interpolatedValue), (c) => c.charCodeAt(0));
+            const blob = new Blob([bytes], { type: fld.contentType || 'image/png' });
+            form.append(fld.name, blob, String(fld.filename));
+            hasFile = true;
+            fieldCount++;
+          } catch (e) {
+            // base64 解码失败 → 跳过 file part
+            // 不抛错，让上游报 missing image
+          }
+        } else {
+          if (interpolatedValue !== '') {
+            form.append(fld.name, interpolatedValue);
+            fieldCount++;
+          }
+        }
+      }
+      body = form;
+      multipartTrace = { fieldCount, hasFile };
+      // 不写 Content-Type → 让 fetch 自动加 boundary
     } else {
-      body = String(interpolate(request.bodyTemplate, vars));
+      headers["Content-Type"] = ct;
+      if (ct.includes("json")) {
+        body = JSON.stringify(interpolate(request.bodyTemplate, vars));
+      } else {
+        body = String(interpolate(request.bodyTemplate, vars));
+      }
     }
   }
   headers["Accept"] = "application/json";
 
-  return { url, headers, body };
+  return {
+    url,
+    headers,
+    ...(body !== undefined ? { body } : {}),
+    ...(multipartTrace ? { multipart: multipartTrace } : {}),
+  };
 }
 
 function normalizeUrls(extracted: unknown): string[] {
@@ -487,10 +556,6 @@ function normalizeUrls(extracted: unknown): string[] {
   return [];
 }
 
-/**
- * 脱敏 headers：任何包含 auth/key/token 的 header value 都替换为 ***(len=N)。
- * 同时兜底处理 valueTemplate 嵌入的 sk- 前缀。这是安全约束：trace 不能透传真实 API key。
- */
 function redactHeaders(h: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(h)) {

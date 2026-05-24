@@ -1,27 +1,26 @@
 /**
- * /api/tasks/[id]/generate-image · 任务一键生成图片（重构走 adapter）
+ * /api/tasks/[id]/generate-image · 任务一键生成图片
  *
- * 流程不变：
- *   1) LLM 生 prompt
- *   2) 调图片 API（现在走 image-runner）
- *   3) 写素材库 + 更新 task.imageUrl
- *
- * v0.8 Batch 5：fail 时把 trace 透传（含 adapter / baseUrl / lastError / pollHistory）
- * v0.9.2 b1：走 async builder 接通 /prompts 模板编辑器
- * v0.11 B7：body 可选接收 size?: string / quality?: string
- *   - 不传 → 走 adapter 池 sizes[0] / qualities[0]
- *   - 传了不在池里的值 → image-runner 内 fallback 到 sizes[0]
+ * v0.11 B7 加 size? / quality?
+ * v0.11 B9 加 mode? sourceImageUrl? sourceImageBase64? aspectRatio?
+ *   - i2i 模式仅在 adapter 支持时可用，否则 image-runner 报错（不偷偷降级 t2i）
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generateText, extractJSON } from '@/lib/ai/text';
 import { buildImagePromptMessagesAsync } from '@/lib/ai/prompts';
-import { runImageGenerate } from '@/lib/image-runner';
+import { runImageGenerate, type ImageMode } from '@/lib/image-runner';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
+
+const MAX_BASE64_BYTES = 5 * 1024 * 1024 * 4 / 3;
+
+function readMode(v: unknown): ImageMode {
+  return v === 'i2i' ? 'i2i' : 't2i';
+}
 
 export async function POST(
   req: NextRequest,
@@ -33,25 +32,44 @@ export async function POST(
       return NextResponse.json({ ok: false, error: '任务不存在' }, { status: 404 });
     }
 
-    // v0.11 B7：尝试解析 body 里的 size / quality（向后兼容：旧调用 body 可能为空 / 非 JSON）
     let bodySize: string | undefined;
     let bodyQuality: string | undefined;
+    let bodyAspectRatio: string | undefined;
+    let bodyMode: ImageMode = 't2i';
+    let bodySourceImageUrl: string | undefined;
+    let bodySourceImageBase64: string | undefined;
     try {
-      // req.json() 可能因 body 为空而抛错；忽略即可
       const b = await req.json().catch(() => null);
       if (b && typeof b === 'object') {
         if (typeof b.size === 'string' && b.size.trim()) bodySize = b.size.trim();
         if (typeof b.quality === 'string' && b.quality.trim()) bodyQuality = b.quality.trim();
+        if (typeof b.aspectRatio === 'string' && b.aspectRatio.trim()) bodyAspectRatio = b.aspectRatio.trim();
+        bodyMode = readMode(b.mode);
+        if (typeof b.sourceImageUrl === 'string' && b.sourceImageUrl.trim()) bodySourceImageUrl = b.sourceImageUrl.trim();
+        if (typeof b.sourceImageBase64 === 'string' && b.sourceImageBase64.trim()) bodySourceImageBase64 = b.sourceImageBase64.trim();
       }
     } catch {
-      // 忽略
+      /* ignore */
+    }
+
+    if (bodyMode === 'i2i' && !bodySourceImageUrl && !bodySourceImageBase64) {
+      return NextResponse.json(
+        { ok: false, error: 'i2i 模式需提供 sourceImageUrl 或 sourceImageBase64' },
+        { status: 400 },
+      );
+    }
+    if (bodySourceImageBase64 && bodySourceImageBase64.length > MAX_BASE64_BYTES) {
+      return NextResponse.json(
+        { ok: false, error: '源图过大（>5MB）' },
+        { status: 413 },
+      );
     }
 
     const platform = task.platform as 'xiaohongshu' | 'xianyu';
     const ratio = platform === 'xiaohongshu' ? '3:4' : '1:1';
     const fallbackSize = platform === 'xiaohongshu' ? '1024x1536' : '1024x1024';
 
-    // 1) 让 LLM 生成图片提示词（v0.9.2 b1：async builder 路由 image:suggest）
+    // 1) LLM 生 prompt
     const messages = await buildImagePromptMessagesAsync({
       platform,
       imageType: platform === 'xiaohongshu' ? '封面图' : '商品首图',
@@ -76,16 +94,19 @@ export async function POST(
       );
     }
 
-    // 2) 调图片 API（走 image-runner，兼容 adapter / legacy）
-    //    优先级：body.size > parsed.size > fallbackSize
-    //    runImageGenerate 内仍会按 adapter.sizes 收敛 → 不在池里时回落 sizes[0]
+    // 2) 调图片 API
     const finalSize = bodySize ?? parsed.size ?? fallbackSize;
+    const finalAspectRatio = bodyAspectRatio ?? ratio;
     const r = await runImageGenerate({
       prompt: parsed.prompt,
       size: finalSize,
       ...(bodyQuality !== undefined ? { quality: bodyQuality } : {}),
+      aspectRatio: finalAspectRatio,
       n: 1,
-      extra: { aspectRatio: ratio },
+      mode: bodyMode,
+      ...(bodySourceImageUrl !== undefined ? { sourceImageUrl: bodySourceImageUrl } : {}),
+      ...(bodySourceImageBase64 !== undefined ? { sourceImageBase64: bodySourceImageBase64 } : {}),
+      extra: { aspectRatio: finalAspectRatio },
     });
     if (!r.ok || r.savedUrls.length === 0) {
       return NextResponse.json(
@@ -103,7 +124,6 @@ export async function POST(
     const url = r.savedUrls[0];
     const fileName = url.split('/').pop() || '';
 
-    // 3) 写素材库 + 更新 task
     await prisma.asset.create({
       data: {
         type: platform === 'xiaohongshu' ? '封面图' : '商品首图',
@@ -123,6 +143,10 @@ export async function POST(
           prompt: parsed.prompt,
           size: finalSize,
           quality: bodyQuality,
+          aspectRatio: finalAspectRatio,
+          mode: bodyMode,
+          sourceImageUrl: bodySourceImageUrl ? bodySourceImageUrl.slice(0, 200) : null,
+          sourceImageBase64Len: bodySourceImageBase64?.length ?? 0,
         }),
         output: JSON.stringify({ url, via: r.via, adapterSlug: r.adapterSlug }),
         model: r.via === 'adapter' ? `adapter:${r.adapterSlug}` : (r.model ?? 'unknown'),

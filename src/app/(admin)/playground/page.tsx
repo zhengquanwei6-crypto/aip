@@ -1,12 +1,6 @@
-// v0.11 B8 · /playground · server component
+// v0.11 B8 + B9 · /playground · server component
 //
-// 一次性拉：
-//   - LLM keys 池（provider='llm', active 优先）
-//   - IMAGE keys 池（provider='image', active 优先）
-//   - 6 个 adapter 的 sizes/qualities（B7 已落地，从 Setting 表 adapter:* 行 JSON 读）
-//   - 8 个 agents 列表（agent-types AGENTS）
-//
-// 全部传给 PlaygroundClient（client）一次渲染，三 tab 切换 0 网络请求。
+// v0.11 B9：loadAdapterPool 一并读 aspectRatios + supportsImg2Img
 
 import type { Metadata } from 'next';
 import { prisma } from '@/lib/db';
@@ -16,6 +10,7 @@ import {
   ADAPTER_SETTING_PREFIX,
   type SizePreset,
   type QualityPreset,
+  type AspectRatioPreset,
 } from '@/lib/adapter-types';
 import PlaygroundClient, {
   type ApiKeyRow,
@@ -27,7 +22,7 @@ export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'AI 对话 · Playground',
-  description: 'B8 即时调用工作台：LLM 对话 / 图片生成 / Agent 对话三 tab，复用 B1 池 + B7 sizes/qualities + 8 agents',
+  description: 'B8 + B9 即时调用工作台：LLM 对话 / 图片生成（t2i + i2i） / Agent 对话三 tab',
 };
 
 async function loadKeys(provider: 'llm' | 'image'): Promise<ApiKeyRow[]> {
@@ -66,12 +61,15 @@ async function loadAdapterPool(): Promise<AdapterPoolItem[]> {
         const a = parsed.data;
         const sizes: SizePreset[] = Array.isArray(a.sizes) ? a.sizes : [];
         const qualities: QualityPreset[] = Array.isArray(a.qualities) ? a.qualities : [];
+        const aspectRatios: AspectRatioPreset[] = Array.isArray(a.aspectRatios) ? a.aspectRatios : [];
         out.push({
           slug,
           name: a.name ?? slug,
           enabled: a.enabled !== false,
           sizes,
           qualities,
+          aspectRatios,
+          supportsImg2Img: a.supportsImg2Img === true,
         });
       } catch {
         /* skip */

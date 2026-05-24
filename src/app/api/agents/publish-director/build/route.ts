@@ -1,73 +1,11 @@
 /**
- * /api/agents/publish-director/build · v0.9 b3 (+ v0.9.2 b1 async builders + v0.11 B7 size/quality)
+ * /api/agents/publish-director/build · v0.9 b3 (+ v0.9.2 b1 async builders + v0.11 B7 size/quality + B9 i2i/aspectRatio)
  *
- * v0.9 b3 (B1)：
- *   - 新增 body.taskId：由 /today 任务卡触发时传入
- *   - Post.create / Product.create 时把 taskId 写进去（schema 已有）
- *   - step3 全成功 + regenerate==='all' 时调 prisma.task.update：
- *       status='generated', title=titles[0]/title, body, coverText, imageUrl=assets[0]?.url
- *   - 失败容忍：task.update 失败不影响整体响应（会写到响应里 taskUpdateError 字段）
- *
- * v0.9.2 b1：
- *   - step1 改用 buildContentMessagesAsync，让 /prompts 编辑器编辑的
- *     xiaohongshu:case / xiaohongshu:tutorial / xianyu:product 真正影响下一次生成。
- *
- * v0.11 B7（图片尺寸/质量预设池）：
- *   - imageOptions 新增 size?: string · quality?: string
- *   - step3 调 runImageGenerate 时透传：runImageGenerate 内 resolveSize/resolveQuality 按
- *     当前 IMAGE_DEFAULT_ADAPTER 的 sizes/qualities 池收敛
- *   - LLM step2 输出的 recommendedSize 仍存在，但**仅作回显**：用户在 imageOptions 选了 size 时
- *     用户优先（与 stylePresetSize 同优先级行为；避免出现 LLM 推荐 1024x1536 但用户选 2K 的不一致）
- *
- * "先文案再图片"链式编排（含图片选项扩展）：
- *   step 1: buildContentMessagesAsync → generateText(json) → content（小红书/闲鱼 schema）
- *   step 2: 用 photo-director systemPrompt + step1 的 title/coverText/body
- *           + imageOptions (风格/色调/语言/数量/系列) → generateText(json)
- *           → stylePrompt（单图）或 series（N 条 promptEn）
- *   step 3: 若 autoImage===true，按 imageOptions.n 串行调 runImageGenerate N 次
- *           - 系列模式：每次用 seriesPrompts[i].promptEn
- *           - 非系列 / 同 prompt：每次用同一 promptEn
- *           - 单图：兼容老逻辑
- *
- * regenerate 控制：
- *   'all'      ← 默认：跑 1+2+3
- *   'content'  ← 只跑 1
- *   'style'    ← 跑 2
- *   'image'    ← 跑 3（用 cachedContent + cachedStylePrompt）
- *
- * v0.9 b2 imageOptions：
- *   {
- *     autoImage?: boolean,        // 默认 true
- *     stylePresetId?: string,     // ImagePreset.id
- *     styleKeywords?: string,     // 与 preset 二选一，preset 优先
- *     negativePrompt?: string,
- *     primaryColor?: string,      // "#F5C842 暖黄"
- *     accentColor?: string,
- *     textLanguage?: 'zh' | 'en', // 默认 'en'
- *     n?: number,                  // 1-4，默认 1
- *     sameStyle?: boolean,         // n>1 时生效，默认 true
- *     asSeries?: boolean,          // n>1 + sameStyle 时生效，默认 true
- *     // v0.11 B7
- *     size?: string,               // 来自 adapter.sizes[*].value
- *     quality?: string,            // 来自 adapter.qualities[*].value
- *   }
- *
- * Response（v0.9 b2 改造）：
- *   - assets: 数组形式（n=1 时也是 [single]）
- *   - asset: 兼容字段（=assets[0] 或 null）
- *   - imageErrors: [{ scene?, error }]，单张失败不阻塞其他
- *   - seriesPlan: LLM 系列总编排（系列模式才有）
- *
- * 错误容忍：
- *   - step1 失败 → 整体 500
- *   - step2 失败 → 返回 step1 content + stylePrompt:null
- *   - step3 部分失败 → 200 + assets + imageErrors[]
- *   - 系列模式 LLM 没正确输出 seriesPrompts[] → 降级为 N 次同 promptEn，trace 提示
- *
- * 落库（仅 step1/2/3 都成功的 'all' 全链）：
- *   prisma.aIOutput × 2
- *   prisma.post.create / prisma.product.create
- *   prisma.asset.create × N（每张图独立）
+ * v0.11 B9（图生图 + 比例预设）：
+ *   - imageOptions 新增 mode? sourceImageUrl? sourceImageBase64? aspectRatio?
+ *   - step3 调 runImageGenerate 时透传：mode/sourceImageUrl/sourceImageBase64/aspectRatio
+ *   - 系列模式（n≥2 + sameStyle + asSeries）i2i 仅对**第一张**应用源图；后续仍按系列 promptEn 但 mode='i2i' 共享同源图
+ *   - i2i + ImagePreset.size 冲突：用户在 imageOptions.size / aspectRatio 选了具体值时**优先于** preset/style.recommendedSize
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -75,7 +13,7 @@ import { prisma } from '@/lib/db';
 import { findAgent } from '@/lib/agent-types';
 import { generateText, extractJSON, type ChatMessage } from '@/lib/ai/text';
 import { buildContentMessagesAsync } from '@/lib/ai/prompts';
-import { runImageGenerate } from '@/lib/image-runner';
+import { runImageGenerate, type ImageMode } from '@/lib/image-runner';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -97,10 +35,14 @@ interface ImageOptions {
   n?: number;
   sameStyle?: boolean;
   asSeries?: boolean;
-  /** v0.11 B7：用户从 adapter.sizes 池里选的尺寸字符串（"1024x1024" / "2048x2048" / "768x1024" 等）*/
+  /** v0.11 B7 */
   size?: string;
-  /** v0.11 B7：用户从 adapter.qualities 池里选的质量字符串（"low"/"medium"/"high" / "standard"/"hd"）*/
   quality?: string;
+  /** v0.11 B9 */
+  aspectRatio?: string;
+  mode?: ImageMode;
+  sourceImageUrl?: string;
+  sourceImageBase64?: string;
 }
 
 interface BuildBody {
@@ -110,17 +52,10 @@ interface BuildBody {
   topic?: string;
   audience?: string;
   tone?: string;
-  /** 老字段保留：等价于 imageOptions.autoImage */
   autoImage?: boolean;
   imageOptions?: ImageOptions;
   regenerate?: Regenerate;
-  /**
-   * v0.9 b3：可选关联 task。给定后：
-   *   - Post.create / Product.create 带 taskId
-   *   - 全链成功后反写 task（status='generated', title/body/coverText/imageUrl）
-   */
   taskId?: string;
-  /** 重生时复用上次结果 */
   cachedContent?: any;
   cachedStylePrompt?: {
     styleSummary?: string;
@@ -130,7 +65,6 @@ interface BuildBody {
     seriesPrompts?: { scene?: string; promptEn?: string }[];
     seriesPlan?: string;
   };
-  /** 用户手改后的中文 styleSummary，作为 hint */
   styleSummaryHint?: string;
 }
 
@@ -141,12 +75,10 @@ interface SeriesItem {
 
 interface StylePrompt {
   styleSummary: string;
-  /** 单图模式 */
   promptEn: string;
   negativeEn: string;
   recommendedSize: SizeStr;
   tips?: string[];
-  /** 系列模式 */
   seriesPrompts?: SeriesItem[];
   seriesPlan?: string;
 }
@@ -155,13 +87,12 @@ interface AssetEntry {
   id?: string;
   url?: string;
   scene?: string;
-  /** 仅当本张失败时填 */
   error?: string;
-  /** 仅当本张失败时填（精简 trace） */
   trace?: any;
 }
 
 const VALID_SIZES: SizeStr[] = ['1024x1024', '1024x1536', '1536x1024'];
+const MAX_BASE64_BYTES = 5 * 1024 * 1024 * 4 / 3;
 
 function defaultSize(platform?: Platform, contentType?: string): SizeStr {
   if (platform === 'xianyu' || contentType === '商品' || contentType === '商品图') return '1024x1024';
@@ -176,14 +107,16 @@ function clampN(n: any, fallback = 1): number {
   return Math.floor(v);
 }
 
-/** 从 ImagePreset 表合并 styleKeywords / negativePrompt / size */
+function readMode(v: unknown): ImageMode {
+  return v === 'i2i' ? 'i2i' : 't2i';
+}
+
 async function mergePresetIntoOptions(opts: ImageOptions | undefined): Promise<ImageOptions & { _presetSize?: SizeStr }> {
   const base: ImageOptions & { _presetSize?: SizeStr } = { ...(opts ?? {}) };
   if (!base.stylePresetId) return base;
   try {
     const preset = await prisma.imagePreset.findUnique({ where: { id: base.stylePresetId } });
     if (!preset) return base;
-    // preset 优先于用户文本
     base.styleKeywords = preset.styleKeywords || base.styleKeywords;
     if (preset.negativePrompt) {
       base.negativePrompt = base.negativePrompt
@@ -194,7 +127,7 @@ async function mergePresetIntoOptions(opts: ImageOptions | undefined): Promise<I
       base._presetSize = preset.size as SizeStr;
     }
   } catch {
-    // ignore
+    /* ignore */
   }
   return base;
 }
@@ -224,16 +157,16 @@ function summarizeForStyle(content: any, body: BuildBody, opts: ImageOptions): s
     }
   }
 
-  // ─── v0.9 b2 imageOptions 段 ───
   const imgLines: string[] = [];
   if (opts.styleKeywords) imgLines.push(`styleKeywords: ${opts.styleKeywords}`);
   if (opts.negativePrompt) imgLines.push(`negativePrompt: ${opts.negativePrompt}`);
   if (opts.primaryColor) imgLines.push(`primaryColor: ${opts.primaryColor}`);
   if (opts.accentColor) imgLines.push(`accentColor: ${opts.accentColor}`);
   imgLines.push(`textLanguage: ${opts.textLanguage || 'en'}`);
-  // v0.11 B7：把 size/quality 也喂给 LLM 做参考（不强求 LLM 输出，仅作 hint）
   if (opts.size) imgLines.push(`size(用户从 adapter 池选): ${opts.size}`);
   if (opts.quality) imgLines.push(`quality(用户从 adapter 池选): ${opts.quality}`);
+  if (opts.aspectRatio) imgLines.push(`aspectRatio(用户从 adapter 池选): ${opts.aspectRatio}`);
+  if (opts.mode === 'i2i') imgLines.push(`mode: i2i（请把 promptEn 写成"基于源图改..."的指令）`);
   const n = clampN(opts.n, 1);
   imgLines.push(`n: ${n}`);
   imgLines.push(`sameStyle: ${opts.sameStyle !== false}`);
@@ -278,7 +211,6 @@ async function runStyleStep(
   const r = await generateText({
     messages,
     temperature: 0.5,
-    // 系列模式下 token 量更大（N × promptEn），相应放大
     maxTokens: wantSeries ? 1600 : 700,
     responseFormat: 'json',
   });
@@ -289,25 +221,21 @@ async function runStyleStep(
     return { ok: false, error: 'style LLM 输出不是合法 JSON', model: r.model, raw: r.content };
   }
 
-  // 解析 styleSummary
   const styleSummary =
     typeof parsed.styleSummary === 'string' && parsed.styleSummary.trim()
       ? parsed.styleSummary
       : '';
 
-  // 解析 negativeEn
   const negativeEn =
     typeof parsed.negativeEn === 'string' && parsed.negativeEn.trim()
       ? parsed.negativeEn
       : 'low quality, blurry, watermark, text artifacts, cluttered, distorted';
 
-  // 解析 recommendedSize
   let size: SizeStr = defaultSize(body.platform, body.contentType);
   if (typeof parsed.recommendedSize === 'string' && (VALID_SIZES as string[]).includes(parsed.recommendedSize)) {
     size = parsed.recommendedSize as SizeStr;
   }
 
-  // 解析系列
   let seriesPrompts: SeriesItem[] | undefined;
   let seriesPlan: string | undefined;
   if (wantSeries) {
@@ -328,7 +256,6 @@ async function runStyleStep(
     if (typeof parsed.seriesPlan === 'string') seriesPlan = parsed.seriesPlan;
   }
 
-  // 单图 promptEn fallback：系列模式如果有 seriesPrompts 就拿第一条做兼容字段
   let promptEn = '';
   if (typeof parsed.promptEn === 'string' && parsed.promptEn.trim()) {
     promptEn = parsed.promptEn;
@@ -336,7 +263,6 @@ async function runStyleStep(
     promptEn = seriesPrompts[0].promptEn;
   }
 
-  // 校验：单图模式下必须有 promptEn 与 styleSummary
   if (!wantSeries && (!promptEn || !styleSummary)) {
     return {
       ok: false,
@@ -345,7 +271,6 @@ async function runStyleStep(
       raw: r.content,
     };
   }
-  // 系列模式：seriesPrompts 缺失或 styleSummary 缺失都视为软失败 → fallback 由调用方处理
   if (wantSeries && !styleSummary) {
     return {
       ok: false,
@@ -368,16 +293,17 @@ async function runStyleStep(
 }
 
 /**
- * 串行执行 N 次出图，每张失败独立记录。
- * - assets 始终是 N 长度（失败的位置 url 缺，error 填）
- *
- * v0.11 B7：传入 size / quality（来自 imageOptions），透传 runImageGenerate
+ * v0.11 B9：runImagesSerial 透传 mode + sourceImageUrl + sourceImageBase64 + aspectRatio
  */
 async function runImagesSerial(opts: {
   prompts: { promptEn: string; scene?: string }[];
   negativeEn: string;
   size: string;
   quality?: string;
+  aspectRatio?: string;
+  mode?: ImageMode;
+  sourceImageUrl?: string;
+  sourceImageBase64?: string;
   platform?: Platform;
   category?: string | null;
 }): Promise<{ assets: AssetEntry[]; errors: { idx: number; scene?: string; error: string }[] }> {
@@ -392,7 +318,13 @@ async function runImagesSerial(opts: {
         prompt: promptForApi,
         size: opts.size,
         ...(opts.quality !== undefined ? { quality: opts.quality } : {}),
+        ...(opts.aspectRatio !== undefined ? { aspectRatio: opts.aspectRatio } : {}),
         n: 1,
+        ...(opts.mode === 'i2i' ? {
+          mode: 'i2i' as const,
+          ...(opts.sourceImageUrl ? { sourceImageUrl: opts.sourceImageUrl } : {}),
+          ...(opts.sourceImageBase64 ? { sourceImageBase64: opts.sourceImageBase64 } : {}),
+        } : {}),
         extra: { sceneTag: p.scene },
       });
       if (ir.ok && ir.savedUrls.length > 0) {
@@ -413,7 +345,7 @@ async function runImagesSerial(opts: {
           });
           assetId = a.id;
         } catch {
-          // 忽略落库失败，仍把 url 返回给前端
+          /* ignore */
         }
         assets.push({ id: assetId, url, scene: p.scene });
       } else {
@@ -464,7 +396,7 @@ async function persistContentAndStyle(args: {
           contentSummary: typeof args.content?.title === 'string'
             ? args.content.title
             : Array.isArray(args.content?.titles) ? args.content.titles[0] : '',
-          imageOptions: args.body.imageOptions ?? null,
+          imageOptions: redactImageOptionsForLog(args.body.imageOptions),
         }),
         output: JSON.stringify(args.stylePrompt),
         model: args.styleModel ?? 'unknown',
@@ -510,15 +442,20 @@ async function persistContentAndStyle(args: {
   return Promise.allSettled(tasks);
 }
 
-/**
- * v0.9 b3：成功后反写 task。
- *   - status = 'generated'
- *   - title = titles[0]/title
- *   - body = body / description
- *   - coverText = coverText
- *   - imageUrl = 第一张成功的 asset.url（如有）
- * 失败容忍：内部 try/catch，错误返回字符串便于响应记录。
- */
+/** v0.11 B9：图片选项落库时把 sourceImageBase64 替换成长度（避免 AIOutput 表巨大） */
+function redactImageOptionsForLog(io: ImageOptions | null | undefined): any {
+  if (!io) return null;
+  const out: any = { ...io };
+  if (typeof io.sourceImageBase64 === 'string') {
+    delete out.sourceImageBase64;
+    out.sourceImageBase64Len = io.sourceImageBase64.length;
+  }
+  if (typeof io.sourceImageUrl === 'string') {
+    out.sourceImageUrl = io.sourceImageUrl.slice(0, 200);
+  }
+  return out;
+}
+
 async function writeBackTask(opts: {
   taskId: string;
   platform?: Platform;
@@ -567,15 +504,31 @@ export async function POST(req: NextRequest) {
     }
     const regenerate: Regenerate = body.regenerate || 'all';
 
-    // imageOptions 合并 + preset 注入
     const rawOpts: ImageOptions = body.imageOptions ?? {};
     const opts = await mergePresetIntoOptions(rawOpts);
     const autoImage =
       typeof opts.autoImage === 'boolean'
         ? opts.autoImage
-        : body.autoImage !== false; // 缺省 true（向后兼容）
+        : body.autoImage !== false;
     const n = clampN(opts.n, 1);
     const wantSeries = n >= 2 && opts.sameStyle !== false && opts.asSeries !== false;
+    const mode = readMode(opts.mode);
+
+    // i2i 校验（autoImage 才校；不开自动出图也允许传，方便前端预填）
+    if (autoImage && mode === 'i2i') {
+      if (!opts.sourceImageUrl && !opts.sourceImageBase64) {
+        return NextResponse.json(
+          { ok: false, error: 'i2i 模式需在 imageOptions 提供 sourceImageUrl 或 sourceImageBase64' },
+          { status: 400 },
+        );
+      }
+      if (opts.sourceImageBase64 && opts.sourceImageBase64.length > MAX_BASE64_BYTES) {
+        return NextResponse.json(
+          { ok: false, error: '源图过大（>5MB）' },
+          { status: 413 },
+        );
+      }
+    }
 
     let content: any = body.cachedContent ?? null;
     let contentModel: string | undefined;
@@ -601,7 +554,7 @@ export async function POST(req: NextRequest) {
     let imageTrace: any = null;
     let imageFallbackNote: string | null = null;
 
-    // ─────────────── step 1: 文案 ───────────────
+    // step 1: 文案
     if (regenerate === 'all' || regenerate === 'content' || !content) {
       const keywords = await prisma.keyword.findMany({
         where: { category: body.category || 'Logo', platform: body.platform },
@@ -609,7 +562,6 @@ export async function POST(req: NextRequest) {
       const pricePackages = await prisma.pricePackage.findMany({
         where: { category: body.category || 'Logo' },
       });
-      // v0.9.2 b1：async builder 接通 /prompts 模板编辑器
       const messages = await buildContentMessagesAsync({
         platform: body.platform,
         category: body.category || 'Logo',
@@ -672,7 +624,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ─────────────── step 2: image prompt ───────────────
+    // step 2: image prompt
     if (
       regenerate === 'all' ||
       regenerate === 'style' ||
@@ -691,7 +643,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 如果用户预设里指定了 size，覆盖 LLM 推断的 size
     if (stylePrompt && opts._presetSize) {
       stylePrompt.recommendedSize = opts._presetSize;
     }
@@ -712,32 +663,27 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ─────────────── step 3: image（N 张串行） ───────────────
+    // step 3: image
     if (
       autoImage &&
       stylePrompt &&
       (regenerate === 'all' || regenerate === 'image')
     ) {
-      // 构造 N 条 prompt
       const prompts: { promptEn: string; scene?: string }[] = [];
       if (wantSeries && stylePrompt.seriesPrompts && stylePrompt.seriesPrompts.length > 0) {
-        // 系列模式正常路径：取前 n 条；不足则末位重复（不应该发生）
         for (let i = 0; i < n; i++) {
           const item = stylePrompt.seriesPrompts[i] || stylePrompt.seriesPrompts[stylePrompt.seriesPrompts.length - 1];
           prompts.push({ promptEn: item.promptEn, scene: item.scene });
         }
       } else if (wantSeries && (!stylePrompt.seriesPrompts || stylePrompt.seriesPrompts.length === 0)) {
-        // 降级：用户要系列但 LLM 没给 series → 用同一 promptEn N 次
         imageFallbackNote = '系列模式 LLM 未返回 seriesPrompts[]，已降级为 N 次同 promptEn';
         const fallback = stylePrompt.promptEn || '';
         if (!fallback) {
-          // 没 promptEn 也没 seriesPrompts，直接跳出 step3
           imageErrors.push({ idx: 0, error: 'LLM 既未返回 seriesPrompts[] 也未返回 promptEn' });
         } else {
           for (let i = 0; i < n; i++) prompts.push({ promptEn: fallback });
         }
       } else {
-        // 单图或同 prompt
         const single = stylePrompt.promptEn || '';
         if (single) {
           for (let i = 0; i < n; i++) prompts.push({ promptEn: single });
@@ -745,7 +691,6 @@ export async function POST(req: NextRequest) {
       }
 
       if (prompts.length > 0) {
-        // v0.11 B7：用户在 imageOptions 选了 size 时优先用户；否则用 stylePrompt.recommendedSize
         const finalSize: string = (typeof opts.size === 'string' && opts.size.trim())
           ? opts.size.trim()
           : stylePrompt.recommendedSize;
@@ -753,30 +698,35 @@ export async function POST(req: NextRequest) {
           typeof opts.quality === 'string' && opts.quality.trim()
             ? opts.quality.trim()
             : undefined;
+        const finalAspect: string | undefined =
+          typeof opts.aspectRatio === 'string' && opts.aspectRatio.trim()
+            ? opts.aspectRatio.trim()
+            : undefined;
         const r = await runImagesSerial({
           prompts,
           negativeEn: stylePrompt.negativeEn,
           size: finalSize,
           ...(finalQuality !== undefined ? { quality: finalQuality } : {}),
+          ...(finalAspect !== undefined ? { aspectRatio: finalAspect } : {}),
+          mode,
+          ...(opts.sourceImageUrl ? { sourceImageUrl: opts.sourceImageUrl } : {}),
+          ...(opts.sourceImageBase64 ? { sourceImageBase64: opts.sourceImageBase64 } : {}),
           platform: body.platform,
           category: body.category ?? null,
         });
         assets = r.assets;
         imageErrors = imageErrors.concat(r.errors);
-        // 取第一张失败的 trace 作为整体 imageTrace（前端展示用）
         const firstErr = assets.find((a) => a.error && a.trace);
         if (firstErr) imageTrace = firstErr.trace;
       }
     }
 
-    // ─────────────── 落库 ───────────────
     if (
       regenerate === 'all' &&
       content &&
       stylePrompt &&
       !stylePromptError
     ) {
-      // 文案 + style + post/product 落一份；asset 已在 runImagesSerial 内逐张落
       await persistContentAndStyle({
         body,
         content,
@@ -785,7 +735,6 @@ export async function POST(req: NextRequest) {
         styleModel,
       });
     } else if (regenerate === 'image' && stylePrompt && assets.some((a) => a.url)) {
-      // image 重生时只补 image_prompt AIOutput（不重落 Post）
       try {
         await prisma.aIOutput.create({
           data: {
@@ -793,22 +742,20 @@ export async function POST(req: NextRequest) {
             input: JSON.stringify({
               via: 'publish-director:image',
               platform: body.platform,
-              imageOptions: body.imageOptions ?? null,
+              imageOptions: redactImageOptionsForLog(body.imageOptions),
             }),
             output: JSON.stringify(stylePrompt),
             model: styleModel ?? 'unknown',
           },
         });
       } catch {
-        // 忽略
+        /* ignore */
       }
     }
 
-    // 兼容字段：asset = 第一张成功的 url
     const firstOk = assets.find((a) => a.url);
     const legacyAsset = firstOk ? { id: firstOk.id, url: firstOk.url } : null;
 
-    // v0.9 b3：若关联了 task 且全链成功，反写 task
     let taskUpdateError: string | null = null;
     let taskUpdated = false;
     if (

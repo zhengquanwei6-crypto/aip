@@ -1,45 +1,36 @@
 /**
- * v0.11 B8 · /api/playground/image/generate
+ * v0.11 B8 + B9 · /api/playground/image/generate
  *
- * 即时调用图片生成端点。复用 runImageGenerate（B1 池 + B7 sizes/qualities），
- * 但允许用户：
- *   - 显式指定 keyId（通过 IMAGE_DEFAULT_ADAPTER 切换不影响 baseUrl，但可在前端展示选哪条 image key）
- *   - 显式指定 adapterSlug（切换 4router / kie / dall-e 等，不写 IMAGE_DEFAULT_ADAPTER）
- *   - 透传 size / quality / n / prompt
- *
- * 写库：AIOutput.type='playground:image'，每张图新建 Asset 行（与 /api/image/generate 行为一致）
- *
- * 0 schema 改 · 0 缓存（force-dynamic）
- *
- * 注：runImageGenerate 内部读 IMAGE_DEFAULT_ADAPTER 选 adapter，
- *     B8 引入 adapterSlug 时通过临时覆盖 Setting 不可行（会污染并发请求）。
- *     最稳的做法是在 runImageGenerate 之前临时把 Setting 改回去——但这会 race。
- *     折中：playground 在 body.adapterSlug 给定时直接通过 prisma.setting.update 写
- *     IMAGE_DEFAULT_ADAPTER 到该值（"切换"语义），后续 publish-director / /image 全部跟随。
- *     **如果要实现"仅本次请求用 X adapter，不影响全局默认"，需要改 runImageGenerate 加 opts.adapterSlug
- *     参数 — 那是 v0.12+ 的事**。本批保持简化。
+ * v0.11 B9：body 加 mode? sourceImageUrl? sourceImageBase64? aspectRatio?
+ *   - i2i 校验：与 /api/image/generate 一致
+ *   - 单独 endpoint，AIOutput.type='playground:image'
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { runImageGenerate } from '@/lib/image-runner';
+import { runImageGenerate, type ImageMode } from '@/lib/image-runner';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
+const MAX_BASE64_BYTES = 5 * 1024 * 1024 * 4 / 3;
+
 interface PlaygroundImageRequest {
-  /** 切换 IMAGE_DEFAULT_ADAPTER 到该 slug（持久写 Setting；后续 /image 等也会用此） */
   adapterSlug?: string;
-  /** 仅作元信息记录到 AIOutput.input；实际下发由 runImageGenerate 走 IMAGE_DEFAULT_ADAPTER 池路径 */
   keyId?: string;
   prompt?: string;
   size?: string;
   quality?: string;
+  aspectRatio?: string;
   n?: number;
   platform?: string;
   category?: string;
   imageType?: string;
+  // v0.11 B9
+  mode?: 't2i' | 'i2i';
+  sourceImageUrl?: string;
+  sourceImageBase64?: string;
 }
 
 function clampInt(v: unknown, min: number, max: number, fallback: number): number {
@@ -50,8 +41,11 @@ function clampInt(v: unknown, min: number, max: number, fallback: number): numbe
   return n;
 }
 
+function readMode(v: unknown): ImageMode {
+  return v === 'i2i' ? 'i2i' : 't2i';
+}
+
 async function maybeSwitchAdapter(slug: string): Promise<void> {
-  // 仅当与当前不同 + 非空时才更新（避免 updatedAt 噪音）
   const cur = await prisma.setting.findUnique({ where: { key: 'IMAGE_DEFAULT_ADAPTER' } });
   if ((cur?.value ?? '').trim() === slug) return;
   await prisma.setting.upsert({
@@ -84,20 +78,45 @@ export async function POST(req: NextRequest) {
       typeof body.size === 'string' && body.size.trim() ? body.size.trim() : undefined;
     const quality: string | undefined =
       typeof body.quality === 'string' && body.quality.trim() ? body.quality.trim() : undefined;
+    const aspectRatio: string | undefined =
+      typeof body.aspectRatio === 'string' && body.aspectRatio.trim() ? body.aspectRatio.trim() : undefined;
     const n = clampInt(body.n, 1, 4, 1);
     const platform = typeof body.platform === 'string' ? body.platform : undefined;
     const category = typeof body.category === 'string' ? body.category : undefined;
     const imageType = typeof body.imageType === 'string' && body.imageType.trim() ? body.imageType.trim() : '封面图';
+    const mode = readMode(body.mode);
+    const sourceImageUrl =
+      typeof body.sourceImageUrl === 'string' && body.sourceImageUrl.trim() ? body.sourceImageUrl.trim() : undefined;
+    const sourceImageBase64 =
+      typeof body.sourceImageBase64 === 'string' && body.sourceImageBase64.trim()
+        ? body.sourceImageBase64.trim()
+        : undefined;
+
+    if (mode === 'i2i' && !sourceImageUrl && !sourceImageBase64) {
+      return NextResponse.json(
+        { ok: false, error: 'i2i 模式需提供 sourceImageUrl 或 sourceImageBase64' },
+        { status: 400 },
+      );
+    }
+    if (sourceImageBase64 && sourceImageBase64.length > MAX_BASE64_BYTES) {
+      return NextResponse.json(
+        { ok: false, error: `源图过大（>5MB）：base64 长度 ${sourceImageBase64.length}` },
+        { status: 413 },
+      );
+    }
 
     const r = await runImageGenerate({
       prompt,
       ...(size !== undefined ? { size } : {}),
       ...(quality !== undefined ? { quality } : {}),
+      ...(aspectRatio !== undefined ? { aspectRatio } : {}),
       n,
+      mode,
+      ...(sourceImageUrl !== undefined ? { sourceImageUrl } : {}),
+      ...(sourceImageBase64 !== undefined ? { sourceImageBase64 } : {}),
     });
 
     if (!r.ok || r.savedUrls.length === 0) {
-      // 失败也写 AIOutput 便于排查
       try {
         await prisma.aIOutput.create({
           data: {
@@ -106,10 +125,9 @@ export async function POST(req: NextRequest) {
               via: 'playground',
               keyId: body.keyId ?? null,
               adapterSlug: r.adapterSlug ?? body.adapterSlug ?? null,
-              prompt,
-              size,
-              quality,
-              n,
+              prompt, size, quality, aspectRatio, n, mode,
+              sourceImageUrl: sourceImageUrl ? sourceImageUrl.slice(0, 200) : null,
+              sourceImageBase64Len: sourceImageBase64?.length ?? 0,
             }),
             output: JSON.stringify({ error: r.error || '未返回图片', via: r.via, trace: r.trace }),
             model: r.via === 'adapter' ? `adapter:${r.adapterSlug}` : (r.model ?? 'unknown'),
@@ -131,7 +149,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 写 Asset 多张 + 单条 AIOutput
     const assets = [];
     for (const url of r.savedUrls) {
       const fileName = url.split('/').pop() || '';
@@ -156,13 +173,10 @@ export async function POST(req: NextRequest) {
           via: 'playground',
           keyId: body.keyId ?? null,
           adapterSlug: r.adapterSlug ?? body.adapterSlug ?? null,
-          prompt,
-          size,
-          quality,
-          n,
-          platform,
-          category,
-          imageType,
+          prompt, size, quality, aspectRatio, n, mode,
+          sourceImageUrl: sourceImageUrl ? sourceImageUrl.slice(0, 200) : null,
+          sourceImageBase64Len: sourceImageBase64?.length ?? 0,
+          platform, category, imageType,
         }),
         output: JSON.stringify({
           urls: r.savedUrls,

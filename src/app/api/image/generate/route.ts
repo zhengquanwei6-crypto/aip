@@ -1,28 +1,27 @@
 /**
- * /api/image/generate · 图片生成（重构）
+ * /api/image/generate · 图片生成（v0.11 B9 加 mode/sourceImageUrl/sourceImageBase64/aspectRatio）
  *
- * 改动：
- *   - 走 lib/image-runner 统一入口（先 adapter，回退 legacy）
- *   - 返回结构与旧版兼容（asset、ok、error）
- *   - 多图：legacy 默认 1 张；adapter 可由用户在 extra.n 指定
- *
- * v0.8 Batch 5：trace 字段在 success/fail 都返回（精简版，无 API key）
- *   - success：{ ok, asset, assets, via, adapterSlug, durationMs, trace }
- *   - fail   ：{ ok:false, error, via, adapterSlug, trace }
- *
- * v0.11 B7：尺寸 / 质量预设
- *   - body 接收 size?: string · quality?: string（来自 ImageStudio 选择器）
- *   - 透传给 runImageGenerate；不在此层做合法性校验（runImageGenerate 内 resolveSize 已 fallback）
- *   - 老调用（无 size/quality）→ runImageGenerate 自动用每 adapter 的 sizes[0]/qualities[0]
+ * v0.11 B7：body 接 size? / quality?
+ * v0.11 B9：body 加
+ *   - mode?: 't2i' | 'i2i'（默认 't2i'）
+ *   - sourceImageUrl?: string（外链或 /uploads/... 相对路径）
+ *   - sourceImageBase64?: string（裸 base64，超过 5MB 拒绝）
+ *   - aspectRatio?: string（"1:1" / "16:9" 等）
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { runImageGenerate } from '@/lib/image-runner';
+import { runImageGenerate, type ImageMode } from '@/lib/image-runner';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
+
+const MAX_BASE64_BYTES = 5 * 1024 * 1024 * 4 / 3; // ≈ 6.67MB base64 = 5MB binary 上限
+
+function readMode(v: unknown): ImageMode {
+  return v === 'i2i' ? 'i2i' : 't2i';
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,23 +33,45 @@ export async function POST(req: NextRequest) {
     const platform: string | undefined = body.platform;
     const category: string | undefined = body.category;
     const imageType: string = body.imageType || '封面图';
-    // v0.11 B7：size 现在按 adapter 池决定缺省（runImageGenerate 内 resolveSize），不再硬写 1024xN
     const size: string | undefined =
-      typeof body.size === 'string' && body.size.trim()
-        ? body.size.trim()
-        : undefined;
-    // v0.11 B7：quality 同上
+      typeof body.size === 'string' && body.size.trim() ? body.size.trim() : undefined;
     const quality: string | undefined =
-      typeof body.quality === 'string' && body.quality.trim()
-        ? body.quality.trim()
-        : undefined;
+      typeof body.quality === 'string' && body.quality.trim() ? body.quality.trim() : undefined;
+    const aspectRatio: string | undefined =
+      typeof body.aspectRatio === 'string' && body.aspectRatio.trim() ? body.aspectRatio.trim() : undefined;
     const n: number = Math.min(Math.max(Number(body.n) || 1, 1), 4);
+    const mode = readMode(body.mode);
+    const sourceImageUrl: string | undefined =
+      typeof body.sourceImageUrl === 'string' && body.sourceImageUrl.trim()
+        ? body.sourceImageUrl.trim()
+        : undefined;
+    const sourceImageBase64: string | undefined =
+      typeof body.sourceImageBase64 === 'string' && body.sourceImageBase64.trim()
+        ? body.sourceImageBase64.trim()
+        : undefined;
+
+    if (mode === 'i2i' && !sourceImageUrl && !sourceImageBase64) {
+      return NextResponse.json(
+        { ok: false, error: 'i2i 模式需提供 sourceImageUrl 或 sourceImageBase64' },
+        { status: 400 },
+      );
+    }
+    if (sourceImageBase64 && sourceImageBase64.length > MAX_BASE64_BYTES) {
+      return NextResponse.json(
+        { ok: false, error: `源图过大（>5MB）：base64 长度 ${sourceImageBase64.length}` },
+        { status: 413 },
+      );
+    }
 
     const r = await runImageGenerate({
       prompt,
       ...(size !== undefined ? { size } : {}),
       ...(quality !== undefined ? { quality } : {}),
+      ...(aspectRatio !== undefined ? { aspectRatio } : {}),
       n,
+      mode,
+      ...(sourceImageUrl !== undefined ? { sourceImageUrl } : {}),
+      ...(sourceImageBase64 !== undefined ? { sourceImageBase64 } : {}),
       extra: body.extra ?? {},
     });
 
@@ -68,7 +89,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 写入素材库（每张一条）+ AIOutput 单条记录
     const assets = [];
     for (const url of r.savedUrls) {
       const fileName = url.split('/').pop() || '';
@@ -88,7 +108,12 @@ export async function POST(req: NextRequest) {
     await prisma.aIOutput.create({
       data: {
         type: 'image',
-        input: JSON.stringify({ prompt, size, quality, platform, category, imageType, n }),
+        input: JSON.stringify({
+          prompt, size, quality, aspectRatio, mode,
+          sourceImageUrl: sourceImageUrl ? sourceImageUrl.slice(0, 200) : null,
+          sourceImageBase64Len: sourceImageBase64?.length ?? 0,
+          platform, category, imageType, n,
+        }),
         output: JSON.stringify({ urls: r.savedUrls, via: r.via, adapterSlug: r.adapterSlug }),
         model: r.via === 'adapter' ? `adapter:${r.adapterSlug}` : (r.model ?? 'unknown'),
       },

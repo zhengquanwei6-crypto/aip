@@ -1,6 +1,6 @@
 # 图片生成最佳实践
 
-publish-director 的 step2 之所以稳，是因为 photo-director 已经把 prompt 拆成 7 个维度去强约束。这一篇讲怎么用对这 7 维 + 风格预设 + Adapter 切换。
+publish-director 的 step2 之所以稳，是因为 photo-director 已经把 prompt 拆成 7 个维度去强约束。这一篇讲怎么用对这 7 维 + 风格预设 + Adapter 切换 + 比例预设 + 图生图。
 
 > 数据源：`src/lib/agent-types.ts` v0.9 b2 扩展 schema + `prisma.imagePreset` 6 行内置 + `lib/ai/prompts.ts DEFAULT_PROMPTS['image:suggest']`。
 
@@ -40,19 +40,17 @@ photo-director 帮你把 prompt 变成 7 段：
 }
 ```
 
-publish-director 抽屉里"风格模板"下拉选这条，photo-director 在 step2 里会把 styleKeywords 拼进 prompt，把 negativePrompt 单独发到 image-runner（4router-gpt-image-2 adapter 会拼到请求 body 的 `negative_prompt` 字段）。
-
-> primaryColor 不会硬限模型一定用这个色，但会写进 prompt 里 `with primary color #0F172A as the dominant tone`，命中率约 80%。要硬限 100%，得改 image-runner 里的色板叠加 — 那是 v0.12+ 的事。
+publish-director 抽屉里"风格模板"下拉选这条，photo-director 在 step2 里会把 styleKeywords 拼进 prompt，把 negativePrompt 单独发到 image-runner。
 
 ## 一套图模式（v0.9 b2）
 
 `asSeries: true` + `n: 3` 的组合是"系列模式"。后端会做这事：
 
-1. step1 文案返回 `titles[0..2]` 三个标题（如果只有 1 个标题，自动复用）
-2. step2 photo-director 生成 `seriesPrompts: [{ scene, promptEn }]` 三组场景化 prompt（场景如：俯视 / 平视 / 45 度三视角）
-3. step3 串行调 image-runner 三次，每次用 seriesPrompts[i].promptEn
+1. step1 文案返回 `titles[0..2]` 三个标题
+2. step2 photo-director 生成 `seriesPrompts: [{ scene, promptEn }]` 三组场景化 prompt
+3. step3 串行调 image-runner 三次
 
-如果某一张失败，记到 `imageErrors: [{idx, scene, error}]`，`imageFallbackNote` 字段提示降级。**整个 batch 不阻塞**：第 1 张失败仍会继续生成第 2/3 张。
+如果某一张失败，记到 `imageErrors`，整个 batch 不阻塞。
 
 ## Adapter 切换
 
@@ -60,20 +58,18 @@ publish-director 抽屉里"风格模板"下拉选这条，photo-director 在 ste
 
 | slug                       | 适用                                |
 |----------------------------|-------------------------------------|
-| `kie-gpt-image-2`          | KIE 中转站的 gpt-image-2，支持 negative_prompt |
-| `kie-flux-kontext-pro`     | KIE 的 flux-kontext-pro，主攻文字图  |
+| `kie-gpt-image-2`          | KIE 中转站的 gpt-image-2，t2i + i2i |
+| `kie-flux-kontext-pro`     | KIE 的 flux-kontext-pro，专攻 i2i  |
 | `4router-gpt-image-2`      | 4router.net 的 gpt-image-2（默认）   |
-| `openai-dalle-3`           | OpenAI 直连 DALL·E 3                 |
-| `openai-gpt-img-2`         | OpenAI 直连 gpt-image-2              |
-| `generic-openai-compatible`| 任何 OpenAI 兼容协议（自定义 baseUrl）|
+| `openai-dalle-3`           | OpenAI 直连 DALL·E 3（仅 t2i）       |
+| `openai-gpt-img-2`         | OpenAI 直连 gpt-image-2（t2i + i2i） |
+| `generic-openai-compatible`| 任何 OpenAI 兼容协议（自定义）       |
 
-`Setting.IMAGE_DEFAULT_ADAPTER` 决定当前用哪条。改这个值之后**立即生效**（v0.9 b3 审计：所有 51 个 route.ts 全 `force-dynamic`，0 缓存）。
-
-切 adapter 后第一次 publish-director 跑可能会慢 1-2 秒（image-runner 第一次连新 baseUrl 没复用 keep-alive），之后稳定。
+`Setting.IMAGE_DEFAULT_ADAPTER` 决定当前用哪条。改这个值之后**立即生效**。
 
 ## 📐 尺寸与质量预设（v0.11 B7）
 
-每个 adapter 自带一组尺寸 / 质量预设池。三处图片 UI（**ImageStudio**、**publish-director Drawer**、**photo-director Drawer**）抽屉打开时会读 `/api/health.imageDefaultAdapter` → `/api/adapters/<slug>` 拿到当前 adapter 的 `sizes` / `qualities` 数组，渲染成两个 select。
+每个 adapter 自带一组尺寸 / 质量预设池。三处图片 UI 抽屉打开时会读 `/api/health.imageDefaultAdapter` → `/api/adapters/<slug>` 拿到 `sizes` / `qualities` 数组，渲染成两个 select。
 
 ### 池配置（src/lib/adapter-seed.ts）
 
@@ -84,86 +80,143 @@ publish-director 抽屉里"风格模板"下拉选这条，photo-director 在 ste
 | `openai-dalle-3` | 方图1024 / 竖图1024x1792 / 横图1792x1024 | 标准 / 高清 |
 | `generic-openai-compatible` | 1024 | （无） |
 
-### 行为约定
+## 📐 图生图 + 比例预设（B9）
 
-- **默认值**：用户没动 select → 自动用 `sizes[0]` / `qualities[0]`（默认 1k + standard 或 medium）
-- **adapter 切换**：用户在 /settings 改了 `IMAGE_DEFAULT_ADAPTER` 后回到任意图片抽屉，重新打开会**自动 reset** 选择到新 adapter 的 sizes[0]/qualities[0]
-- **非法值兜底**：用户传了不在池里的 size/quality（例如 prompt 里残留旧 1024x1536）→ image-runner 内 `resolveSize()` fallback 到 `sizes[0]`，`trace.sizeFallback=true` 标记
-- **bodyTemplate 占位**：image-runner 自动把 `SizePreset.tier` → `extra.resolution`（kie-* 系），`SizePreset.value` → `{size}`（openai-* 系），`extra.aspectRatio` 从 W×H 推算
+v0.11 B9 把图片生成扩展到两个新能力：**图生图（image-to-image）** + **图片比例预设（aspectRatios）**。
 
-### 前端选择器
+### 比例预设（aspectRatios）
 
-publish-director Drawer 的「图片选项」分组顶部新增两个 select：
+每个 adapter 自带一组比例预设。三处图片 UI（**ImageStudio**、**publish-director Drawer**、**photo-director Drawer**、**/playground ImageTab**）抽屉打开时读 `/api/adapters/<slug>` 的 `aspectRatios` 数组，渲染成「比例预设」select。
+
+#### 池配置
+
+| Adapter | aspectRatios |
+|---|---|
+| `kie-gpt-image-2` / `4router-gpt-image-2` / `openai-gpt-img-2` | 1:1 / 16:9 / 9:16 / 4:3 / 3:4 |
+| `kie-flux-kontext-pro` | 1:1 / 16:9 / 9:16 / 4:3 / 3:4 / 21:9 |
+| `openai-dalle-3` | 1:1(1024x1024) / 16:9(1792x1024) / 9:16(1024x1792) |
+| `generic-openai-compatible` | 1:1(1024x1024) |
+
+#### 行为约定
+
+每个 `AspectRatioPreset` 三个字段：
+
+```ts
+{
+  label: "横屏 16:9",
+  ratio: "16:9",
+  sizeRule: "1792x1024"  // 可选；选了这条比例时强制用这个 size
+}
+```
+
+- **比例 → size**：用户选 `16:9` 且 `sizeRule="1792x1024"` → size 自动切到 `1792x1024`（DALL-E 3 必须）
+- **比例 → bodyTemplate**：image-runner 会把 `ratio` 注入 `extra.aspectRatio` → kie-* 系 bodyTemplate 用 `{extra.aspectRatio}` 占位
+- **sizeRule 为空**：比例仅作 hint，不影响 size（kie-gpt-image-2 等用 aspect_ratio + resolution 协商）
+- **fallback**：用户传非池内 ratio → resolveAspectRatio 自动用 `aspectRatios[0]`，trace 注 `aspectRatioFallback: true`
+
+### 图生图（image-to-image）
+
+#### 哪些 adapter 支持
+
+| Adapter | supportsImg2Img | i2i flow |
+|---|---|---|
+| `kie-gpt-image-2` | ✅ | `/jobs/createTask` model=`gpt-image-2-image-to-image`，`input.image_urls=[源图URL]` |
+| `kie-flux-kontext-pro` | ✅ | 同 t2i endpoint，`body.inputImage=源图URL/dataUri`（主打 i2i） |
+| `openai-gpt-img-2` | ✅ | `/v1/images/edits` multipart：`image` (file part) + `prompt` + `size` + `quality` |
+| `4router-gpt-image-2` | ✅ | 同 OpenAI `/v1/images/edits`（OpenAI 兼容协议） |
+| `openai-dalle-3` | ❌ | DALL-E 3 在 OpenAI API 层不支持 i2i |
+| `generic-openai-compatible` | ❌ | 占位 adapter，需用户自行编辑 |
+
+#### UI 接入
+
+四处图片 UI（ImageStudio / publish-director Drawer / photo-director Drawer / /playground ImageTab）当 adapter `supportsImg2Img=true` 时显示「图生图模式」开关：
 
 ```
-[尺寸预设（4router-gpt-image-2）]    [质量预设]
-  1K(1024)              ▾              低     ▾
-  2K(2048)                              中
-  4K(3840×2160)                         高
+☐ 图生图模式（image-to-image）
+   勾选后展示：
+     源图 URL: [______________________]
+     — 或 —
+     [上传源图（≤ 5MB）]   [清除]
+     [预览缩略图]
 ```
 
-ImageStudio 的右侧「提示词」卡片同样新增 select；用户在 select 选了之后会同步到下面的「尺寸（自定义可改）」输入框，方便临时改。
+正向 prompt 描述"基于源图改..."的指令（例如 "make the cat in the source image wear sunglasses, keep the rest unchanged"）。
 
-photo-director Drawer 的顶部新增「图片选项」卡片，与 publish-director 同结构。
+#### 源图传输
 
-### /api/health 字段
+- **外链 URL**：`sourceImageUrl` 字段直接传给 KIE Flux 的 `inputImage` / KIE GPT-2 i2i 的 `image_urls[0]`
+- **base64 上传**：浏览器 `FileReader` 转 base64 → 走 `sourceImageBase64` 字段；OpenAI multipart 路径解码后塞 file part
+- **5MB 限制**：超过的拒绝（POC 不落盘）
 
-新增 `imageSizesPerAdapter` 反映当前 Setting 表里每个 adapter 的池容量：
+#### API 契约
+
+`POST /api/image/generate` body 加：
+```json
+{
+  "prompt": "...",
+  "mode": "i2i",
+  "sourceImageUrl": "/uploads/abc.png",   // 或外链
+  "sourceImageBase64": "...",              // 二选一（URL 优先）
+  "aspectRatio": "16:9",
+  "size": "1792x1024",
+  "quality": "high"
+}
+```
+
+`/api/playground/image/generate` / `/api/tasks/[id]/generate-image` / `/api/agents/publish-director/build` 同样加。
+
+#### 错误处理
+
+- 选了不支持 i2i 的 adapter → image-runner 直接返回 400，不偷偷降级 t2i
+- 缺源图 → 400 "i2i 模式需提供 sourceImageUrl 或 sourceImageBase64"
+- 源图过大（>5MB）→ 413
+- 上游 KIE/OpenAI 失败 → trace 含 `mode: 'i2i'` + `i2iSource: 'url'/'base64'` + `i2iFlow: 'i2i-dedicated'/'t2i'`
+
+### /api/health 字段（v0.11 B9）
+
+新增 `imageCapabilitiesPerAdapter` 替代 B7 的 `imageSizesPerAdapter`（**两者并存，向后兼容**）：
 
 ```jsonc
 {
-  "imageSizesPerAdapter": {
-    "kie-gpt-image-2":           { "sizes": 3, "qualities": 3 },
-    "kie-flux-kontext-pro":      { "sizes": 3, "qualities": 2 },
-    "openai-dalle-3":            { "sizes": 3, "qualities": 2 },
-    "openai-gpt-img-2":          { "sizes": 3, "qualities": 3 },
-    "4router-gpt-image-2":       { "sizes": 3, "qualities": 3 },
-    "generic-openai-compatible": { "sizes": 1, "qualities": 0 }
-  }
+  "imageCapabilitiesPerAdapter": {
+    "kie-gpt-image-2":           { "sizes": 3, "qualities": 3, "aspectRatios": 5, "supportsImg2Img": true },
+    "kie-flux-kontext-pro":      { "sizes": 3, "qualities": 2, "aspectRatios": 6, "supportsImg2Img": true },
+    "openai-dalle-3":            { "sizes": 3, "qualities": 2, "aspectRatios": 3, "supportsImg2Img": false },
+    "openai-gpt-img-2":          { "sizes": 3, "qualities": 3, "aspectRatios": 5, "supportsImg2Img": true },
+    "4router-gpt-image-2":       { "sizes": 3, "qualities": 3, "aspectRatios": 5, "supportsImg2Img": true },
+    "generic-openai-compatible": { "sizes": 1, "qualities": 0, "aspectRatios": 1, "supportsImg2Img": false }
+  },
+  "imageSizesPerAdapter": { /* B7 兼容字段，仅 sizes/qualities */ }
 }
 ```
 
 ### 一次性迁移
 
-push.sh 部署完会调一次 `POST /api/adapters/migrate-presets`，把 `sizes` / `qualities` 字段 merge 进现有 adapter Setting 行（按 slug 匹配 SLUG_PRESET_MAP）。**幂等**——重复调用不会破坏现有 baseUrl/auth/flow 等用户定制。
+push.sh 部署完会调一次 `POST /api/adapters/migrate-presets`，把 `aspectRatios` + `supportsImg2Img` + `img2imgFlow` 字段 merge 进现有 adapter Setting 行。**幂等**——重复调用不会破坏现有 baseUrl/auth/flow 等用户定制。
 
-## 图片质量四层切入（v0.9.2 b4 路线图，部分 v0.11 已具备）
-
-| 层级         | 当前状态                                              |
-|--------------|-------------------------------------------------------|
-| ① prompt 7 维 | ✅ photo-director 已落地（v0.9 b2）                   |
-| ② negativePrompt 隔离 | ✅ ImagePreset.negativePrompt 进 image-runner     |
-| ③ qualityScore 反馈 | ⏳ v0.9.2 b4 才做（用户 ⭐ 评分回写 Asset.qualityScore） |
-| ④ 模型 A/B 试验台 | ⏳ v0.9.2 b4 同上                                  |
-
-## 实操：怎么调出"高质感主图"
+## 实操：怎么调出"基于参考图改风格"
 
 ```
-content type:  商品型
-category:      电商主图
-audience:      电商卖家
-preset:        极简白底高质感
-图片选项:
-  尺寸预设:   2K(2048)   ← v0.11 B7 新
-  质量预设:   高         ← v0.11 B7 新
-  n: 3
-  sameStyle: true
-  asSeries: false
-  primaryColor: #0F172A
-  accentColor: #F59E0B
-  textLanguage: zh
-  negativePrompt: (留空，preset 已有)
+adapter:       kie-flux-kontext-pro（i2i 主力）
+比例预设:       16:9
+尺寸预设:       竖图9:16  ← 与比例不一致时比例的 sizeRule 优先
+质量预设:       高清
+图生图:         ☑ 勾选
+源图:          上传一张参考图（小红书爆款图）
+prompt:        Apply the same minimalist white-background editorial layout to my product:
+              a brushed-gold table lamp, premium feel, soft shadow, no text
 ```
 
-跑 `🎯 全流程发布`。3 张图会以同风格输出，但每张主体角度略不同（photo-director 自动拼角度差异）。挑一张满意的「采用」，其余两张「重生」。
+跑出来的图会保留参考图的"极简白底排版+柔光"美学，但主体换成你的产品。这是 i2i 的杀手级用法。
 
 ## 实操：怎么调"流程图"
 
-流程图基本是文字主导，gpt-image-2 类模型对文字幻觉率高。建议切 `kie-flux-kontext-pro` adapter（专攻文字图）+ ImagePreset 选"流程图清晰"那条，textLanguage 强写 `zh`。注意切 adapter 后池会自动从 1k/2k/4k 变成方图1024/竖图3:4/竖图9:16，这是预期行为。
+流程图基本是文字主导，gpt-image-2 类模型对文字幻觉率高。建议切 `kie-flux-kontext-pro` adapter（专攻文字图）+ ImagePreset 选"流程图清晰"那条 + 比例选 9:16，textLanguage 强写 `zh`。
 
 ## 失败重试
 
-- **单张失败**：抽屉里图片网格右下角"重生" → 不过 LLM，只过 image-runner
-- **整 batch 失败**：抽屉关掉重开 → 从 step1 重跑（会再过一次 LLM，**消耗一次 token**）
-- **持续失败**：去 `/api/health` 看 `recentFailures.image`，如果是 401 → key 错（去 /settings 改）；如果是 429 → 中转站限流（等几秒重试或加备用 IMAGE key 设 priority=1，参见 [快速开始](/docs/01-quick-start)）
-- **size 兜底**：如果 trace 里看到 `sizeFallback: true`，说明你传的 size 不在当前 adapter 的池里，已自动用 sizes[0]。换 adapter 或在 select 里重新选即可
+- **单张失败**：抽屉里图片网格右下角"重生"
+- **整 batch 失败**：抽屉关掉重开
+- **持续失败**：去 `/api/health` 看 `recentFailures.image`
+- **size 兜底**：如果 trace 里看到 `sizeFallback: true` 或 `aspectRatioFallback: true`，说明你传的值不在当前 adapter 的池里
+- **i2i 兜底失败**：`adapter "openai-dalle-3" 不支持图生图` → 切 adapter 或关闭 i2i 开关

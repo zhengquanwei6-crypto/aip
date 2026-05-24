@@ -1,29 +1,15 @@
 'use client';
 
 /**
- * <PublishDirectorDrawer> · v0.9 b2 (+ v0.11 B7 size/quality presets)
+ * <PublishDirectorDrawer> · v0.9 b2 (+ v0.11 B7 size/quality + B9 aspectRatio + i2i)
  *
- * "全流程发布导演"抽屉（图片选项扩展版）：
- *
- * v0.9 b2 表单字段：
- *   - 风格预设（从 /api/image-presets 拉取列表，含「自定义」选项）
- *   - styleKeywords（自定义模式可改）
- *   - negativePrompt（可改）
- *   - 主色调 primaryColor（输入 hex 或中文，例 "#F5C842 暖黄"）
- *   - 辅色调 accentColor
- *   - 图片主语言 textLanguage（中文 / 英文）
- *   - 数量 n（1-4）
- *   - 同一风格 sameStyle（n>1 时显示）
- *   - 作为一套图 asSeries（n>1 + sameStyle 时显示）
- *
- * v0.11 B7 新增：
- *   - 尺寸预设 size（select；选项来源：当前 IMAGE_DEFAULT_ADAPTER 的 sizes 池）
- *   - 质量预设 quality（select；选项来源：当前 IMAGE_DEFAULT_ADAPTER 的 qualities 池）
- *   - adapter 切换时（用户去 /settings 改后回到这里）抽屉打开时重新拉取并 reset
- *   - submit 时把 size + quality 进 imageOptions
+ * v0.11 B9 新增：
+ *   - 比例预设 select（来自 adapter.aspectRatios）
+ *   - 图生图开关 + 源图选择器（仅 supportsImg2Img=true 显示）
+ *   - submit 时把 mode/sourceImageUrl/sourceImageBase64/aspectRatio 进 imageOptions
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   X,
   Loader2,
@@ -35,6 +21,7 @@ import {
   RefreshCw,
   Settings as SettingsIcon,
   AlertCircle,
+  Upload,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
@@ -50,10 +37,11 @@ type Platform = 'xiaohongshu' | 'xianyu';
 type Regenerate = 'all' | 'content' | 'style' | 'image';
 type TextLanguage = 'zh' | 'en';
 type SizeStr = '1024x1024' | '1024x1536' | '1536x1024';
+type ImageMode = 't2i' | 'i2i';
 
 interface ImageOptions {
   autoImage: boolean;
-  stylePresetId: string; // '' = 自定义
+  stylePresetId: string;
   styleKeywords: string;
   negativePrompt: string;
   primaryColor: string;
@@ -62,9 +50,13 @@ interface ImageOptions {
   n: number;
   sameStyle: boolean;
   asSeries: boolean;
-  /** v0.11 B7 */
-  size: string;     // adapter.sizes[*].value
-  quality: string;  // adapter.qualities[*].value
+  size: string;
+  quality: string;
+  // v0.11 B9
+  aspectRatio: string;
+  mode: ImageMode;
+  sourceImageUrl: string;
+  sourceImageBase64: string;
 }
 
 interface FormState {
@@ -133,21 +125,16 @@ interface Preset {
   isDefault?: boolean;
 }
 
-/** v0.11 B7：尺寸 / 质量预设 */
-interface SizePreset {
-  label: string;
-  value: string;
-  tier?: string | null;
-}
-interface QualityPreset {
-  label: string;
-  value: string;
-}
+interface SizePreset { label: string; value: string; tier?: string | null; }
+interface QualityPreset { label: string; value: string; }
+interface AspectRatioPreset { label: string; ratio: string; sizeRule?: string | null; }
 interface AdapterSummary {
   slug: string;
   name?: string;
   sizes: SizePreset[];
   qualities: QualityPreset[];
+  aspectRatios: AspectRatioPreset[];
+  supportsImg2Img: boolean;
 }
 
 interface BuildResp {
@@ -158,14 +145,12 @@ interface BuildResp {
   stylePromptError?: string | null;
   stylePromptRaw?: string;
   assets?: AssetEntry[];
-  /** 兼容字段 */
   asset?: { id?: string; url?: string } | null;
   imageErrors?: { idx: number; scene?: string; error: string }[];
   imageTrace?: any;
   imageFallbackNote?: string | null;
   contentModel?: string;
   styleModel?: string;
-  /** v0.9 b3 */
   taskId?: string | null;
   taskUpdated?: boolean;
   taskUpdateError?: string | null;
@@ -194,21 +179,21 @@ const DEFAULT_IMG: ImageOptions = {
   n: 1,
   sameStyle: true,
   asSeries: true,
-  // v0.11 B7：抽屉打开时根据 adapter 池 reset
   size: '',
   quality: '',
+  aspectRatio: '',
+  mode: 't2i',
+  sourceImageUrl: '',
+  sourceImageBase64: '',
 };
+
+const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
 
 export interface PublishDirectorDrawerProps {
   open: boolean;
   onClose: () => void;
   initialForm?: Partial<FormState>;
-  /**
-   * v0.9 b3：从 /today 任务卡触发时传入 task.id，
-   * 后端会把 Post.taskId / Product.taskId 关联，并在全链成功后反写 task。
-   */
   taskId?: string;
-  /** v0.9 b3：成功反写 task 后回调，用于父组件刷新列表 */
   onTaskUpdated?: () => void;
 }
 
@@ -219,15 +204,12 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
   const [presets, setPresets] = useState<Preset[]>([]);
   const [presetsLoaded, setPresetsLoaded] = useState(false);
 
-  // v0.11 B7：当前 adapter 的 sizes/qualities 池
   const [adapter, setAdapter] = useState<AdapterSummary | null>(null);
   const [adapterLoaded, setAdapterLoaded] = useState(false);
 
   const [busy, setBusy] = useState(false);
-  const [busyIdx, setBusyIdx] = useState<number | null>(null); // 单张重生时的索引
+  const [busyIdx, setBusyIdx] = useState<number | null>(null);
   const [stage, setStage] = useState<string>('');
-  // v0.11 B4: setError 移除（保留 stylePromptErr，因为它是 step ② 的状态展示而非错误提示）；
-  // 失败统一走 toast.error，不再显示红色错误块。
 
   const [content, setContent] = useState<AnyContent | null>(null);
   const [stylePrompt, setStylePrompt] = useState<StylePrompt | null>(null);
@@ -242,25 +224,19 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
   const [styleModel, setStyleModel] = useState<string | undefined>();
   const [showContentDetails, setShowContentDetails] = useState(true);
 
-  // 拉预设列表
+  // v0.11 B9：源图预览
+  const [sourceImagePreview, setSourceImagePreview] = useState<string | null>(null);
+  const sourceFileInputRef = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => {
     if (!open || presetsLoaded) return;
     fetch('/api/image-presets')
       .then((r) => r.json())
-      .then((j) => {
-        if (j?.ok && Array.isArray(j.list)) {
-          setPresets(j.list);
-        }
-      })
-      .catch(() => {
-        // 静默失败，用户仍可走自定义
-      })
+      .then((j) => { if (j?.ok && Array.isArray(j.list)) setPresets(j.list); })
+      .catch(() => {})
       .finally(() => setPresetsLoaded(true));
   }, [open, presetsLoaded]);
 
-  // v0.11 B7：拉当前默认 adapter 的 sizes/qualities 池
-  //   - 抽屉每次打开都重拉（不缓存到组件外，因为用户可能去 /settings 切了 adapter）
-  //   - 拿到后把 img.size/img.quality reset 到首项
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -269,13 +245,7 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
       try {
         const h = await fetch('/api/health').then((r) => r.json()).catch(() => null);
         const slug: string | null = h?.imageDefaultAdapter ?? null;
-        if (!slug) {
-          if (!cancelled) {
-            setAdapter(null);
-            setAdapterLoaded(true);
-          }
-          return;
-        }
+        if (!slug) { if (!cancelled) { setAdapter(null); setAdapterLoaded(true); } return; }
         const a = await fetch(`/api/adapters/${encodeURIComponent(slug)}`)
           .then((r) => r.json()).catch(() => null);
         if (cancelled) return;
@@ -285,11 +255,17 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
         const qualities: QualityPreset[] = Array.isArray(a?.adapter?.qualities)
           ? a.adapter.qualities.filter((q: any) => q && typeof q.value === 'string' && typeof q.label === 'string')
           : [];
+        const aspectRatios: AspectRatioPreset[] = Array.isArray(a?.adapter?.aspectRatios)
+          ? a.adapter.aspectRatios.filter((r: any) => r && typeof r.ratio === 'string' && typeof r.label === 'string')
+          : [];
+        const supportsImg2Img: boolean = a?.adapter?.supportsImg2Img === true;
         const summary: AdapterSummary = {
           slug,
           name: typeof a?.adapter?.name === 'string' ? a.adapter.name : slug,
           sizes,
           qualities,
+          aspectRatios,
+          supportsImg2Img,
         };
         setAdapter(summary);
         setImg((s) => {
@@ -299,6 +275,15 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
           }
           if (qualities.length > 0 && (!s.quality || !qualities.some((x) => x.value === s.quality))) {
             next.quality = qualities[0].value;
+          }
+          if (aspectRatios.length > 0 && (!s.aspectRatio || !aspectRatios.some((x) => x.ratio === s.aspectRatio))) {
+            next.aspectRatio = aspectRatios[0].ratio;
+          }
+          // 重置 i2i：adapter 不支持 i2i 时强制关
+          if (!supportsImg2Img) {
+            next.mode = 't2i';
+            next.sourceImageUrl = '';
+            next.sourceImageBase64 = '';
           }
           return next;
         });
@@ -319,10 +304,9 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
     setImg((s) => ({ ...s, [k]: v }));
   }
 
-  /** 切换风格预设：选中后自动填 styleKeywords / negativePrompt */
   function applyPreset(presetId: string) {
     upImg('stylePresetId', presetId);
-    if (!presetId) return; // 自定义
+    if (!presetId) return;
     const p = presets.find((x) => x.id === presetId);
     if (!p) return;
     setImg((s) => ({
@@ -340,6 +324,42 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
     setEditedSummary('');
     setAssets([]);
     setImageFallbackNote(null);
+  }
+
+  // 比例切换：sizeRule 非空时同步 size
+  function onAspectChange(v: string) {
+    upImg('aspectRatio', v);
+    const rule = adapter?.aspectRatios.find((r) => r.ratio === v)?.sizeRule;
+    if (rule && rule.trim() && adapter?.sizes.some((s) => s.value === rule.trim())) {
+      upImg('size', rule.trim());
+    }
+  }
+
+  // v0.11 B9：上传源图
+  async function handleSourceFile(file: File) {
+    if (!file.type.startsWith('image/')) { toast.error('请选择图片文件'); return; }
+    if (file.size > MAX_SOURCE_BYTES) { toast.error(`图片过大（${(file.size / 1024 / 1024).toFixed(1)}MB）· 上限 5MB`); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      setSourceImagePreview(dataUrl);
+      const m = dataUrl.match(/^data:image\/[a-z]+;base64,(.+)$/i);
+      if (m) {
+        upImg('sourceImageBase64', m[1]);
+        upImg('sourceImageUrl', '');
+        toast.success(`已加载源图（${(file.size / 1024).toFixed(0)} KB）`);
+      } else {
+        toast.error('源图解析失败');
+      }
+    };
+    reader.onerror = () => toast.error('源图读取失败');
+    reader.readAsDataURL(file);
+  }
+  function clearSourceImage() {
+    upImg('sourceImageUrl', '');
+    upImg('sourceImageBase64', '');
+    setSourceImagePreview(null);
+    if (sourceFileInputRef.current) sourceFileInputRef.current.value = '';
   }
 
   function stageLabelFor(reg: Regenerate): string {
@@ -363,9 +383,13 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
       n: img.n,
       sameStyle: img.n > 1 ? img.sameStyle : false,
       asSeries: img.n > 1 && img.sameStyle ? img.asSeries : false,
-      // v0.11 B7
       size: img.size || undefined,
       quality: img.quality || undefined,
+      // v0.11 B9
+      aspectRatio: img.aspectRatio || undefined,
+      mode: img.mode,
+      ...(img.mode === 'i2i' && img.sourceImageUrl ? { sourceImageUrl: img.sourceImageUrl } : {}),
+      ...(img.mode === 'i2i' && img.sourceImageBase64 ? { sourceImageBase64: img.sourceImageBase64 } : {}),
     };
   }
 
@@ -376,12 +400,18 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
         toast.error('请填写主题');
         return;
       }
+      // i2i 校验
+      if (img.mode === 'i2i' && img.autoImage) {
+        if (!img.sourceImageUrl.trim() && !img.sourceImageBase64) {
+          toast.error('图生图模式需提供源图（URL 或上传文件）');
+          return;
+        }
+      }
       setBusy(true);
       setStage(stageLabelFor(regenerate));
       if (typeof opts?.regenSingleIdx === 'number') setBusyIdx(opts.regenSingleIdx);
 
       try {
-        // 单张重生：把 imageOptions.n=1 + asSeries=false 送，cachedStylePrompt 用对应 scene 的那条
         let payloadImg = buildImageOptionsPayload();
         let cachedStyle: any = stylePrompt;
 
@@ -423,10 +453,7 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
           return;
         }
 
-        if (j.content) {
-          setContent(j.content);
-          setShowContentDetails(true);
-        }
+        if (j.content) { setContent(j.content); setShowContentDetails(true); }
         if (j.contentModel) setContentModel(j.contentModel);
         if (j.styleModel) setStyleModel(j.styleModel);
 
@@ -439,7 +466,6 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
             setStylePromptErr(j.stylePromptError);
           }
         } else {
-          // 仅重生文案，清掉旧 style 强制重生
           setStylePrompt(null);
           setStylePromptErr(null);
           setEditedSummary('');
@@ -449,7 +475,6 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
         if (regenerate === 'all' || regenerate === 'image') {
           const newAssets = Array.isArray(j.assets) ? j.assets : j.asset ? [j.asset as AssetEntry] : [];
           if (regenerate === 'image' && typeof opts?.regenSingleIdx === 'number') {
-            // 单张重生：替换对应位置
             setAssets((prev) => {
               const next = [...prev];
               const replacement = newAssets[0] || {
@@ -464,34 +489,23 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
           }
           setImageFallbackNote(j.imageFallbackNote ?? null);
 
-          if (
-            (Array.isArray(j.imageErrors) && j.imageErrors.length > 0) ||
-            (Array.isArray(j.assets) && j.assets.every((a) => !a.url))
-          ) {
+          if ((Array.isArray(j.imageErrors) && j.imageErrors.length > 0) ||
+              (Array.isArray(j.assets) && j.assets.every((a) => !a.url))) {
             const errCount = (j.imageErrors ?? []).length;
             if (errCount > 0) toast.error(`图片：${errCount} 张失败`);
           }
         }
 
         const okMsg =
-          regenerate === 'all'
-            ? `全流程完成（${img.n} 张图）`
-            : regenerate === 'content'
-              ? '文案已重生'
-              : regenerate === 'style'
-                ? 'prompt 已优化'
-                : typeof opts?.regenSingleIdx === 'number'
-                  ? `第 ${opts.regenSingleIdx + 1} 张已重生`
-                  : '已生成新图';
+          regenerate === 'all' ? `全流程完成（${img.n} 张图）`
+          : regenerate === 'content' ? '文案已重生'
+          : regenerate === 'style' ? 'prompt 已优化'
+          : typeof opts?.regenSingleIdx === 'number' ? `第 ${opts.regenSingleIdx + 1} 张已重生`
+          : '已生成新图';
         toast.success(okMsg);
 
-        // v0.9 b3：task 反写成功后通知父组件刷新（如 /today）
-        if (j.taskUpdated && onTaskUpdated) {
-          onTaskUpdated();
-        }
-        if (j.taskUpdateError) {
-          toast.error(`task 反写失败：${j.taskUpdateError}`);
-        }
+        if (j.taskUpdated && onTaskUpdated) onTaskUpdated();
+        if (j.taskUpdateError) toast.error(`task 反写失败：${j.taskUpdateError}`);
       } catch (e) {
         toast.error((e as Error).message);
       } finally {
@@ -511,6 +525,8 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
   const showSeries = img.n > 1 && img.sameStyle;
   const sizesPool = adapter?.sizes ?? [];
   const qualitiesPool = adapter?.qualities ?? [];
+  const aspectRatiosPool = adapter?.aspectRatios ?? [];
+  const supportsImg2Img = !!adapter?.supportsImg2Img;
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -529,273 +545,190 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
                 )}
               </div>
               <div className="text-xs text-slate-500">
-                {taskId
-                  ? '将关联到当前 task：成功后回写 status / title / body / coverText / imageUrl（v0.9 b3）'
-                  : '文案 → 风格 → 图片，每段可单独重生（v0.9 b2 图片选项）'}
+                {taskId ? '将关联到当前 task：成功后回写 status / title / body / coverText / imageUrl（v0.9 b3）'
+                       : '文案 → 风格 → 图片，每段可单独重生（v0.11 B9 比例 + 图生图）'}
               </div>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
-            aria-label="关闭"
-          >
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="关闭">
             <X size={18} />
           </button>
         </header>
 
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          {/* 顶部表单 */}
           <div className="rounded border border-slate-200 dark:border-slate-700 p-3 space-y-2.5">
             <div className="grid grid-cols-2 gap-2.5">
               <Field label="平台">
-                <select
-                  className="input"
-                  value={form.platform}
-                  onChange={(e) => up('platform', e.target.value as Platform)}
-                  disabled={busy}
-                >
-                  {PLATFORMS.map((p) => (
-                    <option key={p.value} value={p.value}>
-                      {p.label}
-                    </option>
-                  ))}
+                <select className="input" value={form.platform} onChange={(e) => up('platform', e.target.value as Platform)} disabled={busy}>
+                  {PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
                 </select>
               </Field>
               <Field label="类目">
-                <select
-                  className="input"
-                  value={form.category}
-                  onChange={(e) => up('category', e.target.value)}
-                  disabled={busy}
-                >
-                  {CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
+                <select className="input" value={form.category} onChange={(e) => up('category', e.target.value)} disabled={busy}>
+                  {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </Field>
               <Field label="内容类型">
-                <select
-                  className="input"
-                  value={form.contentType}
-                  onChange={(e) => up('contentType', e.target.value)}
-                  disabled={busy}
-                >
-                  {CONTENT_TYPES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
+                <select className="input" value={form.contentType} onChange={(e) => up('contentType', e.target.value)} disabled={busy}>
+                  {CONTENT_TYPES.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </Field>
               <Field label="目标客户">
-                <select
-                  className="input"
-                  value={form.audience}
-                  onChange={(e) => up('audience', e.target.value)}
-                  disabled={busy}
-                >
-                  {TARGET_AUDIENCES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
+                <select className="input" value={form.audience} onChange={(e) => up('audience', e.target.value)} disabled={busy}>
+                  {TARGET_AUDIENCES.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </Field>
               <Field label="文案风格">
-                <select
-                  className="input"
-                  value={form.tone}
-                  onChange={(e) => up('tone', e.target.value)}
-                  disabled={busy}
-                >
-                  {TONES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
+                <select className="input" value={form.tone} onChange={(e) => up('tone', e.target.value)} disabled={busy}>
+                  {TONES.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </Field>
               <Field label="自动出图">
                 <label className="inline-flex items-center gap-2 text-sm select-none mt-1">
-                  <input
-                    type="checkbox"
-                    checked={img.autoImage}
-                    onChange={(e) => upImg('autoImage', e.target.checked)}
-                    disabled={busy}
-                  />
+                  <input type="checkbox" checked={img.autoImage} onChange={(e) => upImg('autoImage', e.target.checked)} disabled={busy} />
                   自动跑第 3 步
                 </label>
               </Field>
             </div>
             <Field label="主题">
-              <input
-                className="input"
-                value={form.topic}
-                onChange={(e) => up('topic', e.target.value)}
-                placeholder="例：奶茶店开业菜单升级"
-                disabled={busy}
-              />
+              <input className="input" value={form.topic} onChange={(e) => up('topic', e.target.value)} placeholder="例：奶茶店开业菜单升级" disabled={busy} />
             </Field>
 
-            {/* ─── v0.9 b2 图片选项分组 ─── */}
             <div className="rounded border border-amber-200 dark:border-amber-700/40 bg-amber-50/50 dark:bg-amber-900/10">
-              <button
-                type="button"
-                onClick={() => setImgPanelOpen((v) => !v)}
-                className="w-full flex items-center justify-between px-2.5 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-200"
-              >
-                <span className="inline-flex items-center gap-1">
-                  <SettingsIcon size={14} /> 图片选项
-                </span>
+              <button type="button" onClick={() => setImgPanelOpen((v) => !v)}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-200">
+                <span className="inline-flex items-center gap-1"><SettingsIcon size={14} /> 图片选项</span>
                 {imgPanelOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
               </button>
               {imgPanelOpen && (
                 <div className="px-2.5 pb-2.5 space-y-2 border-t border-amber-200 dark:border-amber-700/40">
-                  {/* v0.11 B7：尺寸 / 质量预设池（adapter 池有数据时显示） */}
-                  {(sizesPool.length > 0 || qualitiesPool.length > 0) && (
-                    <div className="grid grid-cols-2 gap-2">
+                  {/* v0.11 B7 + B9：比例 + 尺寸 + 质量三个 select */}
+                  {(aspectRatiosPool.length > 0 || sizesPool.length > 0 || qualitiesPool.length > 0) && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {aspectRatiosPool.length > 0 && (
+                        <Field label={`比例预设${adapter?.name ? `（${adapter.name}）` : ''}`}>
+                          <select className="input" value={img.aspectRatio} onChange={(e) => onAspectChange(e.target.value)} disabled={busy}
+                            data-aspect-ratio-select aria-label="比例预设">
+                            {aspectRatiosPool.map((r) => <option key={r.ratio} value={r.ratio}>{r.label}</option>)}
+                          </select>
+                        </Field>
+                      )}
                       {sizesPool.length > 0 && (
-                        <Field label={`尺寸预设${adapter?.name ? `（${adapter.name}）` : ''}`}>
-                          <select
-                            className="input"
-                            value={img.size}
-                            onChange={(e) => upImg('size', e.target.value)}
-                            disabled={busy}
-                            data-size-preset-select
-                            aria-label="尺寸预设"
-                          >
-                            {sizesPool.map((s) => (
-                              <option key={s.value} value={s.value}>
-                                {s.label}
-                              </option>
-                            ))}
+                        <Field label="尺寸预设">
+                          <select className="input" value={img.size} onChange={(e) => upImg('size', e.target.value)} disabled={busy}
+                            data-size-preset-select aria-label="尺寸预设">
+                            {sizesPool.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                           </select>
                         </Field>
                       )}
                       {qualitiesPool.length > 0 && (
                         <Field label="质量预设">
-                          <select
-                            className="input"
-                            value={img.quality}
-                            onChange={(e) => upImg('quality', e.target.value)}
-                            disabled={busy}
-                            data-quality-preset-select
-                            aria-label="质量预设"
-                          >
-                            {qualitiesPool.map((q) => (
-                              <option key={q.value} value={q.value}>
-                                {q.label}
-                              </option>
-                            ))}
+                          <select className="input" value={img.quality} onChange={(e) => upImg('quality', e.target.value)} disabled={busy}
+                            data-quality-preset-select aria-label="质量预设">
+                            {qualitiesPool.map((q) => <option key={q.value} value={q.value}>{q.label}</option>)}
                           </select>
                         </Field>
                       )}
                     </div>
                   )}
 
+                  {/* v0.11 B9：图生图开关 + 源图选择器 */}
+                  {supportsImg2Img && (
+                    <div className="rounded border border-violet-200 dark:border-violet-700/40 bg-violet-50/40 dark:bg-violet-900/10 p-2 space-y-2">
+                      <label className="inline-flex items-center gap-2 text-sm font-medium text-violet-800 dark:text-violet-200 cursor-pointer">
+                        <input type="checkbox" checked={img.mode === 'i2i'}
+                          onChange={(e) => upImg('mode', e.target.checked ? 'i2i' : 't2i')} disabled={busy}
+                          data-i2i-toggle aria-label="图生图开关" />
+                        <ImageIcon size={14} aria-hidden="true" />
+                        图生图模式（image-to-image）
+                      </label>
+                      {img.mode === 'i2i' && (
+                        <div className="space-y-2">
+                          <Field label="源图 URL（外链或 /uploads/...）">
+                            <input className="input" type="text" value={img.sourceImageUrl}
+                              onChange={(e) => {
+                                upImg('sourceImageUrl', e.target.value);
+                                if (e.target.value.trim()) {
+                                  setSourceImagePreview(e.target.value);
+                                  upImg('sourceImageBase64', '');
+                                }
+                              }}
+                              disabled={busy}
+                              placeholder="https://example.com/source.png 或 /uploads/abc.png"
+                              data-source-image-url />
+                          </Field>
+                          <div className="text-xs text-slate-500">— 或 —</div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <input ref={sourceFileInputRef} type="file" accept="image/*" className="hidden"
+                              onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleSourceFile(f); }}
+                              data-source-image-file />
+                            <button type="button" onClick={() => sourceFileInputRef.current?.click()} disabled={busy}
+                              className="text-xs inline-flex items-center gap-1 rounded border border-violet-300 dark:border-violet-700 px-2 py-1 hover:bg-violet-100 dark:hover:bg-violet-900/40">
+                              <Upload size={12} aria-hidden="true" /> 上传源图（≤ 5MB）
+                            </button>
+                            {(sourceImagePreview || img.sourceImageUrl) && (
+                              <button type="button" onClick={clearSourceImage} disabled={busy}
+                                className="text-xs text-slate-500 hover:text-rose-500 inline-flex items-center gap-0.5">
+                                <X size={11} /> 清除
+                              </button>
+                            )}
+                          </div>
+                          {sourceImagePreview && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={sourceImagePreview} alt="source preview"
+                              className="max-h-24 rounded border border-slate-200 dark:border-slate-700" />
+                          )}
+                          <p className="text-[10px] text-violet-700 dark:text-violet-300 leading-relaxed">
+                            勾选后调用 image-to-image 接口（KIE Flux / GPT-2 i2i / OpenAI /images/edits）。
+                            系列模式时多张图共享同一源图。
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-2">
                     <Field label="风格预设">
-                      <select
-                        className="input"
-                        value={img.stylePresetId}
-                        onChange={(e) => applyPreset(e.target.value)}
-                        disabled={busy}
-                      >
+                      <select className="input" value={img.stylePresetId} onChange={(e) => applyPreset(e.target.value)} disabled={busy}>
                         <option value="">自定义</option>
-                        {presets.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.isDefault ? '★ ' : ''}{p.name}
-                          </option>
-                        ))}
+                        {presets.map((p) => <option key={p.id} value={p.id}>{p.isDefault ? '★ ' : ''}{p.name}</option>)}
                       </select>
                     </Field>
                     <Field label="图片主语言">
                       <div className="flex items-center gap-3 mt-1.5">
                         <label className="inline-flex items-center gap-1 text-sm">
-                          <input
-                            type="radio"
-                            name="textLang"
-                            checked={img.textLanguage === 'zh'}
-                            onChange={() => upImg('textLanguage', 'zh')}
-                            disabled={busy}
-                          />
-                          中文
+                          <input type="radio" name="textLang" checked={img.textLanguage === 'zh'} onChange={() => upImg('textLanguage', 'zh')} disabled={busy} />中文
                         </label>
                         <label className="inline-flex items-center gap-1 text-sm">
-                          <input
-                            type="radio"
-                            name="textLang"
-                            checked={img.textLanguage === 'en'}
-                            onChange={() => upImg('textLanguage', 'en')}
-                            disabled={busy}
-                          />
-                          英文（推荐）
+                          <input type="radio" name="textLang" checked={img.textLanguage === 'en'} onChange={() => upImg('textLanguage', 'en')} disabled={busy} />英文（推荐）
                         </label>
                       </div>
                     </Field>
                   </div>
 
                   <Field label="风格关键词（自定义可改）">
-                    <input
-                      className="input"
-                      value={img.styleKeywords}
-                      onChange={(e) => upImg('styleKeywords', e.target.value)}
+                    <input className="input" value={img.styleKeywords} onChange={(e) => upImg('styleKeywords', e.target.value)}
                       placeholder="例：minimal flat, soft gradient, editorial layout"
-                      disabled={busy || !!img.stylePresetId}
-                    />
+                      disabled={busy || !!img.stylePresetId} />
                   </Field>
                   <Field label="负向词（可选）">
-                    <input
-                      className="input"
-                      value={img.negativePrompt}
-                      onChange={(e) => upImg('negativePrompt', e.target.value)}
-                      placeholder="例：cluttered, watermark"
-                      disabled={busy}
-                    />
+                    <input className="input" value={img.negativePrompt} onChange={(e) => upImg('negativePrompt', e.target.value)}
+                      placeholder="例：cluttered, watermark" disabled={busy} />
                   </Field>
 
                   <div className="grid grid-cols-2 gap-2">
-                    <Field label="主色调">
-                      <input
-                        className="input"
-                        value={img.primaryColor}
-                        onChange={(e) => upImg('primaryColor', e.target.value)}
-                        placeholder="例：#F5C842 暖黄"
-                        disabled={busy}
-                      />
-                    </Field>
-                    <Field label="辅色调">
-                      <input
-                        className="input"
-                        value={img.accentColor}
-                        onChange={(e) => upImg('accentColor', e.target.value)}
-                        placeholder="例：#2B3A55 深蓝灰"
-                        disabled={busy}
-                      />
-                    </Field>
+                    <Field label="主色调"><input className="input" value={img.primaryColor} onChange={(e) => upImg('primaryColor', e.target.value)} placeholder="例：#F5C842 暖黄" disabled={busy} /></Field>
+                    <Field label="辅色调"><input className="input" value={img.accentColor} onChange={(e) => upImg('accentColor', e.target.value)} placeholder="例：#2B3A55 深蓝灰" disabled={busy} /></Field>
                   </div>
 
                   <div>
                     <label className="label">生成数量</label>
                     <div className="flex items-center gap-2 mt-1">
                       {[1, 2, 3, 4].map((k) => (
-                        <button
-                          key={k}
-                          type="button"
-                          onClick={() => upImg('n', k)}
-                          disabled={busy}
-                          className={[
-                            'px-3 py-1 rounded text-sm border transition',
-                            img.n === k
-                              ? 'bg-blue-600 border-blue-600 text-white'
-                              : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800',
-                          ].join(' ')}
-                        >
-                          {k}
-                        </button>
+                        <button key={k} type="button" onClick={() => upImg('n', k)} disabled={busy}
+                          className={['px-3 py-1 rounded text-sm border transition',
+                            img.n === k ? 'bg-blue-600 border-blue-600 text-white'
+                                        : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800'].join(' ')}>{k}</button>
                       ))}
                     </div>
                   </div>
@@ -803,24 +736,12 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
                   {showSameStyle && (
                     <div className="space-y-1 pl-1 border-l-2 border-amber-300 dark:border-amber-600">
                       <label className="inline-flex items-center gap-2 text-sm select-none">
-                        <input
-                          type="checkbox"
-                          checked={img.sameStyle}
-                          onChange={(e) => upImg('sameStyle', e.target.checked)}
-                          disabled={busy}
-                        />
-                        同一风格（推荐）
+                        <input type="checkbox" checked={img.sameStyle} onChange={(e) => upImg('sameStyle', e.target.checked)} disabled={busy} />同一风格（推荐）
                       </label>
                       {showSeries && (
                         <div>
                           <label className="inline-flex items-center gap-2 text-sm select-none">
-                            <input
-                              type="checkbox"
-                              checked={img.asSeries}
-                              onChange={(e) => upImg('asSeries', e.target.checked)}
-                              disabled={busy}
-                            />
-                            作为一套图（系列）
+                            <input type="checkbox" checked={img.asSeries} onChange={(e) => upImg('asSeries', e.target.checked)} disabled={busy} />作为一套图（系列）
                           </label>
                           {img.asSeries && (
                             <div className="text-[11px] text-slate-500 ml-6 mt-0.5 leading-relaxed">
@@ -837,55 +758,32 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
             </div>
 
             <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => void run('all')}
-                disabled={busy}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded px-3 py-2 text-sm inline-flex items-center justify-center gap-2"
-              >
+              <button type="button" onClick={() => void run('all')} disabled={busy}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded px-3 py-2 text-sm inline-flex items-center justify-center gap-2">
                 {busy ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-                {busy
-                  ? stage || '生成中…'
-                  : content
-                    ? `🎯 全部重生（${img.n} 张）`
-                    : `🎯 全部生成（${img.n} 张）`}
+                {busy ? stage || '生成中…' : content ? `🎯 全部重生（${img.n} 张）` : `🎯 全部生成（${img.n} 张）`}
               </button>
               {content && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (busy) return;
-                    reset();
-                  }}
-                  disabled={busy}
-                  className="text-sm bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded px-3 py-2 inline-flex items-center gap-1"
-                  title="清空当前结果"
-                >
+                <button type="button" onClick={() => { if (busy) return; reset(); }} disabled={busy}
+                  className="text-sm bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded px-3 py-2 inline-flex items-center gap-1" title="清空当前结果">
                   <RefreshCw size={14} /> 重置
                 </button>
               )}
             </div>
             {busy && <ProgressBar mode="indeterminate" label={stage || '处理中…'} />}
-            {/* v0.11 B4: 红色错误块移除，错误统一走全局 toast.error；保留 stylePromptErr 因其为 ② 步状态展示 */}
           </div>
 
           {/* ① 文案预览 */}
           {content && (
             <div className="rounded border border-slate-200 dark:border-slate-700">
               <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-slate-700">
-                <button
-                  onClick={() => setShowContentDetails((v) => !v)}
-                  className="text-sm font-medium inline-flex items-center gap-1"
-                >
+                <button onClick={() => setShowContentDetails((v) => !v)} className="text-sm font-medium inline-flex items-center gap-1">
                   {showContentDetails ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                   ① 文案
                   {contentModel && <span className="text-[11px] text-slate-500 ml-1">({contentModel})</span>}
                 </button>
-                <button
-                  onClick={() => void run('content')}
-                  disabled={busy}
-                  className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 disabled:opacity-40"
-                >
+                <button onClick={() => void run('content')} disabled={busy}
+                  className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 disabled:opacity-40">
                   <RotateCw size={12} /> 重新生文案
                 </button>
               </div>
@@ -896,84 +794,38 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
                       {Array.isArray(xhs?.titles) && xhs!.titles!.length > 0 && (
                         <div>
                           <div className="text-xs text-slate-500 mb-0.5">标题候选</div>
-                          <ol className="list-decimal pl-5 space-y-0.5">
-                            {xhs!.titles!.map((t, i) => (
-                              <li key={i}>{t}</li>
-                            ))}
-                          </ol>
+                          <ol className="list-decimal pl-5 space-y-0.5">{xhs!.titles!.map((t, i) => <li key={i}>{t}</li>)}</ol>
                         </div>
                       )}
-                      {xhs?.coverText && (
-                        <div>
-                          <div className="text-xs text-slate-500 mb-0.5">封面大字</div>
-                          <div>{xhs.coverText}</div>
-                        </div>
-                      )}
-                      {xhs?.body && (
-                        <div>
-                          <div className="text-xs text-slate-500 mb-0.5">正文</div>
-                          <div className="whitespace-pre-wrap leading-relaxed text-[13px]">
-                            {xhs.body}
-                          </div>
-                        </div>
-                      )}
+                      {xhs?.coverText && (<div><div className="text-xs text-slate-500 mb-0.5">封面大字</div><div>{xhs.coverText}</div></div>)}
+                      {xhs?.body && (<div><div className="text-xs text-slate-500 mb-0.5">正文</div><div className="whitespace-pre-wrap leading-relaxed text-[13px]">{xhs.body}</div></div>)}
                       {Array.isArray(xhs?.tags) && xhs!.tags!.length > 0 && (
                         <div>
                           <div className="text-xs text-slate-500 mb-0.5">tags</div>
                           <div className="flex flex-wrap gap-1.5">
-                            {xhs!.tags!.map((t, i) => (
-                              <span
-                                key={i}
-                                className="text-[11px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
-                              >
-                                #{t}
-                              </span>
-                            ))}
+                            {xhs!.tags!.map((t, i) => <span key={i} className="text-[11px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">#{t}</span>)}
                           </div>
                         </div>
                       )}
-                      {xhs?.cta && (
-                        <div>
-                          <div className="text-xs text-slate-500 mb-0.5">CTA</div>
-                          <div>{xhs.cta}</div>
-                        </div>
-                      )}
+                      {xhs?.cta && (<div><div className="text-xs text-slate-500 mb-0.5">CTA</div><div>{xhs.cta}</div></div>)}
                     </>
                   ) : (
                     <>
-                      {xy?.title && (
-                        <div>
-                          <div className="text-xs text-slate-500 mb-0.5">商品标题</div>
-                          <div className="font-medium">{xy.title}</div>
-                        </div>
-                      )}
-                      {xy?.coverText && (
-                        <div>
-                          <div className="text-xs text-slate-500 mb-0.5">首图大字</div>
-                          <div>{xy.coverText}</div>
-                        </div>
-                      )}
+                      {xy?.title && (<div><div className="text-xs text-slate-500 mb-0.5">商品标题</div><div className="font-medium">{xy.title}</div></div>)}
+                      {xy?.coverText && (<div><div className="text-xs text-slate-500 mb-0.5">首图大字</div><div>{xy.coverText}</div></div>)}
                       {Array.isArray(xy?.tiers) && xy!.tiers!.length > 0 && (
                         <div>
                           <div className="text-xs text-slate-500 mb-0.5">三档</div>
                           <ul className="space-y-0.5">
                             {xy!.tiers!.map((t, i) => (
                               <li key={i} className="text-[13px]">
-                                <span className="text-slate-500">{t.tier}</span> {t.name}{' '}
-                                <span className="text-slate-500">{t.priceRange}</span>
+                                <span className="text-slate-500">{t.tier}</span> {t.name} <span className="text-slate-500">{t.priceRange}</span>
                               </li>
                             ))}
                           </ul>
                         </div>
                       )}
-                      {xy?.description && (
-                        <div>
-                          <div className="text-xs text-slate-500 mb-0.5">描述</div>
-                          <div className="whitespace-pre-wrap leading-relaxed text-[13px]">
-                            {xy.description}
-                          </div>
-                        </div>
-                      )}
+                      {xy?.description && (<div><div className="text-xs text-slate-500 mb-0.5">描述</div><div className="whitespace-pre-wrap leading-relaxed text-[13px]">{xy.description}</div></div>)}
                     </>
                   )}
                 </div>
@@ -989,11 +841,8 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
                   <Wand2 size={14} /> ② 风格说明（中文，可改）
                   {styleModel && <span className="text-[11px] text-slate-500 ml-1">({styleModel})</span>}
                 </div>
-                <button
-                  onClick={() => void run('style')}
-                  disabled={busy}
-                  className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 disabled:opacity-40"
-                >
+                <button onClick={() => void run('style')} disabled={busy}
+                  className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 disabled:opacity-40">
                   <RotateCw size={12} /> 重新优化 prompt
                 </button>
               </div>
@@ -1005,37 +854,22 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
               )}
               {stylePrompt && (
                 <>
-                  <textarea
-                    value={editedSummary}
-                    onChange={(e) => setEditedSummary(e.target.value)}
-                    rows={3}
-                    className="w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-sm"
-                    disabled={busy}
-                  />
+                  <textarea value={editedSummary} onChange={(e) => setEditedSummary(e.target.value)} rows={3}
+                    className="w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-sm" disabled={busy} />
                   {stylePrompt.seriesPlan && (
                     <div className="mt-2 text-xs bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded p-2">
-                      <div className="font-medium text-amber-800 dark:text-amber-200 mb-0.5">
-                        系列编排
-                      </div>
-                      <div className="text-amber-700 dark:text-amber-300 leading-relaxed">
-                        {stylePrompt.seriesPlan}
-                      </div>
+                      <div className="font-medium text-amber-800 dark:text-amber-200 mb-0.5">系列编排</div>
+                      <div className="text-amber-700 dark:text-amber-300 leading-relaxed">{stylePrompt.seriesPlan}</div>
                     </div>
                   )}
                   {stylePrompt.tips && stylePrompt.tips.length > 0 && (
                     <ul className="mt-2 text-xs text-slate-500 list-disc list-inside space-y-0.5">
-                      {stylePrompt.tips.map((t, i) => (
-                        <li key={i}>{t}</li>
-                      ))}
+                      {stylePrompt.tips.map((t, i) => <li key={i}>{t}</li>)}
                     </ul>
                   )}
                   <div className="mt-2 text-xs">
-                    <button
-                      onClick={() => setShowEnPrompt((v) => !v)}
-                      className="text-slate-500 hover:underline inline-flex items-center gap-1"
-                    >
-                      {showEnPrompt ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                      实际发给上游的英文 prompt
+                    <button onClick={() => setShowEnPrompt((v) => !v)} className="text-slate-500 hover:underline inline-flex items-center gap-1">
+                      {showEnPrompt ? <ChevronUp size={12} /> : <ChevronDown size={12} />} 实际发给上游的英文 prompt
                     </button>
                     {showEnPrompt && (
                       <div className="mt-1.5 space-y-1.5 text-[11px] font-mono bg-slate-50 dark:bg-slate-800/60 rounded p-2 max-h-60 overflow-y-auto">
@@ -1048,19 +882,13 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
                               </div>
                             ))}
                             <div className="text-slate-500">negative: {stylePrompt.negativeEn}</div>
-                            <div className="text-slate-500">size: {stylePrompt.recommendedSize}</div>
+                            <div className="text-slate-500">size: {img.size || stylePrompt.recommendedSize} · aspectRatio: {img.aspectRatio || '—'} · mode: {img.mode}</div>
                           </>
                         ) : (
                           <>
-                            <div>
-                              <div className="text-slate-500">prompt:</div>
-                              <div className="whitespace-pre-wrap">{stylePrompt.promptEn}</div>
-                            </div>
-                            <div>
-                              <div className="text-slate-500">negative:</div>
-                              <div className="whitespace-pre-wrap">{stylePrompt.negativeEn}</div>
-                            </div>
-                            <div className="text-slate-500">size: {stylePrompt.recommendedSize}</div>
+                            <div><div className="text-slate-500">prompt:</div><div className="whitespace-pre-wrap">{stylePrompt.promptEn}</div></div>
+                            <div><div className="text-slate-500">negative:</div><div className="whitespace-pre-wrap">{stylePrompt.negativeEn}</div></div>
+                            <div className="text-slate-500">size: {img.size || stylePrompt.recommendedSize} · aspectRatio: {img.aspectRatio || '—'} · mode: {img.mode}</div>
                           </>
                         )}
                       </div>
@@ -1077,20 +905,12 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
               <div className="flex items-center justify-between mb-2">
                 <div className="text-sm font-medium inline-flex items-center gap-1">
                   <ImageIcon size={14} /> ③ 图片
-                  {assets.length > 0 && (
-                    <span className="text-[11px] text-slate-500 ml-1">
-                      ({assets.filter((a) => a.url).length}/{assets.length})
-                    </span>
-                  )}
+                  {assets.length > 0 && <span className="text-[11px] text-slate-500 ml-1">({assets.filter((a) => a.url).length}/{assets.length})</span>}
                 </div>
                 {stylePrompt && (
-                  <button
-                    onClick={() => void run('image')}
-                    disabled={busy}
-                    className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 disabled:opacity-40"
-                  >
-                    <RotateCw size={12} />
-                    {img.n > 1 ? `全部重生这 ${img.n} 张` : '再来一张'}
+                  <button onClick={() => void run('image')} disabled={busy}
+                    className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 disabled:opacity-40">
+                    <RotateCw size={12} /> {img.n > 1 ? `全部重生这 ${img.n} 张` : '再来一张'}
                   </button>
                 )}
               </div>
@@ -1103,18 +923,11 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
               )}
 
               {assets.length > 0 && (
-                <div
-                  className={[
-                    'grid gap-3',
-                    assets.length === 1 ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3',
-                  ].join(' ')}
-                >
+                <div className={['grid gap-3', assets.length === 1 ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3'].join(' ')}>
                   {assets.map((a, i) => (
-                    <div
-                      key={i}
-                      className="rounded border border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col"
-                    >
+                    <div key={i} className="rounded border border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col">
                       {a.url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img src={a.url} alt={a.scene || `image ${i + 1}`} className="w-full block" />
                       ) : (
                         <div className="aspect-[3/4] bg-red-50 dark:bg-red-950/30 flex items-center justify-center p-2 text-center">
@@ -1130,28 +943,10 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
                         <div className="flex items-center justify-between gap-1">
                           <span>#{i + 1}</span>
                           <div className="flex items-center gap-1.5">
-                            {a.url && (
-                              <a
-                                href={a.url}
-                                target="_blank"
-                                rel="noopener"
-                                className="text-blue-600 hover:underline"
-                              >
-                                原图
-                              </a>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => void run('image', { regenSingleIdx: i })}
-                              disabled={busy}
-                              className="text-blue-600 hover:underline inline-flex items-center gap-0.5 disabled:opacity-40"
-                              title={`重生第 ${i + 1} 张`}
-                            >
-                              {busy && busyIdx === i ? (
-                                <Loader2 size={11} className="animate-spin" />
-                              ) : (
-                                <RotateCw size={11} />
-                              )}
+                            {a.url && <a href={a.url} target="_blank" rel="noopener" className="text-blue-600 hover:underline">原图</a>}
+                            <button type="button" onClick={() => void run('image', { regenSingleIdx: i })} disabled={busy}
+                              className="text-blue-600 hover:underline inline-flex items-center gap-0.5 disabled:opacity-40" title={`重生第 ${i + 1} 张`}>
+                              {busy && busyIdx === i ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
                               重生
                             </button>
                           </div>

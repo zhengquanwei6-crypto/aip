@@ -2,30 +2,20 @@
  * 图片生成统一入口
  *
  * 优先级：
- *   1. 用户在 Setting 里选了 IMAGE_DEFAULT_ADAPTER（adapter slug）→ 走 adapter
+ *   1. 用户在 Setting 里选了 IMAGE_DEFAULT_ADAPTER → 走 adapter
  *   2. 否则回退到旧 generateImage（OpenAI 兼容硬编码）
  *
- * v0.8 Batch 5（B5.1 / B5.5）：fail 路径透传 trace 给上层，便于前端展示
- *   - trace 包含 adapter / baseUrl / model / lastError / lastResponseSnippet / pollHistory
- *   - trace 不包含 API key / Authorization 原文（adapter-runtime.redactHeaders 已脱敏）
+ * v0.8 B5 / v0.9 size 归一化 / v0.11 B1 池 / v0.11 B7 sizes/qualities：见之前注释
  *
- * v0.9 size 归一化：上游 gpt-image-2 / dall-e-3 只接受少数固定尺寸，
- *   非标准尺寸（如 1080x1440）会被中转站包装成「渠道不存在」类的误导错误。
- *   这里在调 runAdapter 前按宽高比就近映射，并把映射记录写进 trace.normalizedSize。
- *
- * v0.11 B1：adapter 路径取 IMAGE_API_KEY 改为优先池 → 失败回退 Setting 表 IMAGE_API_KEY → .env。
- *   - 不改 adapter 选择逻辑（IMAGE_DEFAULT_ADAPTER 仍读 Setting）
- *   - 不改 wire format
- *   - 调用结果（adapter ok / fail）写回池（markKeySuccess / markKeyError）
- *
- * v0.11 B7：尺寸 / 质量预设池
- *   - opts.size：用户从 adapter.sizes[*].value 里选的字符串（如 "2048x2048"）
- *   - opts.quality：用户从 adapter.qualities[*].value 里选的字符串（如 "high" / "hd"）
- *   - 旧调用（无 size/quality）→ 自动用 adapter.sizes[0] / adapter.qualities[0] 兜底（默认 1k + standard/medium）
- *   - 用户传了非法值（不在 sizes/qualities 池里）→ 同上回落 sizes[0]，不抛错（trace 注 fallbackSize: true）
- *   - extra.resolution：自动从 SizePreset.tier 注入（kie-* 系 bodyTemplate 用此占位）
- *   - extra.aspectRatio：自动从 SizePreset.value (W x H) 推算（kie-* 系 bodyTemplate 用此占位）
- *   - 不动既有 bodyTemplate（向后兼容；adapter Setting JSON 仍是 0 schema 改）
+ * v0.11 B9（图生图 + 图片比例预设）：
+ *   - opts.mode：'t2i'（默认）或 'i2i'
+ *   - opts.sourceImageUrl：i2i 源图外链（与 sourceImageBase64 二选一；外链优先）
+ *   - opts.sourceImageBase64：i2i 源图 base64（不带 data: 前缀；运行时按需注入 base64 / 解码后塞 multipart）
+ *   - opts.aspectRatio：用户从 adapter.aspectRatios 选的比例字符串（"1:1"/"16:9"...）
+ *   - resolveAspectRatio：用户没选 → 用 sizes[0] 推算 → 否则用 aspectRatios[0].ratio
+ *   - 若 ratio 对应的 sizeRule 非空 → size 自动按 sizeRule 覆盖（用户也可改）
+ *   - i2i：若 adapter.supportsImg2Img===false → 拒绝并回退报错（不偷偷降级 t2i）
+ *   - i2i 路径：若 adapter.img2imgFlow 存在 → 临时把 adapter.flow 替换为 img2imgFlow 后跑 runAdapter
  */
 
 import { prisma } from '@/lib/db';
@@ -36,9 +26,11 @@ import {
   adapterKey,
   defaultSizeFromPresets,
   defaultQualityFromPresets,
+  defaultAspectRatioFromPresets,
   type AdapterConfig,
   type SizePreset,
   type QualityPreset,
+  type AspectRatioPreset,
 } from '@/lib/adapter-types';
 import { saveImageFromBase64, saveImageFromUrl } from '@/lib/storage';
 import { normalizeSizeForAdapter, type NormalizedSize } from '@/lib/image-size';
@@ -49,56 +41,62 @@ import {
   type ActiveKey,
 } from '@/lib/ai/keys';
 
+export type ImageMode = 't2i' | 'i2i';
+
 export interface RunOptions {
   prompt: string;
   size?: string;
-  /** v0.11 B7：用户选的 quality（low/medium/high or standard/hd），无则用 adapter.qualities[0] */
+  /** v0.11 B7 */
   quality?: string;
   n?: number;
   /** 透传给 adapter 的 extra（aspectRatio / resolution / outputFormat 等）*/
   extra?: Record<string, unknown>;
   /** AbortController 信号 */
   abortSignal?: AbortSignal;
+  // v0.11 B9 ───────────────────────────────────
+  /** 't2i'(默认) 或 'i2i' */
+  mode?: ImageMode;
+  /** i2i 源图外链（http(s):// or /uploads/...）。优先级高于 sourceImageBase64 */
+  sourceImageUrl?: string;
+  /** i2i 源图 base64（裸 base64，不含 "data:" 前缀） */
+  sourceImageBase64?: string;
+  /** 用户从 aspectRatios 池选的 ratio 字符串（"1:1" / "16:9"...） */
+  aspectRatio?: string;
 }
 
-/** 精简版 trace，仅放对前端排错有用的字段（不含原始 headers / 完整请求体）*/
 export interface RunTrace {
   via: 'adapter' | 'legacy';
   adapterSlug?: string;
   baseUrl?: string;
   model?: string;
-  /** 最近一次 adapter 错误（来自 adapter-runtime trace.lastError）*/
   lastError?: string;
-  /** 最近一次响应片段（截断 800 字符）*/
   lastResponseSnippet?: string;
-  /** 轮询历史：每条带 ts(ms) / status / ok */
   pollHistory?: { ts: number; at?: string; status?: string; ok: boolean }[];
-  /** 尺寸归一化记录：上游不支持自由尺寸时记录原始值与映射后的值 */
   normalizedSize?: { from?: string; to: string; reason?: string };
-  /** v0.11 B1：实际取 key 的来源（pool / setting / env） */
   keySource?: 'pool' | 'setting' | 'env' | 'none';
-  /** v0.11 B1：池命中时的 key label（脱敏，不含明文）*/
   keyLabel?: string;
-  /** v0.11 B7：实际下发的 size / quality（含 fallback 标记）*/
   size?: string;
   sizeTier?: string;
   sizeFallback?: boolean;
   quality?: string;
   qualityFallback?: boolean;
+  // v0.11 B9
+  mode?: ImageMode;
+  aspectRatio?: string;
+  aspectRatioFallback?: boolean;
+  i2iSource?: 'url' | 'base64' | 'none';
+  i2iFlow?: 't2i' | 'i2i-dedicated';
 }
 
 export interface RunResult {
   ok: boolean;
-  /** 已经下载好、可直接展示 / 写库的本地路径数组（/uploads/xxx.png）*/
   savedUrls: string[];
-  /** 远端原始 URL（如果有），仅供调试 */
   remoteUrls?: string[];
   durationMs?: number;
   via: 'adapter' | 'legacy';
   adapterSlug?: string;
   model?: string;
   error?: string;
-  /** v0.8 Batch 5：精简 trace，可直接序列化进 API 响应 */
   trace?: RunTrace;
 }
 
@@ -106,14 +104,12 @@ function adapterSummary(slug: string, baseUrl?: string): string {
   return ` [adapter=${slug}, baseUrl=${baseUrl || '(空)'}]`;
 }
 
-/** 读 Setting 里 IMAGE_DEFAULT_ADAPTER 的 slug；空字符串则视为不存在 */
 async function readDefaultAdapterSlug(): Promise<string | null> {
   const row = await prisma.setting.findUnique({ where: { key: 'IMAGE_DEFAULT_ADAPTER' } });
   const v = row?.value?.trim();
   return v ? v : null;
 }
 
-/** 读出某个 adapter 配置 */
 async function loadAdapter(slug: string) {
   const row = await prisma.setting.findUnique({ where: { key: adapterKey(slug) } });
   if (!row) return null;
@@ -127,12 +123,6 @@ async function loadAdapter(slug: string) {
   }
 }
 
-/**
- * v0.11 B1：取 IMAGE 调用用的 API key，依次：
- *   1) ApiKey 池 provider='image'
- *   2) Setting 表 IMAGE_API_KEY
- *   3) .env IMAGE_API_KEY
- */
 async function pickImageApiKey(): Promise<{
   apiKey: string;
   source: 'pool' | 'setting' | 'env' | 'none';
@@ -154,7 +144,6 @@ async function pickImageApiKey(): Promise<{
   return { apiKey: '', source: 'none' };
 }
 
-/** 把任意远端/base64 URL 列表本地化保存 */
 async function persistImages(remoteUrls: string[]): Promise<string[]> {
   const out: string[] = [];
   for (const url of remoteUrls) {
@@ -170,13 +159,12 @@ async function persistImages(remoteUrls: string[]): Promise<string[]> {
       const saved = await saveImageFromUrl(url);
       out.push(saved.url);
     } catch {
-      // 单张失败不影响其余
+      /* skip */
     }
   }
   return out;
 }
 
-/** 从 adapter-runtime trace（结构宽松）里提炼前端能用的精简版 */
 function extractAdapterTrace(
   rawTrace: any,
   slug: string,
@@ -199,19 +187,12 @@ function extractAdapterTrace(
   return out;
 }
 
-/** 提取 adapter bodyTemplate 中的 model 字面量，用于尺寸归一化的启发式 */
 function pickAdapterModelHint(adapter: any): string | undefined {
   const flowJson = JSON.stringify(adapter?.flow ?? {});
   const m = flowJson.match(/"model"\s*:\s*"([^"]+)"/);
   return m?.[1];
 }
 
-/**
- * v0.11 B7：根据 adapter.sizes 把用户传入的 size 收敛到合法值。
- *   - 若用户没传 size → 用 sizes[0]
- *   - 若用户传了但不在 sizes[*].value 列表里 → 也用 sizes[0]，标记 fallback=true
- *   - adapter 没有 sizes 数组（旧 row）→ 直接放行用户传入的，不 fallback
- */
 function resolveSize(
   adapter: AdapterConfig,
   userSize: string | undefined,
@@ -228,14 +209,10 @@ function resolveSize(
   if (hit) {
     return { value: hit.value, tier: hit.tier ?? undefined, preset: hit, fallback: false };
   }
-  // fallback to first
   const first = list[0];
   return { value: first.value, tier: first.tier ?? undefined, preset: first, fallback: true };
 }
 
-/**
- * v0.11 B7：根据 adapter.qualities 收敛 quality（同上）。
- */
 function resolveQuality(
   adapter: AdapterConfig,
   userQuality: string | undefined,
@@ -254,7 +231,31 @@ function resolveQuality(
   return { value: first.value, preset: first, fallback: true };
 }
 
-/** 从 "1024x1024" / "1024x1536" 推 aspect ratio "1:1" / "2:3"（仅作 hint）*/
+/**
+ * v0.11 B9：把用户传入的 aspectRatio 收敛到 adapter.aspectRatios。
+ *   - 若用户没传 → 用 aspectRatios[0]
+ *   - 若用户传了但不在池里 → 用 aspectRatios[0]，标记 fallback
+ *   - adapter 没有 aspectRatios 数组（旧 row）→ 直接使用用户传值（可能是空）
+ */
+function resolveAspectRatio(
+  adapter: AdapterConfig,
+  userAspect: string | undefined,
+): { value: string | undefined; preset?: AspectRatioPreset; fallback: boolean } {
+  const list = Array.isArray(adapter.aspectRatios) ? adapter.aspectRatios : [];
+  if (list.length === 0) {
+    return { value: userAspect, fallback: false };
+  }
+  if (!userAspect) {
+    const first = defaultAspectRatioFromPresets(adapter);
+    return { value: first?.ratio, preset: first ?? undefined, fallback: false };
+  }
+  const hit = list.find((a) => a.ratio === userAspect);
+  if (hit) return { value: hit.ratio, preset: hit, fallback: false };
+  const first = list[0];
+  return { value: first.ratio, preset: first, fallback: true };
+}
+
+/** 从 "1024x1024" 推 aspect ratio */
 function aspectRatioFromValue(v: string | undefined): string | undefined {
   if (!v) return undefined;
   const m = v.match(/^(\d+)\s*x\s*(\d+)$/i);
@@ -273,20 +274,86 @@ function aspectRatioFromValue(v: string | undefined): string | undefined {
   if (w === 1536 && h === 1024) return '3:2';
   if (w === 768 && h === 1024) return '3:4';
   if (w === 720 && h === 1280) return '9:16';
-  // 兜底：返回 raw "WxH"
   return `${w}:${h}`;
+}
+
+/**
+ * v0.11 B9：把 adapter.flow 临时替换为 adapter.img2imgFlow（若存在）。
+ *   - 不动原 adapter row（仅运行时构造一个新对象）
+ *   - 若 img2imgFlow 缺省 → 沿用 adapter.flow（i2i 与 t2i 同 endpoint，通过 bodyTemplate 占位区分）
+ */
+function adapterForMode(adapter: AdapterConfig, mode: ImageMode): { adapter: AdapterConfig; i2iFlow: 't2i' | 'i2i-dedicated' } {
+  if (mode === 't2i') return { adapter, i2iFlow: 't2i' };
+  if (adapter.img2imgFlow) {
+    return { adapter: { ...adapter, flow: adapter.img2imgFlow }, i2iFlow: 'i2i-dedicated' };
+  }
+  return { adapter, i2iFlow: 't2i' };
+}
+
+/**
+ * v0.11 B9：源图 URL 处理。
+ *   - 外链：直接传给 bodyTemplate 的 {sourceImage}（KIE Flux）/ {extra.imageUrls}（KIE GPT-2 i2i）
+ *   - /uploads/... 相对路径：拼成完整 URL 给 KIE（KIE 端必须能拉到）→ 这里仅做 hint，由 caller 决定是否拼
+ *   - base64：仅 OpenAI /images/edits 多 part 路径会用到，传给 {sourceImageBase64}
+ */
+function buildI2iVars(opts: RunOptions): {
+  source: 'url' | 'base64' | 'none';
+  sourceImage: string;
+  sourceImageBase64: string;
+  imageUrls: string[];
+} {
+  const url = (opts.sourceImageUrl || '').trim();
+  const b64 = (opts.sourceImageBase64 || '').trim();
+  if (url) {
+    return {
+      source: 'url',
+      sourceImage: url,
+      sourceImageBase64: '',
+      imageUrls: [url],
+    };
+  }
+  if (b64) {
+    return {
+      source: 'base64',
+      sourceImage: 'data:image/png;base64,' + b64,
+      sourceImageBase64: b64,
+      imageUrls: [],
+    };
+  }
+  return { source: 'none', sourceImage: '', sourceImageBase64: '', imageUrls: [] };
 }
 
 export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
   const t0 = Date.now();
+  const mode: ImageMode = opts.mode === 'i2i' ? 'i2i' : 't2i';
 
   // 1) 尝试 adapter 路径
   try {
     const slug = await readDefaultAdapterSlug();
     if (slug) {
-      const adapter = await loadAdapter(slug);
-      if (adapter) {
-        // v0.11 B1：取 IMAGE_API_KEY（优先池）
+      const baseAdapter = await loadAdapter(slug);
+      if (baseAdapter) {
+        // i2i 校验
+        if (mode === 'i2i' && !baseAdapter.supportsImg2Img) {
+          return {
+            ok: false, savedUrls: [], via: 'adapter', adapterSlug: slug,
+            error: `当前 adapter "${slug}" 不支持图生图（supportsImg2Img=false）。请切到 kie-flux-kontext-pro / kie-gpt-image-2 / openai-gpt-img-2 / 4router-gpt-image-2 中任一支持 i2i 的 adapter` + adapterSummary(slug, baseAdapter.baseUrl),
+            durationMs: Date.now() - t0,
+            trace: { via: 'adapter', adapterSlug: slug, baseUrl: baseAdapter.baseUrl, mode, lastError: '不支持 i2i' },
+          };
+        }
+        if (mode === 'i2i' && !opts.sourceImageUrl?.trim() && !opts.sourceImageBase64?.trim()) {
+          return {
+            ok: false, savedUrls: [], via: 'adapter', adapterSlug: slug,
+            error: 'i2i 模式需提供源图（sourceImageUrl 或 sourceImageBase64）' + adapterSummary(slug, baseAdapter.baseUrl),
+            durationMs: Date.now() - t0,
+            trace: { via: 'adapter', adapterSlug: slug, baseUrl: baseAdapter.baseUrl, mode, i2iSource: 'none', lastError: 'i2i 缺源图' },
+          };
+        }
+
+        // 切换 flow（i2i 用 img2imgFlow，缺省时沿用 t2i flow）
+        const { adapter, i2iFlow } = adapterForMode(baseAdapter, mode);
+
         const picked = await pickImageApiKey();
         const apiKey = picked.apiKey;
         if (!apiKey) {
@@ -294,28 +361,48 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
             ok: false, savedUrls: [], via: 'adapter', adapterSlug: slug,
             error: '未配置 IMAGE API Key，请到设置页（API Keys 池）新增一条 provider=image 的 key' + adapterSummary(slug, adapter.baseUrl),
             durationMs: Date.now() - t0,
-            trace: { via: 'adapter', adapterSlug: slug, baseUrl: adapter.baseUrl, lastError: '未配置 IMAGE_API_KEY', keySource: 'none' },
+            trace: { via: 'adapter', adapterSlug: slug, baseUrl: adapter.baseUrl, lastError: '未配置 IMAGE_API_KEY', keySource: 'none', mode },
           };
         }
 
         // v0.11 B7：先按 adapter.sizes / qualities 收敛
         const sizeR = resolveSize(adapter, opts.size);
         const qualityR = resolveQuality(adapter, opts.quality);
+        // v0.11 B9：再按 aspectRatios 收敛
+        const aspectR = resolveAspectRatio(adapter, opts.aspectRatio);
 
-        // 合并 extra：把 sizeTier → extra.resolution（如未指定）；aspect ratio → extra.aspectRatio（如未指定）
+        // 若 ratio.sizeRule 非空 → 用 sizeRule 覆盖 sizeR.value（aspectRatio 优先于 sizes 池里的预设）
+        // 但用户在 size 文本框里手动改的值仍能覆盖（resolveSize 在 user 给定时会优先 hit）
+        let finalSizeValue = sizeR.value;
+        if (!opts.size && aspectR.preset?.sizeRule && aspectR.preset.sizeRule.trim()) {
+          finalSizeValue = aspectR.preset.sizeRule.trim();
+        }
+
+        // 合并 extra
         const userExtra = opts.extra ?? {};
         const mergedExtra: Record<string, unknown> = { ...userExtra };
         if (sizeR.tier && typeof userExtra.resolution === 'undefined') {
           mergedExtra.resolution = sizeR.tier;
         }
         if (typeof userExtra.aspectRatio === 'undefined') {
-          const ar = aspectRatioFromValue(sizeR.value);
-          if (ar) mergedExtra.aspectRatio = ar;
+          mergedExtra.aspectRatio = aspectR.value || aspectRatioFromValue(finalSizeValue) || '1:1';
+        }
+
+        // i2i：注入 sourceImage / imageUrls / sourceImageBase64 到 vars + extra
+        const i2iVars = mode === 'i2i' ? buildI2iVars(opts) : { source: 'none' as const, sourceImage: '', sourceImageBase64: '', imageUrls: [] };
+        if (mode === 'i2i') {
+          // 写到 extra 让 runAdapter 注入到 vars.extra
+          if (typeof userExtra.imageUrls === 'undefined') {
+            mergedExtra.imageUrls = i2iVars.imageUrls;
+          }
+          if (typeof userExtra.sourceImage === 'undefined') {
+            mergedExtra.sourceImage = i2iVars.sourceImage;
+          }
         }
 
         // 上游通常只接受固定尺寸；按 adapter 模型提示归一化
         const adapterModelHint = pickAdapterModelHint(adapter);
-        const normalized: NormalizedSize = normalizeSizeForAdapter(sizeR.value ?? opts.size, adapterModelHint);
+        const normalized: NormalizedSize = normalizeSizeForAdapter(finalSizeValue ?? opts.size, adapterModelHint);
 
         const result = await runAdapter(adapter, {
           prompt: opts.prompt,
@@ -323,26 +410,40 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
           quality: qualityR.value,
           n: opts.n ?? 1,
           extra: mergedExtra,
+          ...(mode === 'i2i' ? {
+            sourceImageUrl: i2iVars.source === 'url' ? i2iVars.sourceImage : undefined,
+            sourceImageBase64: i2iVars.source === 'base64' ? i2iVars.sourceImageBase64 : undefined,
+            aspectRatio: aspectR.value,
+          } : {
+            aspectRatio: aspectR.value,
+          }),
         }, {
           apiKey,
           abortSignal: opts.abortSignal,
           collectTrace: true,
         });
+
         const trace = extractAdapterTrace(result.trace, slug, adapter.baseUrl);
         if (normalized.rewritten) {
           trace.normalizedSize = { from: normalized.original, to: normalized.size, reason: normalized.reason };
         }
         trace.keySource = picked.source;
         if (picked.activeKey?.label) trace.keyLabel = picked.activeKey.label;
-        // v0.11 B7：trace 注尺寸 / 质量
         if (sizeR.value) trace.size = sizeR.value;
         if (sizeR.tier) trace.sizeTier = sizeR.tier;
         if (sizeR.fallback) trace.sizeFallback = true;
         if (qualityR.value) trace.quality = qualityR.value;
         if (qualityR.fallback) trace.qualityFallback = true;
+        // v0.11 B9
+        trace.mode = mode;
+        if (aspectR.value) trace.aspectRatio = aspectR.value;
+        if (aspectR.fallback) trace.aspectRatioFallback = true;
+        if (mode === 'i2i') {
+          trace.i2iSource = i2iVars.source;
+          trace.i2iFlow = i2iFlow;
+        }
 
         if (!result.ok || result.imageUrls.length === 0) {
-          // v0.11 B1：失败回写池
           if (picked.activeKey) {
             await markKeyError(picked.activeKey.id, result.error ?? trace.lastError ?? 'adapter 返回空结果');
           }
@@ -354,7 +455,6 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
             trace,
           };
         }
-        // 成功
         if (picked.activeKey) {
           await markKeySuccess(picked.activeKey.id);
         }
@@ -372,13 +472,20 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
       }
     }
   } catch (e) {
-    // v0.11 B4: dev-only（生产环境静默；adapter 失败时已经会通过 trace 暴露给前端）
     if (process.env.NODE_ENV !== 'production') {
       console.warn('[image-runner] adapter path failed, falling back:', (e as Error).message);
     }
   }
 
-  // 2) Legacy 路径（generateImage 内部已含池 + setting 回退 + recordImageResult）
+  // 2) Legacy 路径（仅 t2i；i2i 不支持 legacy）
+  if (mode === 'i2i') {
+    return {
+      ok: false, savedUrls: [], via: 'legacy',
+      error: 'legacy 路径不支持图生图。请到设置页选启用支持 i2i 的 adapter（kie-flux-kontext-pro / kie-gpt-image-2 / openai-gpt-img-2 / 4router-gpt-image-2）',
+      durationMs: Date.now() - t0,
+      trace: { via: 'legacy', mode, lastError: 'legacy 不支持 i2i' },
+    };
+  }
   const legacy = await legacyGenerateImage({ prompt: opts.prompt, size: opts.size, n: opts.n });
   if (!legacy.ok || legacy.images.length === 0) {
     return {
@@ -386,7 +493,7 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
       error: legacy.error ?? '未返回图片',
       model: legacy.model,
       durationMs: Date.now() - t0,
-      trace: { via: 'legacy', model: legacy.model, lastError: legacy.error ?? undefined },
+      trace: { via: 'legacy', model: legacy.model, lastError: legacy.error ?? undefined, mode },
     };
   }
   const savedUrls: string[] = [];
@@ -410,6 +517,6 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
     model: legacy.model,
     durationMs: Date.now() - t0,
     error: savedUrls.length === 0 ? '图片保存失败' : undefined,
-    trace: { via: 'legacy', model: legacy.model },
+    trace: { via: 'legacy', model: legacy.model, mode },
   };
 }

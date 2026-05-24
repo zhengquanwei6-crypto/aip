@@ -1,24 +1,15 @@
 // /api/health · 轻量健康检查
 //
-// v0.8 b6：含 version / startedAt / uptime
+// v0.11 B9：
+//   - imageCapabilitiesPerAdapter: { '<slug>': { sizes, qualities, aspectRatios, supportsImg2Img } }
+//   - 替代 B7 imageSizesPerAdapter（向后兼容多保留 imageSizesPerAdapter）
 //
-// v0.9 Batch 3 (B5)：
+// 之前字段（保留）：
+//   - playgroundEnabled (B8)
+//   - apiKeyPool (B1)
+//   - imageSizesPerAdapter (B7) ← 仍保留兼容前端
 //   - agentRoutes / imageDefaultAdapter / recentFailures / publishDirectorStats
-//
-// v0.9.2 Batch 1：
 //   - customPromptCount
-//
-// v0.11 Batch 1：
-//   - apiKeyPool: { llm: { total, active, lastError }, image: { total, active, lastError } }
-//
-// v0.11 Batch 7：
-//   - imageSizesPerAdapter: { '<slug>': { sizes: N, qualities: M } }
-//     遍历 Setting WHERE key LIKE 'adapter:%'，从 JSON 读 sizes / qualities 数组长度
-//
-// v0.11 Batch 8：
-//   - playgroundEnabled: true（标记 B8 上线，给 Playwright 走查 + 文档校验）
-//
-// 所有新字段都是可选信息，任何失败都用 null/0/{} 兜底，不影响 HTTP 200/503
 
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
@@ -31,7 +22,6 @@ if (process.env.NODE_ENV !== "production") {
   (globalThis as any).__prisma__ = prisma;
 }
 
-// 模块加载时记录启动时间
 const STARTED_AT = new Date().toISOString();
 const STARTED_AT_MS = Date.now();
 const APP_VERSION = process.env.APP_VERSION || "v0.11";
@@ -49,7 +39,6 @@ async function readImageDefaultAdapter(): Promise<string | null> {
   }
 }
 
-/** 提取最近一条失败的 input 摘要（不含 key） */
 function shortFailure(input: string | null | undefined, output: string | null | undefined): string | null {
   if (!output) return null;
   const merged = (output || input || "").slice(0, 240);
@@ -72,11 +61,11 @@ async function readRecentFailures(): Promise<{ llm: string | null; image: string
         else if (r.type === "image" && !out.image) out.image = shortFailure(r.input, r.output);
         if (out.llm && out.image) break;
       } catch {
-        // 不是 JSON 输出 → 视为成功，跳过
+        /* not JSON */
       }
     }
   } catch {
-    // ignore
+    /* ignore */
   }
   return out;
 }
@@ -107,7 +96,7 @@ async function readPublishDirectorStats(): Promise<{ total: number; success: num
       else out.success++;
     }
   } catch {
-    // ignore
+    /* ignore */
   }
   return out;
 }
@@ -120,7 +109,6 @@ async function readCustomPromptCount(): Promise<number> {
   }
 }
 
-/** v0.11 B1：池摘要 */
 async function readApiKeyPool(): Promise<{
   llm: { total: number; active: number; lastError: string | null };
   image: { total: number; active: number; lastError: string | null };
@@ -136,30 +124,52 @@ async function readApiKeyPool(): Promise<{
   }
 }
 
-/** v0.11 B7：每个 adapter 的 sizes / qualities 数量 */
-async function readImageSizesPerAdapter(): Promise<Record<string, { sizes: number; qualities: number }>> {
+interface AdapterCapability {
+  sizes: number;
+  qualities: number;
+  aspectRatios: number;
+  supportsImg2Img: boolean;
+}
+
+/**
+ * v0.11 B9：每个 adapter 的能力清单。
+ *   - sizes / qualities / aspectRatios 是数组长度
+ *   - supportsImg2Img 是布尔
+ *
+ * 同时仍兼容 B7 imageSizesPerAdapter 字段（仅 sizes/qualities）。
+ */
+async function readImageCapabilitiesPerAdapter(): Promise<{
+  capabilities: Record<string, AdapterCapability>;
+  imageSizesLegacy: Record<string, { sizes: number; qualities: number }>;
+}> {
+  const capabilities: Record<string, AdapterCapability> = {};
+  const imageSizesLegacy: Record<string, { sizes: number; qualities: number }> = {};
   try {
     const rows = await prisma.setting.findMany({
       where: { key: { startsWith: ADAPTER_SETTING_PREFIX } },
     });
-    const out: Record<string, { sizes: number; qualities: number }> = {};
     for (const row of rows) {
       const slug = row.key.slice(ADAPTER_SETTING_PREFIX.length);
       let sizes = 0;
       let qualities = 0;
+      let aspectRatios = 0;
+      let supportsImg2Img = false;
       try {
         const parsed = JSON.parse(row.value);
         if (Array.isArray(parsed?.sizes)) sizes = parsed.sizes.length;
         if (Array.isArray(parsed?.qualities)) qualities = parsed.qualities.length;
+        if (Array.isArray(parsed?.aspectRatios)) aspectRatios = parsed.aspectRatios.length;
+        if (parsed?.supportsImg2Img === true) supportsImg2Img = true;
       } catch {
-        // 留 0
+        /* leave 0 */
       }
-      out[slug] = { sizes, qualities };
+      capabilities[slug] = { sizes, qualities, aspectRatios, supportsImg2Img };
+      imageSizesLegacy[slug] = { sizes, qualities };
     }
-    return out;
   } catch {
-    return {};
+    /* ignore */
   }
+  return { capabilities, imageSizesLegacy };
 }
 
 export async function GET() {
@@ -173,14 +183,14 @@ export async function GET() {
       publishDirectorStats,
       customPromptCount,
       apiKeyPool,
-      imageSizesPerAdapter,
+      caps,
     ] = await Promise.all([
       readImageDefaultAdapter(),
       readRecentFailures(),
       readPublishDirectorStats(),
       readCustomPromptCount(),
       readApiKeyPool(),
-      readImageSizesPerAdapter(),
+      readImageCapabilitiesPerAdapter(),
     ]);
 
     return NextResponse.json(
@@ -200,10 +210,12 @@ export async function GET() {
         customPromptCount,
         // v0.11 b1
         apiKeyPool,
-        // v0.11 b7
-        imageSizesPerAdapter,
+        // v0.11 b7（向后兼容保留）
+        imageSizesPerAdapter: caps.imageSizesLegacy,
         // v0.11 b8
         playgroundEnabled: true,
+        // v0.11 b9
+        imageCapabilitiesPerAdapter: caps.capabilities,
       },
       { status: 200 },
     );
