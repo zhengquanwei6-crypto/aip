@@ -5,6 +5,8 @@
 //   - Snapshot   存 `market:snapshot:<slug>:<YYYY-MM-DD>`（一天一行，覆盖更新）
 //   - 0 schema 改动；纯 Setting 表
 //   - 不 throw：解析失败时安静 fallback（避免一行坏数据搞死整个 dashboard）
+//
+// v0.11 B11 增加：deleteMarketSnapshot
 
 import { prisma } from '@/lib/db';
 import {
@@ -121,6 +123,25 @@ export async function saveMarketSnapshot(
     create: { key, value },
   });
   return enriched;
+}
+
+/**
+ * v0.11 B11 · 删除单条 snapshot（B10 followup #8 #9）
+ *
+ * @returns true 表示删除了一条；false 表示没找到（幂等）
+ */
+export async function deleteMarketSnapshot(
+  platform: MarketPlatformSlug,
+  date: string,
+): Promise<boolean> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error('date must be YYYY-MM-DD');
+  }
+  const key = snapshotSettingKey(platform, date);
+  const existing = await prisma.setting.findUnique({ where: { key } });
+  if (!existing) return false;
+  await prisma.setting.delete({ where: { key } });
+  return true;
 }
 
 /**

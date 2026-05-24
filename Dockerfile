@@ -1,6 +1,7 @@
 # =============================================
 # design-ai-ops · 多阶段构建 Dockerfile
 # Next.js standalone + 编译后的 seed.js
+# v0.11 B11: 加 market-seed.js（启动期 PlatformInfo 兜底）
 # =============================================
 
 # ---------- 1) 依赖阶段 ----------
@@ -58,6 +59,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 # Prisma schema + 编译好的 seed.js + Prisma CLI 用于启动时 db push
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/schema.prisma ./prisma/schema.prisma
 COPY --from=builder --chown=nextjs:nodejs /app/prisma/seed.js ./prisma/seed.js
+# v0.11 B11: market-seed.js 启动时 idempotent seed PlatformInfo (B10 followup #7)
+COPY --from=builder --chown=nextjs:nodejs /app/prisma/market-seed.js ./prisma/market-seed.js
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/prisma ./node_modules/prisma

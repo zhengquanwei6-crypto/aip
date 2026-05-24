@@ -19,5 +19,14 @@ if [ ! -f "$SEED_MARK" ]; then
   fi
 fi
 
+# v0.11 B11: 启动时种 PlatformInfo（B10 followup #7 闭环）
+# 容器换 DB 卷或全新部署时, Setting 表 market:platform:* 行不存在,
+# 用一个内联 node 脚本直接写 3 行 Setting (idempotent).
+# 不依赖 Next.js 起服务后才能调 API.
+if [ -f /app/prisma/market-seed.js ]; then
+  echo "[entrypoint] seeding market platforms if missing (idempotent)"
+  node /app/prisma/market-seed.js 2>&1 || echo "[entrypoint] market-seed failed (non-fatal)"
+fi
+
 echo "[entrypoint] starting Next.js"
 exec "$@"
