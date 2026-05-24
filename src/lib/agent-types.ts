@@ -16,6 +16,12 @@
  *   - photo-director systemPrompt 扩展：支持系列模式（seriesPrompts[] + seriesPlan）
  *     与画面颜色 / 主语言 / 风格预设字段约束
  *   - publish-director systemPrompt 描述同步更新（反映 imageOptions 字段）
+ *
+ * v0.11 B15.4：
+ *   - photo-director step2 systemPrompt 加 recommendedSize 强约束 ENUM：
+ *     仅允许 '1024x1024' | '1024x1536' | '1536x1024' | 'auto'，
+ *     绝对禁止返回 2048x2048 / 3840x2160 / 4K / 2K 等历史 B7 池里的非法字面量。
+ *     来源：B13 self-check §十一 #4 + §三 #8（B12 修后池只保留 OpenAI gpt-image-1 三档）。
  */
 
 export interface AgentDefinition {
@@ -153,6 +159,32 @@ D. textLanguage（图中文字主语言，'zh' 或 'en'）
 
 E. recommendedSize（用户预设里如果带了固定 size，例 "1024x1024"）
    → 输出时直接照搬，不要按平台默认覆盖
+   → 但仍必须落在【尺寸强约束 v0.11 B15.4】下面那 4 个枚举值之一，不能照搬非法字面量
+
+——————————————————
+【尺寸强约束 v0.11 B15.4 · 必读】
+
+\`recommendedSize\` 字段必须是以下枚举之一（**严格四选一**，大小写敏感，必须用半角字符）：
+  - '1024x1024' （方图 1:1，适合小红书首图 / 闲鱼商品图 / 头像）
+  - '1024x1536' （竖图 2:3，适合小红书内容多图 / 人像 / 长图笔记）
+  - '1536x1024' （横图 3:2，适合横屏 banner / 桌面壁纸 / 封面）
+  - 'auto'      （让模型自选，等价于交给运行时按平台默认决定）
+
+**绝对禁止**返回以下任何字面量（这些是历史 B7 老池里的值，B12 起已从 sizes 池移除，发出去会被服务端 fallback 到默认 size 并写 trace）：
+  - '2048x2048' / '2K'  （方图 2K，OpenAI gpt-image-1 不支持）
+  - '3840x2160' / '4K'  （横图 4K，OpenAI gpt-image-1 不支持）
+  - '4096x4096' / '4096x2160' （任何 4096 起步的尺寸）
+  - '1792x1024' / '1024x1792' （那是 DALL·E 3 的池，photo-director 默认走 gpt-image-2）
+  - '720x1280' / '768x1024' （那是 KIE Flux 的池）
+  - 任何带中文 "横/竖/方" / "高清" / "超清" 的描述
+  - 任何 \`>\` 1536 的边长
+  - 任何不是上述 4 个枚举值之一的字符串
+
+如果用户素材暗示需要更大尺寸（例如"做手机壁纸 4K"），**不要**把 \`recommendedSize\` 写成 4K，
+而要在 \`tips\` 数组里用一句中文说明，例 ["用户提到 4K 壁纸但当前 gpt-image-2 池仅支持 1536x1024，建议出图后再用 upscale 工具放大"]。
+\`recommendedSize\` 字段本身仍必须是上述四个枚举之一。
+
+如果完全不确定，输出 'auto'（运行时会按平台默认 fallback：闲鱼商品图 → 1024x1024，小红书 → 1024x1536）。
 
 ——————————————————
 【v0.9 b2 系列模式】当上下文里出现 "asSeries=true, seriesCount=N（2-4）, sameStyle=true" 时：
@@ -198,7 +230,9 @@ E. recommendedSize（用户预设里如果带了固定 size，例 "1024x1024"）
   "tips": ["<可选：1-2 条中文操作建议>"]
 }
 
-约束：所有 promptEn / negativeEn 必须英文；styleSummary / seriesPlan / scene / tips 必须中文。直接给 JSON。`,
+约束：所有 promptEn / negativeEn 必须英文；styleSummary / seriesPlan / scene / tips 必须中文。
+recommendedSize 必须是 '1024x1024' / '1024x1536' / '1536x1024' / 'auto' 之一（见上文【尺寸强约束 v0.11 B15.4】）。
+直接给 JSON。`,
   },
   {
     slug: 'publish-director',
