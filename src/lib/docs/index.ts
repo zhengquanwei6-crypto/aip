@@ -1,8 +1,9 @@
 // v0.11 B6 · 使用手册：篇目元数据 + slug → content 字符串 map
+// v0.11 B8 · 加第 10 篇 10-playground (AI 对话 / Playground 三 tab)
 //
 // 设计：
-//   - 9 篇 markdown 在源码树里位于 `src/content/docs/*.md`（人可读 / 可改）
-//   - push.sh 在 `docker compose build` 之前自动跑一段脚本，把 9 个 .md 文件的内容
+//   - 10 篇 markdown 在源码树里位于 `src/content/docs/*.md`（人可读 / 可改）
+//   - push.sh 在 `docker compose build` 之前自动跑一段脚本，把 10 个 .md 文件的内容
 //     生成一个 `src/lib/docs/content-bundle.ts`（template literal 形式 export const）
 //   - 本文件 import 该 content-bundle，所有内容在 JS bundle 里就是普通字符串字段，
 //     **完全不依赖运行时 fs.readFileSync**。这样：
@@ -23,7 +24,7 @@ export type DocsEntry = {
 };
 
 /**
- * 9 篇手册 · 顺序与 ToC 渲染顺序一致
+ * 10 篇手册 · 顺序与 ToC 渲染顺序一致
  *
  * slug 命名约定：`<order>-<kebab-case>` 与文件名一致（去 .md 扩展），方便人脑映射。
  */
@@ -90,6 +91,13 @@ export const DOCS_ENTRIES: ReadonlyArray<DocsEntry> = [
     title: '故障排查与日志',
     description: '/api/health 字段 / docker logs / Playwright 走查 / 失败重放',
     filename: '09-troubleshooting.md',
+  },
+  {
+    slug: '10-playground',
+    order: 10,
+    title: 'AI Playground',
+    description: 'B8 即时调用：LLM 对话 / 图片生成 / Agent 对话三 tab + 用法对照',
+    filename: '10-playground.md',
   },
 ] as const;
 

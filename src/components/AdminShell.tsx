@@ -21,6 +21,7 @@ import {
   Tags,
   DollarSign,
   MessageCircle,
+  MessageSquare,
   SlidersHorizontal,
   Plug,
   BarChart3,
@@ -47,6 +48,8 @@ const SIDEBAR_COLLAPSED_KEY = 'sidebar:collapsed';
  * 仍保留映射以便深链可读到 breadcrumb / topbar 标题（NAV 不再列），即使从 NAV 移除也不影响 URL 可达。
  *
  * v0.11 B6：新增 /docs (BookOpen) — 内部使用手册 9 篇。
+ *
+ * v0.11 B8：新增 /playground (MessageSquare) — AI 对话三 tab 即时调用。
  */
 function iconFor(href: string) {
   switch (href) {
@@ -60,6 +63,8 @@ function iconFor(href: string) {
       return PencilLine;
     case '/image':
       return ImageIcon;
+    case '/playground':
+      return MessageSquare;
     case '/workspace':
       return Briefcase;
     case '/contents':

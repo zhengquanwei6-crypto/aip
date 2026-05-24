@@ -15,6 +15,9 @@
 //   - imageSizesPerAdapter: { '<slug>': { sizes: N, qualities: M } }
 //     遍历 Setting WHERE key LIKE 'adapter:%'，从 JSON 读 sizes / qualities 数组长度
 //
+// v0.11 Batch 8：
+//   - playgroundEnabled: true（标记 B8 上线，给 Playwright 走查 + 文档校验）
+//
 // 所有新字段都是可选信息，任何失败都用 null/0/{} 兜底，不影响 HTTP 200/503
 
 import { NextResponse } from "next/server";
@@ -199,6 +202,8 @@ export async function GET() {
         apiKeyPool,
         // v0.11 b7
         imageSizesPerAdapter,
+        // v0.11 b8
+        playgroundEnabled: true,
       },
       { status: 200 },
     );

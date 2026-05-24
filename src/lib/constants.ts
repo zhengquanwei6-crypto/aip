@@ -83,7 +83,7 @@ export const SCRIPT_TYPES = [
 export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
 
 /**
- * 侧栏导航 (v0.11 B5: 22 → 14 整合 · B6: +/docs = 15).
+ * 侧栏导航 (v0.11 B5: 22 → 14 整合 · B6: +/docs = 15 · B8: +/playground = 16).
  *
  * 合并策略 (B5):
  *   - /clients   含「客户列表 / 报价方案」tabs (吸收 /pricing)
@@ -99,7 +99,12 @@ export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
  *      —— URL 保留 (deeplink 多), 仅从 NAV 移除
  *
  * v0.11 B6 新增:
- *   /docs    内部使用手册（9 篇 markdown），AdminShell 底部「?」图标快速跳转
+ *   /docs    内部使用手册（10 篇 markdown · B8 加 10-playground）
+ *
+ * v0.11 B8 新增:
+ *   /playground 即时调用三 tab（LLM 对话 / 图片生成 / Agent 对话），
+ *               复用 B1 池 + B7 sizes/qualities + 8 agents，0 schema 改
+ *               位于 /image 后面，方便切换"任务式生成"和"即时调试"
  */
 export const NAV_ITEMS: { href: string; label: string }[] = [
   { href: '/dashboard', label: '首页看板' },
@@ -107,6 +112,7 @@ export const NAV_ITEMS: { href: string; label: string }[] = [
   { href: '/calendar', label: '发布日历' },
   { href: '/content', label: '文案生成' },
   { href: '/image', label: '图片生成' },
+  { href: '/playground', label: 'AI 对话' },
   { href: '/workspace', label: '工作区' },
   { href: '/clients', label: '客户' },
   { href: '/keywords', label: '关键词库' },
