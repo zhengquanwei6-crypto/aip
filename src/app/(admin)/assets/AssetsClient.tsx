@@ -412,6 +412,15 @@ export default function AssetsClient({
                   >
                     原图
                   </a>
+                  {/* v0.12 B3.3 · V012_B3_I2I_SOURCE_BUTTON marker */}
+                  <a
+                    href={`/create?tab=image&sourceImage=${encodeURIComponent(a.url)}`}
+                    title="把这张图当成图生图源图，跳到 /create?tab=image"
+                    data-v012-b3-i2i-source
+                    className="text-purple-600 hover:underline"
+                  >
+                    → i2i 源图
+                  </a>
                 </div>
               </div>
             </div>

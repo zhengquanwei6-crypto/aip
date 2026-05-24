@@ -22,6 +22,12 @@ import { NextRequest, NextResponse } from 'next/server';
  *   （streaming SSR 已写 header，notFound 改不了 status）。
  * - 在 middleware 提前拦截不在白名单的 /docs/<slug> → 直接 NextResponse(404)。
  * - 11 个合法 slug 透传，root /docs 透传，其它一切 /docs/<bogus> 都 404。
+ *
+ * v0.12 B3.3 NAV 整合（content + image → /create）：
+ * - /content → 307 → /create?tab=content
+ * - /image   → 307 → /create?tab=image
+ * 沿袭 B5 /pricing /prompts 模式 —— 在 cookie / UA 判定之前 redirect。
+ * 用户书签 / 外链 / NAV 历史都走这里 307，避免直接 404。
  */
 
 const MOBILE_RE =
@@ -47,12 +53,16 @@ function toMobileTarget(pathname: string): string {
 }
 
 /**
- * v0.11 B5: B5 NAV 整合后旧 URL → 新 URL 的精确映射 (exact match only,
- * 子路径不动 —— /pricing/... 没有子路径; /prompts 也没 /prompts/[xxx] 的桌面页).
+ * v0.11 B5 + v0.12 B3.3: B5 NAV 整合后旧 URL → 新 URL 的精确映射（exact match only,
+ * 子路径不动 —— /pricing/... 没有子路径; /prompts 也没 /prompts/[xxx] 的桌面页;
+ * /content + /image 也没子路径，旧 deeplink 全是根级 URL）。
  */
 const LEGACY_REDIRECTS: Record<string, string> = {
   '/pricing': '/clients?tab=pricing',
   '/prompts': '/presets?tab=content',
+  // v0.12 B3.3
+  '/content': '/create?tab=content',
+  '/image': '/create?tab=image',
 };
 
 /**
@@ -112,7 +122,7 @@ export function middleware(req: NextRequest) {
     }
   }
 
-  // v0.11 B5: 旧 URL 精确重定向, 必须放在 cookie / UA 判定之前
+  // v0.11 B5 + v0.12 B3.3: 旧 URL 精确重定向, 必须放在 cookie / UA 判定之前
   // (cookie=desktop 时会直接 next() 跳过 cookie 之后的逻辑;
   //  cookie=mobile 会把 /pricing 改写到 /m/pricing 而非整合页)
   const legacyTarget = LEGACY_REDIRECTS[pathname];

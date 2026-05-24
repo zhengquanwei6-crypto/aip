@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { History as HistoryIcon, RotateCcw, X, Trash2, Upload, Image as ImageIcon } from 'lucide-react';
 import {
   PLATFORMS,
@@ -135,6 +136,21 @@ export default function ImageStudioClient() {
   const [sourceImageUrl, setSourceImageUrl] = useState('');
   const [sourceImageBase64, setSourceImageBase64] = useState('');
   const [sourceImagePreview, setSourceImagePreview] = useState<string | null>(null);
+
+  // v0.12 B3.3 · V012_B3_IMAGE_SOURCE_FROM_URL marker
+  // /create?tab=image&sourceImage=<url> 在 mount 时把 URL 写到 sourceImageUrl，
+  // 打通 /workspace?tab=assets 资产卡的「→ 用作 i2i 源图」入口。
+  // useSearchParams 是 client hook，在 mount 后读一次即可（变更 URL 不强行覆盖用户已编辑的输入）。
+  const _v012b3SearchParams = useSearchParams();
+  useEffect(() => {
+    const url = _v012b3SearchParams?.get('sourceImage');
+    if (url && !sourceImageUrl && !sourceImageBase64) {
+      setSourceImageUrl(url);
+    }
+    // 仅 mount 时跑一次，后续 URL 变化不强制覆盖（用户可能已改）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const sourceFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // 拉默认 adapter
