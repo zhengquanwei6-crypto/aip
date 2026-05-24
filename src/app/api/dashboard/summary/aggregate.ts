@@ -2,6 +2,7 @@
  * v0.11 B3 · /dashboard 单 fetch 聚合器（共享 SSR 与 HTTP 路由）
  * v0.11 B10 · 加 marketTrends 字段（小红书 / 闲鱼 / 千牛 三平台介绍 + 最近一条 snapshot）
  * v0.11 B15.7 · 加 diskUsage 字段（root % / uploads bytes / count · BUG-L12）
+ * v0.12 B5.2 · recentAIOutputs 过滤 type='suggestion'（NAV 已隐藏 /suggestions，dashboard 卡也对齐）
  *
  * 同一份逻辑被 /api/dashboard/summary 路由 + (admin)/dashboard/page.tsx (server component) 共用：
  *   - SSR 时直接 await buildDashboardSummary()，避免内部 HTTP 自调用
@@ -116,6 +117,17 @@ const APP_VERSION = process.env.APP_VERSION || 'v0.12';
 const DB_PATH =
   (process.env.DATABASE_URL || '').replace(/^file:/, '').trim() || '/data/dev.db';
 const UPLOADS_DIR = '/app/public/uploads';
+
+/**
+ * v0.12 B5.2 · RecentAIOutputs 卡片在 dashboard 上展示「最近 5 条 AI 输出」。
+ * NAV 已经在 v0.12-b4.1 把 /suggestions 隐藏（用户明示 + 真实数据 0 actionable），
+ * 但 RecentAIOutputs 仍会从 prisma.aIOutput.findMany() 拿到 type='suggestion' 的行，
+ * dashboard HTML 里仍出现 `>运营建议<` 字面量（来自 TYPE_LABEL.suggestion = '运营建议'）。
+ *
+ * 本批一致化：把 type='suggestion' 也从 dashboard 卡里隐藏（Setting / API 数据全保留，
+ * 用户仍可访问 /suggestions URL 直接看，但 dashboard 卡只展示用户实际会动作的输出类型）。
+ */
+const RECENT_AI_OUTPUT_HIDDEN_TYPES = new Set<string>(['suggestion']);
 
 /** Asia/Shanghai 今日信息（容器一般跑 UTC，按用户实际时区显示） */
 function getShanghaiTodayInfo(): {
@@ -364,7 +376,7 @@ export async function buildDashboardSummary(): Promise<DashboardSummary> {
     aioutputs,
     assets,
     clients,
-    recentAioRows,
+    recentAioRowsRaw,
     apiKeyPoolLlm,
     apiKeyPoolImage,
     publishDirectorStats,
@@ -379,7 +391,11 @@ export async function buildDashboardSummary(): Promise<DashboardSummary> {
     prisma.aIOutput.count(),
     prisma.asset.count(),
     prisma.client.count(),
-    prisma.aIOutput.findMany({ orderBy: { createdAt: 'desc' }, take: 5 }),
+    /**
+     * v0.12 B5.2 · 拉 5 + 一些缓冲，以便过滤 type='suggestion' 之后还能凑 5 条。
+     * 当前 DB 里 suggestion 占 12 / 93 ≈ 13%，take 12 缓冲足够。
+     */
+    prisma.aIOutput.findMany({ orderBy: { createdAt: 'desc' }, take: 12 }),
     summarizePool('llm'),
     summarizePool('image'),
     readPublishDirectorStats(),
@@ -399,20 +415,28 @@ export async function buildDashboardSummary(): Promise<DashboardSummary> {
     category: t.category,
   }));
 
-  const recentAIOutputs: RecentAIOutputItem[] = recentAioRows.map((r) => {
-    const s = summarizeAIOutput({
-      type: r.type,
-      input: r.input ?? null,
-      output: r.output ?? null,
+  /**
+   * v0.12 B5.2 · 过滤摆设类型（默认隐藏 type='suggestion'，与 v0.12-b4.1 NAV 隐藏 /suggestions 对齐）。
+   * 单一数据源：RECENT_AI_OUTPUT_HIDDEN_TYPES 常量（顶部声明）。后续如要恢复展示某类型，
+   * 只需改这个 Set，不需要动 RecentAIOutputs.tsx 的渲染逻辑。
+   */
+  const recentAIOutputs: RecentAIOutputItem[] = recentAioRowsRaw
+    .filter((r) => !RECENT_AI_OUTPUT_HIDDEN_TYPES.has(r.type))
+    .slice(0, 5)
+    .map((r) => {
+      const s = summarizeAIOutput({
+        type: r.type,
+        input: r.input ?? null,
+        output: r.output ?? null,
+      });
+      return {
+        id: r.id,
+        type: r.type,
+        platform: s.platform,
+        summary: s.summary,
+        createdAt: r.createdAt.toISOString(),
+      };
     });
-    return {
-      id: r.id,
-      type: r.type,
-      platform: s.platform,
-      summary: s.summary,
-      createdAt: r.createdAt.toISOString(),
-    };
-  });
 
   return {
     ok: true,
