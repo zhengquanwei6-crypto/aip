@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" role="img" aria-label="果冻的AI · GUODONG">
+  <!-- 顶部 squircle + 中央 4 角钻石 -->
+  <rect x="40" y="14" width="80" height="80" rx="18" fill="none" stroke="#0a0a0a" stroke-width="3.6"/>
+  <path d="M80 30 L86 56 L112 64 L86 72 L80 98 L74 72 L48 64 L74 56 Z" fill="#0a0a0a"/>
+  <!-- 中部「果冻」中文（serif elegant，使用系统衬线字体回退） -->
+  <text x="80" y="125" text-anchor="middle" font-family="'Source Serif Pro','Noto Serif SC',Georgia,serif" font-size="22" font-weight="500" fill="#0a0a0a">果冻</text>
+  <!-- 底部 GUODONG 拉丁副标 letter-spacing 0.4em -->
+  <text x="80" y="148" text-anchor="middle" font-family="ui-monospace,'SFMono-Regular',Consolas,monospace" font-size="9" letter-spacing="3.5" fill="#0a0a0a" opacity="0.7">GUODONG</text>
+</svg>

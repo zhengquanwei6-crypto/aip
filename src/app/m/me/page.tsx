@@ -38,8 +38,9 @@ export default async function MMePage() {
   return (
     <div className="space-y-3">
       <div className="rounded-xl bg-gradient-to-br from-slate-700 to-slate-900 text-white p-4 shadow">
-        <div className="text-xs opacity-70">design-ai-ops</div>
-        <div className="mt-1 font-semibold">个人运营工作台</div>
+        {/* V012_B4_M_ME_REBRAND */}
+        <div className="text-[10px] opacity-70 tracking-[0.32em] uppercase">GUODONG</div>
+        <div className="mt-1 font-semibold">果冻的AI · 工作台</div>
         <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
           <Stat label="任务" value={taskCount} />
           <Stat label="笔记" value={postCount} />

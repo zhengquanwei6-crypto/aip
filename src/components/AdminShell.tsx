@@ -38,7 +38,7 @@ import {
   ChevronRight,
   Wand2,
 } from 'lucide-react';
-import { NAV_ITEMS, NAV_GROUPS } from '@/lib/constants';
+import { NAV_ITEMS, NAV_GROUPS, HIDDEN_NAV_HREFS } from '@/lib/constants';
 import ThemeToggle from './ThemeToggle';
 import Breadcrumbs from './Breadcrumbs';
 
@@ -168,7 +168,8 @@ export default function AdminShell({
   const currentNav = NAV_ITEMS.find(
     (i) => pathname === i.href || pathname.startsWith(i.href + '/'),
   );
-  const title = currentNav?.label ?? '平面设计接单 AI 运营工作台';
+  // v0.12 B4.2：默认 fallback 文案换成新品牌名（用户原话「果冻的AI」）。
+  const title = currentNav?.label ?? '果冻的AI · 智能体工作台';
 
   return (
     // v0.11 B2: lg:items-start lets sticky aside align to top of flex container
@@ -247,6 +248,10 @@ export default function AdminShell({
  * v0.12 B3.2 · 单个分组（折叠组），4 组共用此组件。
  * - core 组（常用）：永远展开，不渲染 details，标题给个静默节
  * - 其他 3 组：localStorage 记忆 nav-collapsed-<slug>
+ *
+ * v0.12 B4.1：渲染前对 group.hrefs 做 .filter(href => !HIDDEN_NAV_HREFS.has(href))
+ * 把摆设功能（/clients /scripts /suggestions /analytics）从 NAV 完全摘掉。
+ * URL 保留可达，UI 入口消失。如果整组都 hidden，组本身不渲染（避免空 group）。
  */
 function NavGroup({
   pathname,
@@ -259,8 +264,12 @@ function NavGroup({
   collapsed: boolean;
 }) {
   const items = group.hrefs
+    .filter((h) => !HIDDEN_NAV_HREFS.has(h)) // v0.12 B4.1 摆设功能 NAV 隐藏
     .map((h) => NAV_ITEMS.find((i) => i.href === h))
-    .filter((x): x is { href: string; label: string } => Boolean(x));
+    .filter((x): x is { href: string; label: string; hidden?: boolean } => Boolean(x));
+
+  // v0.12 B4.1：整组都 hidden 时不渲染（避免出现「📦 资源」空标题）。
+  if (items.length === 0) return null;
 
   const [open, setOpen] = useState(!group.defaultCollapsed);
   const storageKey = `${NAV_GROUP_COLLAPSED_KEY}-${group.slug}`;
@@ -422,6 +431,7 @@ function SidebarContent({
 }) {
   return (
     <aside className={className}>
+      {/* v0.12 B4.2 · 品牌区改造：果冻的AI logo（squircle + 4 角钻石）+「果冻的AI」+ GUODONG */}
       <div
         className={clsx(
           'border-b border-slate-200 dark:border-slate-800 flex items-start justify-between',
@@ -429,21 +439,29 @@ function SidebarContent({
         )}
       >
         {collapsed ? (
-          <div
-            className="w-full text-center font-semibold text-brand-600 text-sm"
-            title="design-ai-ops"
+          <Link
+            href="/"
+            className="w-full flex items-center justify-center"
+            title="果冻的AI"
+            data-v012-b4-brand-collapsed
           >
-            d.a.o
-          </div>
+            <BrandLogoMark className="h-7 w-7 text-slate-800 dark:text-slate-200" />
+          </Link>
         ) : (
-          <div>
-            <div className="text-sm text-slate-400">design-ai-ops</div>
-            <div className="text-base font-semibold text-slate-800 dark:text-slate-100 leading-snug mt-1">
-              平面设计接单
-              <br />
-              AI 运营工作台
+          <Link href="/" className="flex items-center gap-2.5 min-w-0" data-v012-b4-brand>
+            <BrandLogoMark className="h-9 w-9 shrink-0 text-slate-800 dark:text-slate-200" />
+            <div className="min-w-0">
+              <div className="text-base font-semibold text-slate-800 dark:text-slate-100 leading-snug">
+                果冻的AI
+              </div>
+              <div
+                className="text-[10px] text-slate-400 dark:text-slate-500 tracking-[0.32em] uppercase mt-0.5"
+                aria-hidden
+              >
+                GUODONG
+              </div>
             </div>
-          </div>
+          </Link>
         )}
         {onClickClose && (
           <button
@@ -510,5 +528,40 @@ function SidebarContent({
         )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * v0.12 B4.2 · BrandLogoMark · 内嵌 SVG（与 public/logo-guodong.svg 视觉一致）。
+ *
+ * 视觉：squircle 圆角方形外框 + 中央 4 角钻石/光芒。
+ * 使用 currentColor 响应深浅色（sidebar 黑墨白底切换）。
+ */
+function BrandLogoMark({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 40 40"
+      width="40"
+      height="40"
+      className={className}
+      aria-hidden="true"
+      data-v012-b4-logo
+    >
+      <rect
+        x="2.5"
+        y="2.5"
+        width="35"
+        height="35"
+        rx="8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+      />
+      {/* 4 角钻石 / sparkle，由两条交叉菱形组成 */}
+      <path
+        d="M20 8 L22 18 L32 20 L22 22 L20 32 L18 22 L8 20 L18 18 Z"
+        fill="currentColor"
+      />
+    </svg>
   );
 }
