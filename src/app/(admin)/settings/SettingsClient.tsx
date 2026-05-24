@@ -72,6 +72,10 @@ const EMPTY_DRAFT: DraftKey = {
   notes: '',
 };
 
+// v0.11 B15.2 · IMAGE 池占位备用 key 标签关键字（用于 UI 提示判定）
+const B15_2_PLACEHOLDER_LABEL_HINT = 'v0.11 B15.2 占位';
+const B15_2_PLACEHOLDER_API_KEY = 'PLACEHOLDER_REPLACE_BY_USER';
+
 export default function SettingsClient({
   initial,
   hasEnvLLMKey,
@@ -520,6 +524,16 @@ export default function SettingsClient({
     );
   }
 
+  // v0.11 B15.2 · 是否检测到 IMAGE 池中存在「占位备用 KIE key」
+  // 以 label 含特定关键字 + active=false 双条件判定，避免误伤用户自建行
+  const b15_2_placeholderRow =
+    pool.find(
+      (r) =>
+        r.provider === 'image' &&
+        !r.active &&
+        (r.label || '').includes(B15_2_PLACEHOLDER_LABEL_HINT),
+    ) || null;
+
   return (
     <div className="space-y-6">
       {/* v0.11 B1 · API Keys 池（顶到顶部） */}
@@ -562,6 +576,23 @@ export default function SettingsClient({
                 新增 IMAGE key
               </button>
             </div>
+
+            {/* v0.11 B15.2 · IMAGE 池占位备用 key 提示 */}
+            {b15_2_placeholderRow && (
+              <div
+                data-b15-2-image-placeholder-hint=""
+                className="mb-2 rounded border border-violet-200 dark:border-violet-700/40 bg-violet-50/40 dark:bg-violet-900/10 p-2.5 text-xs text-violet-800 dark:text-violet-200 leading-relaxed"
+              >
+                <div className="font-medium mb-1">💡 v0.11 B15.2：IMAGE 池有备用占位 key</div>
+                <div>
+                  系统已为你预留一条 KIE 备用 key（label「{b15_2_placeholderRow.label}」，
+                  当前 <span className="font-mono">active=false</span>），未填实际值前不会被使用。
+                  当主用 4router key 连续失败被自动停用后，系统会按 <span className="font-mono">priority</span> 升序回退到这一条。
+                  点该行的「编辑」把 <span className="font-mono">apiKey</span> 替换成真实 KIE key、再点「启用」即可激活备用通道。
+                </div>
+              </div>
+            )}
+
             <PoolTable provider="image" />
           </section>
 
