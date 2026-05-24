@@ -138,3 +138,34 @@ step3 → imageUrls: ['https://...', 'https://...', 'https://...']
 ```
 
 不带 prompt:agent:<slug>:system 会用 `agents/registry.ts` 里硬编码的 systemPrompt（v0.9.2 b2 完成后才把它搬到 Setting 表）。
+
+## 💡 自定义 prompt 模板（v0.11 B15.5）
+
+8 个内置 agent 的 `systemPrompt` 都写死在 `src/lib/agent-types.ts`，会随版本更新。如果你想给某个 agent 调风格、加约束、或改输出格式，**不需要改源码**，去这个入口写一条覆盖即可：
+
+> **入口**：[/presets?tab=agent](/presets?tab=agent) — Agent System Prompt 编辑器
+
+行为约定：
+
+- 当 `Setting` 表里存在 `prompt:agent:<slug>:system` 这一行（即"自定义 prompt"），调用该 agent 时**用你的版本**替换内置 systemPrompt
+- 删了这条覆盖（或编辑器里清空），自动回退到内置 systemPrompt（无法删除内置）
+- slug 字面量与 `/api/agents/<slug>/chat` 公共契约**不变**——你只是换了"脑子"，对外接口没动
+- `/api/health.customPromptCount` 字段会反映当前自定义 prompt 总数（含 `prompt:*` 内容模板 + `prompt:agent:*` 覆盖），一直为 0 说明还没用过
+
+适用场景示意：
+
+| 想做这件事                     | 改哪个 agent             |
+|--------------------------------|--------------------------|
+| copy-writer 输出更短 / 加 emoji | copy-writer              |
+| photo-director 出图永远偏暖色  | photo-director           |
+| client-coach 切英文回客户       | client-coach             |
+| api-doctor 用更白话的语气       | api-doctor               |
+| publish-director 强制带话题标签 | publish-director         |
+
+> 内容类 prompt 模板（小红书 case / xianyu product / image:suggest 等 6 条）改在 [/presets?tab=content](/presets?tab=content)；本节讲的是 agent 维度的 systemPrompt，两者落到 `Setting` 表的不同 key 前缀（`prompt:xiaohongshu:case` vs `prompt:agent:copy-writer:system`）。
+
+风险与提示：
+
+- 改完不生效 → 检查 `/api/health.customPromptCount` 是否 ≥ 1；key 命名拼错（例 `agent_copy_writer_system`）不会被读
+- 改坏导致输出不可控 → 直接在 `/presets?tab=agent` 里清空那条覆盖，立即回退到内置（无需重启容器）
+- 想对比改前改后 → 编辑器自带"vs 默认"双栏 diff（v0.9.2 b1 起，与 `/presets?tab=content` 同套组件）

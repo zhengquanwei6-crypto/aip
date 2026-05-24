@@ -102,10 +102,13 @@ build 接口返回 `taskUpdated: true` + `task.status = 'generated'`，回到 `/
 |-------------------|-----------------------------------------|
 | 看历史所有 AI 输出| `/workspace`（B5 把 /history /assets 合并） |
 | 编辑 prompt 模板  | `/presets?tab=content`                  |
+| 自定义 agent 风格 | `/presets?tab=agent`（v0.11 B15.5；详见 [`/docs/05` §自定义 prompt 模板](/docs/05-agents)） |
 | 加更多 LLM key    | `/settings` 顶部 API Keys 池            |
 | 单图重新生成      | `/workspace?tab=assets` 找到这张图      |
 | 算一单价格        | `/tools?tab=calc`                       |
 | 看周报            | `/tools` 默认 tab                       |
 | 开发布日历         | `/calendar`                             |
+
+> 想自定义 agent 风格？看 [`/docs/05` §自定义 prompt 模板](/docs/05-agents)，从 [/presets?tab=agent](/presets?tab=agent) 给 8 个内置 agent 各写一条 systemPrompt 覆盖（不动源码、随时回退）。
 
 底部右下角的 `?` 图标永远跳回 `/docs/01-quick-start`，迷路了直接回这里。
