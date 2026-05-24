@@ -6,7 +6,9 @@
  * 也不带 admin 顶栏，整页极简。
  *
  * 设计原则（用户原话「简约、高端、流畅、有差异化、不千篇一律」）：
- *   - 配色：纯黑 #0a0a0a + 米白 #faf7f2 + 跳色 honey amber #c2410c（不用默认 indigo）
+ *
+ * v0.12 B5.4 · accent color 回归用户原话「果冻紫」（替换 b4.3 的「果冻紫」）
+ *   - 配色：纯黑 #0a0a0a + 米白 #faf7f2 + 跳色 jelly purple #b08be8（不用默认 indigo）
  *   - 字体：衬线（serif · 中文标题）+ 等宽（mono · 数据/slug）混排
  *   - 布局：左对齐 + 不规则间距，不用 grid-cols-3 默认套
  *   - 数据真实：从 prisma + health 读，不假造「服务 10000+」
@@ -165,7 +167,7 @@ function TopBar({ version }: { version: string }) {
           </span>
           <Link
             href="/dashboard"
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-[#0a0a0a] text-[#faf7f2] hover:bg-[#c2410c] transition-colors rounded-sm"
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-[#0a0a0a] text-[#faf7f2] hover:bg-[#b08be8] transition-colors rounded-sm"
             data-v012-b4-cta-enter
           >
             进入工作台
@@ -184,7 +186,7 @@ function Hero({ data }: { data: LandingData }) {
   return (
     <section className="pt-20 pb-16 lg:pt-28 lg:pb-24" data-v012-b4-hero>
       <div
-        className="text-[10px] tracking-[0.32em] uppercase text-[#c2410c] font-mono mb-5"
+        className="text-[10px] tracking-[0.32em] uppercase text-[#b08be8] font-mono mb-5"
         aria-hidden
       >
         agent · collection · platform
@@ -195,7 +197,7 @@ function Hero({ data }: { data: LandingData }) {
       >
         让多个 AI 智能体
         <br />
-        <span className="text-[#c2410c]">为同一个工作流</span>
+        <span className="text-[#b08be8]">为同一个工作流</span>
         <br />
         协作。
       </h1>
@@ -208,7 +210,7 @@ function Hero({ data }: { data: LandingData }) {
       <div className="mt-10 flex flex-wrap gap-3 items-center">
         <Link
           href="/dashboard"
-          className="inline-flex items-center gap-2 px-5 py-3 text-sm font-medium bg-[#0a0a0a] text-[#faf7f2] hover:bg-[#c2410c] transition-colors rounded-sm"
+          className="inline-flex items-center gap-2 px-5 py-3 text-sm font-medium bg-[#0a0a0a] text-[#faf7f2] hover:bg-[#b08be8] transition-colors rounded-sm"
         >
           进入工作台
           <span aria-hidden>→</span>
@@ -362,7 +364,7 @@ function FlowDiagram() {
               markerHeight="6"
               orient="auto"
             >
-              <path d="M0,0 L10,5 L0,10 Z" fill="#c2410c" />
+              <path d="M0,0 L10,5 L0,10 Z" fill="#b08be8" />
             </marker>
           </defs>
 
@@ -428,7 +430,7 @@ function FlowDiagram() {
               textAnchor="middle"
               fontSize="11"
               fontFamily="ui-monospace,monospace"
-              fill="#c2410c"
+              fill="#b08be8"
               opacity="0.85"
             >
               agent registry
@@ -502,7 +504,7 @@ function FlowDiagram() {
           <path
             d="M 400 170 C 460 170, 480 220, 540 220"
             fill="none"
-            stroke="#c2410c"
+            stroke="#b08be8"
             strokeWidth="1.5"
             markerEnd="url(#arrow-amber)"
           />
@@ -511,7 +513,7 @@ function FlowDiagram() {
             y="215"
             fontSize="9"
             fontFamily="ui-monospace,monospace"
-            fill="#c2410c"
+            fill="#b08be8"
             opacity="0.7"
           >
             invoke
@@ -560,7 +562,7 @@ function FlowDiagram() {
               width="160"
               height="50"
               fill="none"
-              stroke="#c2410c"
+              stroke="#b08be8"
               strokeWidth="1.5"
               rx="2"
             />
@@ -580,7 +582,7 @@ function FlowDiagram() {
               textAnchor="middle"
               fontSize="9"
               fontFamily="ui-monospace,monospace"
-              fill="#c2410c"
+              fill="#b08be8"
               opacity="0.7"
             >
               priority + fallback
@@ -591,25 +593,25 @@ function FlowDiagram() {
 
       <ul className="mt-8 grid sm:grid-cols-2 gap-x-10 gap-y-3 text-[13px] text-[#0a0a0a]/70">
         <li className="flex gap-2">
-          <span aria-hidden className="text-[#c2410c]">·</span>
+          <span aria-hidden className="text-[#b08be8]">·</span>
           <span>
             agent registry 在 <code className="font-mono text-[12px]">src/lib/agent-types.ts</code>，每个 agent 一个 slug + scope + systemPrompt。
           </span>
         </li>
         <li className="flex gap-2">
-          <span aria-hidden className="text-[#c2410c]">·</span>
+          <span aria-hidden className="text-[#b08be8]">·</span>
           <span>
             所有输出落 <code className="font-mono text-[12px]">AIOutput</code> 表，可以重新打开看 prompt + 结果，可以重放。
           </span>
         </li>
         <li className="flex gap-2">
-          <span aria-hidden className="text-[#c2410c]">·</span>
+          <span aria-hidden className="text-[#b08be8]">·</span>
           <span>
             LLM key 池支持多 key，priority asc 取，连续 3 次失败自动 disable，下次请求走备用。
           </span>
         </li>
         <li className="flex gap-2">
-          <span aria-hidden className="text-[#c2410c]">·</span>
+          <span aria-hidden className="text-[#b08be8]">·</span>
           <span>
             systemPrompt 可在 <code className="font-mono text-[12px]">/presets?tab=agent</code> 直接改，立即生效，不用重启。
           </span>
@@ -684,7 +686,7 @@ function CallToAction() {
     <section className="py-20 lg:py-28" data-v012-b4-cta>
       <div className="border-t border-[#0a0a0a]/15 pt-16">
         <div
-          className="text-[10px] tracking-[0.32em] uppercase text-[#c2410c] font-mono mb-5"
+          className="text-[10px] tracking-[0.32em] uppercase text-[#b08be8] font-mono mb-5"
           aria-hidden
         >
           start now
@@ -706,7 +708,7 @@ function CallToAction() {
         <div className="mt-10 flex flex-wrap gap-3">
           <Link
             href="/dashboard"
-            className="inline-flex items-center gap-2 px-6 py-3 text-sm font-medium bg-[#0a0a0a] text-[#faf7f2] hover:bg-[#c2410c] transition-colors rounded-sm"
+            className="inline-flex items-center gap-2 px-6 py-3 text-sm font-medium bg-[#0a0a0a] text-[#faf7f2] hover:bg-[#b08be8] transition-colors rounded-sm"
           >
             进入工作台
             <span aria-hidden>→</span>
