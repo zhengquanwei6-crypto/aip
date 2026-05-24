@@ -71,7 +71,7 @@ publish-director 抽屉里"风格模板"下拉选这条，photo-director 在 ste
 
 每个 adapter 自带一组尺寸 / 质量预设池。三处图片 UI 抽屉打开时会读 `/api/health.imageDefaultAdapter` → `/api/adapters/<slug>` 拿到 `sizes` / `qualities` 数组，渲染成两个 select。
 
-> **v0.11 B12 起**：OpenAI gpt-image-1 协议（4router-gpt-image-2 / openai-gpt-img-2 / kie-gpt-image-2 共用此协议）真实只支持下表 3 档尺寸；B7 误塞 2K(2048) / 4K(3840×2160) 已修正。B14 把本文档表格也对齐到生产实际值。
+> **v0.11 B12 起**：OpenAI gpt-image-1 协议（4router-gpt-image-2 / openai-gpt-img-2 / kie-gpt-image-2 共用此协议）真实只支持下表 3 档尺寸；B7 误塞的两档高分辨率（2K 与 4K，含 2048 与 3840×2160）已修正。B14 把本文档表格也对齐到生产实际值。
 
 ### 池配置（src/lib/adapter-seed.ts）
 
@@ -82,7 +82,7 @@ publish-director 抽屉里"风格模板"下拉选这条，photo-director 在 ste
 | `openai-dalle-3` | 方图1024 / 竖图1024x1792 / 横图1792x1024 | 标准 / 高清 |
 | `generic-openai-compatible` | 1024 | （无） |
 
-> 历史轨迹：B7 时把 OpenAI 系池误塞了 `2048x2048` / `3840x2160`（"2K/4K"），4router 中转站对非法 size 反向回模糊错误「分组 GptPro 下模型 gpt-image-2 的可用渠道不存在」（用户实拍）。B12 把池收紧到 OpenAI 官方 3 档；B14 把本文档表格 + 残留的硬编码 ratio select 一并对齐。
+> 历史轨迹：B7 时把 OpenAI 系池误塞了两档非法高分辨率（square-2K 与 16:9-4K），4router 中转站对非法 size 反向回模糊错误「分组 GptPro 下模型 gpt-image-2 的可用渠道不存在」（用户实拍）。B12 把池收紧到 OpenAI 官方 3 档；B14 把本文档表格 + 残留的硬编码 ratio select 一并对齐。
 
 ## 📐 图生图 + 比例预设（B9）
 
