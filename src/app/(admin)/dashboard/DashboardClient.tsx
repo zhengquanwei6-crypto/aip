@@ -1,12 +1,14 @@
 /**
  * v0.11 B3 · Dashboard 客户端组件
+ * v0.11 B10 · 加入第 5 区：市场趋势卡（MarketTrendsCard）
  *
- * 4 区布局（max-w-[1400px] 由 B2 容器控制，本组件用 grid）：
+ * 4 区 + 第 5 区布局（max-w-[1400px] 由 B2 容器控制，本组件用 grid）：
  *   1) 顶部欢迎条（今日日期 / 周X / 待办数量）
  *   2) 6 KPI 小卡：待办 / 已生成 / 已发布 / AIOutput / 图片 / 客户
  *   3) 4 快速操作：新建任务 / 写文案 / 出图 / 全流程发布
  *   4-A) 左下：今日待办前 5 + 最近 5 条 AIOutput
  *   4-B) 右下：系统健康 + 最近失败
+ *   5)   市场趋势（B10）：小红书 / 闲鱼 / 千牛 三 Tab + KPI + 编辑数据
  */
 'use client';
 
@@ -29,14 +31,17 @@ import {
   SystemHealthCard,
   RecentFailuresCard,
 } from './components/SystemHealthCard';
+import MarketTrendsCard from './components/MarketTrendsCard';
 import type { DashboardSummary } from '@/app/api/dashboard/summary/aggregate';
+import { PLATFORM_SLUGS } from '@/lib/market/types';
 
 export interface DashboardClientProps {
   data: DashboardSummary;
 }
 
 export default function DashboardClient({ data }: DashboardClientProps) {
-  const { today, kpi, todayTasks, recentAIOutputs, system } = data;
+  const { today, kpi, todayTasks, recentAIOutputs, system, marketTrends } =
+    data;
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -177,6 +182,11 @@ export default function DashboardClient({ data }: DashboardClientProps) {
           recentFailures={system.recentFailures}
         />
       </section>
+
+      {/* 5) 市场趋势（v0.11 B10） */}
+      {marketTrends ? (
+        <MarketTrendsCard data={marketTrends} order={PLATFORM_SLUGS} />
+      ) : null}
     </div>
   );
 }

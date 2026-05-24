@@ -1,5 +1,8 @@
 // /api/health · 轻量健康检查
 //
+// v0.11 B10：
+//   - marketTrendsModule: { enabled: true, platforms: [...], snapshotCount }
+//
 // v0.11 B9：
 //   - imageCapabilitiesPerAdapter: { '<slug>': { sizes, qualities, aspectRatios, supportsImg2Img } }
 //   - 替代 B7 imageSizesPerAdapter（向后兼容多保留 imageSizesPerAdapter）
@@ -16,6 +19,8 @@ import { PrismaClient } from "@prisma/client";
 import { AGENTS } from "@/lib/agent-types";
 import { summarizePool } from "@/lib/ai/keys";
 import { ADAPTER_SETTING_PREFIX } from "@/lib/adapter-types";
+import { countMarketSnapshots } from "@/lib/market/store";
+import { PLATFORM_SLUGS } from "@/lib/market/types";
 
 const prisma = (globalThis as any).__prisma__ ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") {
@@ -172,6 +177,24 @@ async function readImageCapabilitiesPerAdapter(): Promise<{
   return { capabilities, imageSizesLegacy };
 }
 
+async function readMarketTrendsModule(): Promise<{
+  enabled: true;
+  platforms: ReadonlyArray<string>;
+  snapshotCount: number;
+}> {
+  let snapshotCount = 0;
+  try {
+    snapshotCount = await countMarketSnapshots();
+  } catch {
+    snapshotCount = 0;
+  }
+  return {
+    enabled: true,
+    platforms: PLATFORM_SLUGS,
+    snapshotCount,
+  };
+}
+
 export async function GET() {
   const t0 = Date.now();
   try {
@@ -184,6 +207,7 @@ export async function GET() {
       customPromptCount,
       apiKeyPool,
       caps,
+      marketTrendsModule,
     ] = await Promise.all([
       readImageDefaultAdapter(),
       readRecentFailures(),
@@ -191,6 +215,7 @@ export async function GET() {
       readCustomPromptCount(),
       readApiKeyPool(),
       readImageCapabilitiesPerAdapter(),
+      readMarketTrendsModule(),
     ]);
 
     return NextResponse.json(
@@ -216,6 +241,8 @@ export async function GET() {
         playgroundEnabled: true,
         // v0.11 b9
         imageCapabilitiesPerAdapter: caps.capabilities,
+        // v0.11 b10
+        marketTrendsModule,
       },
       { status: 200 },
     );

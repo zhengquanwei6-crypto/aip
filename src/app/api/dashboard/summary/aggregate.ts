@@ -1,5 +1,6 @@
 /**
  * v0.11 B3 · /dashboard 单 fetch 聚合器（共享 SSR 与 HTTP 路由）
+ * v0.11 B10 · 加 marketTrends 字段（小红书 / 闲鱼 / 千牛 三平台介绍 + 最近一条 snapshot）
  *
  * 同一份逻辑被 /api/dashboard/summary 路由 + (admin)/dashboard/page.tsx (server component) 共用：
  *   - SSR 时直接 await buildDashboardSummary()，避免内部 HTTP 自调用
@@ -13,6 +14,16 @@ import { prisma } from '@/lib/db';
 import { summarizePool } from '@/lib/ai/keys';
 import { stat } from 'node:fs/promises';
 import { AGENTS } from '@/lib/agent-types';
+import {
+  getAllPlatformInfo,
+  getPlatformLatestSnapshot,
+} from '@/lib/market/store';
+import {
+  PLATFORM_SLUGS,
+  type MarketPlatformSlug,
+  type MarketSnapshot,
+  type PlatformInfo,
+} from '@/lib/market/types';
 
 export interface DashboardSummaryToday {
   /** YYYY-MM-DD（Asia/Shanghai） */
@@ -67,6 +78,11 @@ export interface DashboardSummarySystem {
   recentFailures: { llm: string | null; image: string | null };
 }
 
+export type DashboardSummaryMarketTrends = Record<
+  MarketPlatformSlug,
+  { latest: MarketSnapshot | null; info: PlatformInfo }
+>;
+
 export interface DashboardSummary {
   ok: true;
   today: DashboardSummaryToday;
@@ -74,6 +90,8 @@ export interface DashboardSummary {
   todayTasks: TodayTaskItem[];
   recentAIOutputs: RecentAIOutputItem[];
   system: DashboardSummarySystem;
+  /** v0.11 B10：三平台市场趋势（介绍 + 最近一条 snapshot） */
+  marketTrends: DashboardSummaryMarketTrends;
 }
 
 const APP_VERSION = process.env.APP_VERSION || 'v0.11';
@@ -144,8 +162,7 @@ async function readRecentFailures(): Promise<{
       try {
         const o = JSON.parse(r.output);
         const looksFail =
-          !!o?.error ||
-          (Array.isArray(o?.urls) && o.urls.length === 0);
+          !!o?.error || (Array.isArray(o?.urls) && o.urls.length === 0);
         if (!looksFail) continue;
         if (r.type === 'text' && !out.llm) out.llm = shortFailure(r.input, r.output);
         else if (r.type === 'image' && !out.image)
@@ -240,6 +257,26 @@ function summarizeAIOutput(aio: {
   return { platform, summary: summary.slice(0, 120) };
 }
 
+async function buildMarketTrends(): Promise<DashboardSummaryMarketTrends> {
+  const platforms = await getAllPlatformInfo();
+  const infoBySlug = new Map<MarketPlatformSlug, PlatformInfo>();
+  for (const p of platforms) infoBySlug.set(p.slug, p);
+
+  const out = {} as DashboardSummaryMarketTrends;
+  for (const slug of PLATFORM_SLUGS) {
+    const info = infoBySlug.get(slug);
+    if (!info) continue;
+    let latest: MarketSnapshot | null = null;
+    try {
+      latest = await getPlatformLatestSnapshot(slug);
+    } catch {
+      latest = null;
+    }
+    out[slug] = { latest, info };
+  }
+  return out;
+}
+
 export async function buildDashboardSummary(): Promise<DashboardSummary> {
   const todayInfo = getShanghaiTodayInfo();
 
@@ -265,6 +302,7 @@ export async function buildDashboardSummary(): Promise<DashboardSummary> {
     publishDirectorStats,
     recentFailures,
     dbSize,
+    marketTrends,
   ] = await Promise.all([
     prisma.task.count({ where: { status: 'pending' } }),
     prisma.task.count({ where: { status: 'generated' } }),
@@ -278,6 +316,7 @@ export async function buildDashboardSummary(): Promise<DashboardSummary> {
     readPublishDirectorStats(),
     readRecentFailures(),
     readDbSize(),
+    buildMarketTrends(),
   ]);
 
   const todayTasks: TodayTaskItem[] = todayTasksAll.slice(0, 5).map((t) => ({
@@ -333,5 +372,6 @@ export async function buildDashboardSummary(): Promise<DashboardSummary> {
       publishDirectorStats,
       recentFailures,
     },
+    marketTrends,
   };
 }
