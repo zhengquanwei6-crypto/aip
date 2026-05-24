@@ -1,3 +1,13 @@
+/**
+ * /calendar · 本周发布计划（7 天 details · 今日 open · 其它 closed）
+ *
+ * v0.12 B3.4 BUG-M16：自适应断点修复
+ *   - 旧版 grid: 1 → sm:2 → lg:4 → xl:7（漏掉 md:768~1024 区间，
+ *     md 下还是 2 col，与 sticky 头部 + sidebar 收窄之后内容相比，
+ *     单卡宽度 ~280px 已偏窄，标题截断 + 时间换行错位）
+ *   - 新版 grid: 1 → sm:2 → md:3 → lg:4 → xl:7（md 加一档 3 col）
+ *   - h2 + DayCard summary 文字字号收紧到 sm，避免 md 下二行换行
+ */
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { PLATFORM_LABEL, TASK_STATUSES } from '@/lib/constants';
@@ -15,7 +25,7 @@ export default async function CalendarPage() {
   const todayDow = todayDayOfWeek();
 
   return (
-    <div className="space-y-4 sm:space-y-6">
+    <div className="space-y-4 sm:space-y-6" data-v012-b3-calendar>
       <div className="card">
         <div className="card-header">
           <h2 className="font-semibold">本周发布计划</h2>
@@ -23,7 +33,8 @@ export default async function CalendarPage() {
             每天 6 条小红书 + 4 条闲鱼
           </span>
         </div>
-        <div className="card-body grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3 sm:gap-4">
+        {/* v0.12 B3.4 BUG-M16: 加 md:grid-cols-3 中间档，避免 md 范围（768~1024）卡片过窄 */}
+        <div className="card-body grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 sm:gap-4">
           {schedules.map((s) => {
             const isToday = s.dayOfWeek === todayDow;
             return (
@@ -61,7 +72,8 @@ function DayCard({
             {DAY_LABELS[schedule.dayOfWeek - 1]}
           </div>
           {isToday && <span className="badge-blue">今日</span>}
-          <div className="hidden sm:block text-xs text-slate-500 truncate">
+          {/* v0.12 B3.4 BUG-M16: md 下也显示 theme（之前 hidden sm:block 在 md~lg 偏紧凑） */}
+          <div className="hidden md:block text-xs text-slate-500 truncate">
             {schedule.theme}
           </div>
         </div>
@@ -81,7 +93,8 @@ function DayCard({
         </div>
       </summary>
       <div className="calendar-day-body px-3 pb-3">
-        <div className="sm:hidden text-xs text-slate-500 leading-relaxed mb-2">
+        {/* v0.12 B3.4 BUG-M16: sm + md 下显示完整 theme（lg 起 summary 已显示，body 隐藏避免重复） */}
+        <div className="md:hidden text-xs text-slate-500 leading-relaxed mb-2">
           {schedule.theme}
         </div>
         <div className="space-y-1.5">
