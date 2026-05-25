@@ -49,6 +49,30 @@ interface Props {
 
 const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
 
+
+/** v0.13 B2 fix-A: 按 g.aspectRatio 或 g.size 推算 thumbnail 容器比例 */
+function aspectClass(g: { size?: string; aspectRatio?: string }): string {
+  const r = (g.aspectRatio || '').trim();
+  if (r === '3:2') return 'aspect-[3/2]';
+  if (r === '2:3') return 'aspect-[2/3]';
+  if (r === '16:9') return 'aspect-[16/9]';
+  if (r === '9:16') return 'aspect-[9/16]';
+  if (r === '4:3') return 'aspect-[4/3]';
+  if (r === '3:4') return 'aspect-[3/4]';
+  if (r === '21:9') return 'aspect-[21/9]';
+  // 没拿到 ratio 就退到 size 推算
+  const m = (g.size || '').match(/^(\d+)\s*x\s*(\d+)$/i);
+  if (m) {
+    const w = Number(m[1]);
+    const h = Number(m[2]);
+    if (w && h) {
+      if (w === h) return 'aspect-square';
+      return `aspect-[${w}/${h}]`;
+    }
+  }
+  return 'aspect-square';
+}
+
 export default function ImageTab({ imageKeys, adapters, defaultAdapter }: Props) {
   const activeKeys = useMemo(() => imageKeys.filter((k) => k.active), [imageKeys]);
 
@@ -385,6 +409,7 @@ export default function ImageTab({ imageKeys, adapters, defaultAdapter }: Props)
             <li>切换 adapter 会写 IMAGE_DEFAULT_ADAPTER（与 /image 共用）</li>
             <li>i2i 模式需要 supportsImg2Img=true 的 adapter</li>
             <li>所有图都落 Asset 表 + AIOutput type=&apos;playground:image&apos;</li>
+            <li data-v013-b2-tip-cometapi>cometapi · gpt-image-2 仅支持 1K 三档（1024×1024 / 1024×1536 / 1536×1024）；要更高分辨率切到 KIE Flux Kontext Pro</li>
           </ul>
         </div>
       </aside>
@@ -441,10 +466,10 @@ export default function ImageTab({ imageKeys, adapters, defaultAdapter }: Props)
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {history.map((g, i) => (
                 <button key={i} type="button" onClick={() => setLightboxIndex(i)}
-                  className="group relative aspect-square overflow-hidden rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 hover:ring-2 hover:ring-brand-500 transition-all"
+                  data-v013-b2-thumb-ratio={g.aspectRatio || g.size || ""} className={`group relative ${aspectClass(g)} overflow-hidden rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 hover:ring-2 hover:ring-brand-500 transition-all`}
                   title={g.prompt}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={g.url} alt={g.prompt.slice(0, 60)} className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
+                  <img src={g.url} alt={g.prompt.slice(0, 60)} className="absolute inset-0 w-full h-full object-contain" loading="lazy" />
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent text-white text-[10px] px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     {g.adapterSlug ?? g.via} · {g.aspectRatio || g.size || '—'}{g.mode === 'i2i' ? ' · i2i' : ''}
                   </div>

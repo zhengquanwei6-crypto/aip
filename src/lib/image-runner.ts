@@ -42,6 +42,7 @@
 import { prisma } from '@/lib/db';
 import { generateImage as legacyGenerateImage } from '@/lib/ai/image';
 import { runAdapter } from '@/lib/adapter-runtime';
+import { ensureI2iFlow } from '@/lib/adapter-defaults';
 import {
   adapterConfigSchema,
   adapterKey,
@@ -57,6 +58,7 @@ import { saveImageFromBase64, saveImageFromUrl } from '@/lib/storage';
 import { normalizeSizeForAdapter, type NormalizedSize } from '@/lib/image-size';
 import {
   getActiveImageKey,
+  getImageKeyOrOverride,
   markKeySuccess,
   markKeyError,
   type ActiveKey,
@@ -83,6 +85,8 @@ export interface RunOptions {
   sourceImageBase64?: string;
   /** 用户从 aspectRatios 池选的 ratio 字符串（"1:1" / "16:9"...） */
   aspectRatio?: string;
+  /** v0.12: 主动指定 IMAGE ApiKey id；找不到/disabled 时 fallback 到默认池 */
+  imageKeyOverride?: string | null;
 }
 
 export interface RunTrace {
@@ -140,19 +144,20 @@ async function loadAdapter(slug: string) {
     const parsed = adapterConfigSchema.safeParse(JSON.parse(row.value));
     if (!parsed.success) return null;
     if (!parsed.data.enabled) return null;
-    return parsed.data;
+    // v0.13 B2 fix-B: 自动补 multipart i2i flow（OpenAI 兼容 adapter 没填 img2imgFlow 时）
+    return ensureI2iFlow(parsed.data);
   } catch {
     return null;
   }
 }
 
-async function pickImageApiKey(): Promise<{
+async function pickImageApiKey(overrideId?: string | null): Promise<{
   apiKey: string;
   source: 'pool' | 'setting' | 'env' | 'none';
   activeKey?: ActiveKey;
 }> {
   try {
-    const k = await getActiveImageKey();
+    const k = await getImageKeyOrOverride(overrideId);
     if (k && k.apiKey) {
       return { apiKey: k.apiKey, source: 'pool', activeKey: k };
     }
@@ -167,25 +172,81 @@ async function pickImageApiKey(): Promise<{
   return { apiKey: '', source: 'none' };
 }
 
-async function persistImages(remoteUrls: string[]): Promise<string[]> {
+interface PersistOutcome {
+  url: string;        // /uploads/xxx
+  remote: string;     // 原 remote 来源（用于追溯）
+  kind: 'base64' | 'url';
+}
+
+interface PersistFailure {
+  remote: string;
+  kind: 'base64' | 'url' | 'unknown';
+  error: string;
+}
+
+async function persistImagesDetailed(
+  remoteUrls: string[],
+): Promise<{ savedUrls: string[]; failures: PersistFailure[] }> {
   const out: string[] = [];
+  const failures: PersistFailure[] = [];
   for (const url of remoteUrls) {
+    if (typeof url !== 'string' || !url) {
+      failures.push({ remote: String(url), kind: 'unknown', error: '空或非字符串项' });
+      continue;
+    }
     try {
-      if (typeof url === 'string' && url.startsWith('data:image/')) {
-        const m = url.match(/^data:image\/[a-z]+;base64,(.+)$/i);
-        if (m) {
-          const saved = await saveImageFromBase64(m[1]);
-          out.push(saved.url);
+      // v0.13 BUG-M27：base64 容忍换行；data: 前缀可选（cometapi 等返回裸 base64）
+      const trimmed = url.trim().replace(/\s+/g, '');
+
+      // 1) data:image/...;base64,XXX 形态
+      if (trimmed.startsWith('data:image/')) {
+        const m = trimmed.match(/^data:image\/[a-z0-9+\-]+;base64,([A-Za-z0-9+/=]+)$/i);
+        if (!m) {
+          failures.push({ remote: trimmed.slice(0, 60) + '...', kind: 'base64', error: 'data: URI 无法解析（缺 base64, 部分）' });
           continue;
         }
+        const saved = await saveImageFromBase64(m[1]);
+        out.push(saved.url);
+        continue;
       }
-      const saved = await saveImageFromUrl(url);
-      out.push(saved.url);
-    } catch {
-      /* skip */
+
+      // 2) http(s)://... 形态
+      if (/^https?:\/\//i.test(trimmed)) {
+        const saved = await saveImageFromUrl(trimmed);
+        out.push(saved.url);
+        continue;
+      }
+
+      // 3) 裸 base64（cometapi 直接返 b64 不带前缀）：必须满足
+      //    - 长度 >= 100（一张最小图也得几百字节）
+      //    - 仅含 base64 合法字符
+      //    - 解码后字节数 > 0
+      if (trimmed.length >= 100 && /^[A-Za-z0-9+/=]+$/.test(trimmed)) {
+        const saved = await saveImageFromBase64(trimmed);
+        out.push(saved.url);
+        continue;
+      }
+
+      // 4) 其他：报清楚
+      failures.push({
+        remote: trimmed.slice(0, 80),
+        kind: 'unknown',
+        error: `无法识别图片格式（既不是 data: 前缀，也不是 http(s)://，也不像裸 base64; 首 60 字符=${trimmed.slice(0, 60)}）`,
+      });
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      const kind: PersistFailure['kind'] = url.startsWith('data:') ? 'base64' : 'url';
+      failures.push({ remote: url.slice(0, 80), kind, error: err });
+      // 不再吞错；落到 stderr 让运维看见
+      console.warn('[image-runner] persistImages failed:', kind, err, 'remote=', url.slice(0, 80));
     }
   }
-  return out;
+  return { savedUrls: out, failures };
+}
+
+async function persistImages(remoteUrls: string[]): Promise<string[]> {
+  const r = await persistImagesDetailed(remoteUrls);
+  return r.savedUrls;
 }
 
 function extractAdapterTrace(
@@ -417,7 +478,7 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
         // 切换 flow（i2i 用 img2imgFlow，缺省时沿用 t2i flow）
         const { adapter, i2iFlow } = adapterForMode(baseAdapter, mode);
 
-        const picked = await pickImageApiKey();
+        const picked = await pickImageApiKey(opts.imageKeyOverride);
         const apiKey = picked.apiKey;
         if (!apiKey) {
           return {
@@ -558,7 +619,16 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
         //   旧版 bug：上游 200 + b64_json，但 saveImage 失败时函数返 ok:false，
         //            可 markKeySuccess 已被调过 → consecutiveErrors 重置，永不 disable。
         //   新版：persistImages 完成后再判断；非空走 markKeySuccess，空（落盘失败）走 markKeyError。
-        const savedUrls = await persistImages(result.imageUrls);
+        const persisted = await persistImagesDetailed(result.imageUrls);
+          const savedUrls = persisted.savedUrls;
+          if (persisted.failures.length > 0) {
+            const summary = persisted.failures
+              .map((f) => `${f.kind}: ${f.error}`)
+              .join(" | ");
+            trace.lastError = trace.lastError
+              ? `${trace.lastError}; persist: ${summary}`
+              : `persist: ${summary}`;
+          }
         const persistOk = savedUrls.length > 0;
         if (picked.activeKey) {
           if (persistOk) {
