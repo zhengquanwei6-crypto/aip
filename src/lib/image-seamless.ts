@@ -49,8 +49,17 @@ export async function makeSeamless(
 ): Promise<SeamlessResult> {
   const Jimp = await loadJimp();
 
-  // 1) 读源图
-  const orig = await Jimp.read(sourceAbsPath);
+  // 1) 读源图（v0.13 B4.1: 解除 jimp 默认 256MB 解码上限，给 1024MB 余量；超大图自动降到 4096）
+  const orig = await Jimp.read({ src: sourceAbsPath, maxMemoryUsageInMB: 1024 } as any);
+  // 大图保护：超过 4096×4096 自动等比缩到长边 4096，避免后续 W*H 像素扫描耗时过长
+  const MAX_DIM = 4096;
+  if (orig.bitmap.width > MAX_DIM || orig.bitmap.height > MAX_DIM) {
+    if (orig.bitmap.width >= orig.bitmap.height) {
+      orig.resize(MAX_DIM, Jimp.AUTO);
+    } else {
+      orig.resize(Jimp.AUTO, MAX_DIM);
+    }
+  }
   const W: number = orig.bitmap.width;
   const H: number = orig.bitmap.height;
   if (W < 16 || H < 16) {
