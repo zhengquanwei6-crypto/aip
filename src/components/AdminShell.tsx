@@ -58,6 +58,12 @@ const NAV_GROUP_COLLAPSED_KEY = 'nav-collapsed'; // 完整 key: nav-collapsed-<s
  */
 function iconFor(href: string) {
   switch (href) {
+    case '/work/xiaohongshu':
+      return PencilLine;
+    case '/work/xianyu':
+      return PencilLine;
+    case '/work/qianniu':
+      return PencilLine;
     case '/dashboard':
       return Home;
     case '/today':
@@ -104,6 +110,8 @@ function iconFor(href: string) {
       return Sparkles;
     case '/suggestions':
       return Lightbulb;
+    case '/imgbed':
+      return ImageIcon;
     case '/docs':
       return BookOpen;
     case '/settings':

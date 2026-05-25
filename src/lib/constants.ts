@@ -127,9 +127,13 @@ export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
  */
 export const NAV_ITEMS: { href: string; label: string; hidden?: boolean }[] = [
   { href: '/dashboard', label: '首页看板' },
+  { href: '/search', label: 'AI 搜' },
+  { href: '/analysis', label: 'AI 分析' },
   { href: '/today', label: '今日任务' },
-  { href: '/create', label: '创作' },
-  { href: '/workspace', label: '工作区' },
+  { href: '/work/xiaohongshu', label: '小红书运营' },
+  { href: '/work/xianyu', label: '闲鱼运营' },
+  { href: '/work/qianniu', label: '千牛运营' },
+  { href: '/workspace', label: '历史记录' },
   // v0.12 B4.1 hidden（用户明示 + 自动盘点 zero-data）
   { href: '/clients', label: '客户', hidden: true },
   { href: '/keywords', label: '关键词库' },
@@ -143,6 +147,7 @@ export const NAV_ITEMS: { href: string; label: string; hidden?: boolean }[] = [
   { href: '/calendar', label: '发布日历' },
   { href: '/adapters', label: 'API 适配器' },
   { href: '/presets', label: '模板' },
+  { href: '/imgbed', label: '图床' },
   { href: '/docs', label: '使用手册' },
   { href: '/settings', label: '设置' },
 ];
@@ -186,7 +191,7 @@ export const NAV_GROUPS: {
     label: '常用',
     emoji: '🚀',
     defaultCollapsed: false,
-    hrefs: ['/dashboard', '/today', '/create', '/workspace'],
+    hrefs: ['/dashboard', '/search', '/analysis', '/today', '/work/xiaohongshu', '/work/xianyu', '/work/qianniu', '/workspace'],
   },
   {
     slug: 'resources',
@@ -209,7 +214,7 @@ export const NAV_GROUPS: {
     label: '系统',
     emoji: '⚙️',
     defaultCollapsed: true,
-    hrefs: ['/docs', '/settings'],
+    hrefs: ['/imgbed', '/docs', '/settings'],
   },
 ];
 
