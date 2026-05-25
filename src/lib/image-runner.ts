@@ -396,6 +396,38 @@ async function fetchUrlToBase64(
   url: string,
   abortSignal?: AbortSignal,
 ): Promise<{ base64: string; bytes: number } | null> {
+  // v0.13 B3.3 fix [fetchUrlToBase64-v013-b33]：
+  //   1) /uploads/<file> 或 http(s)://<本机>/uploads/<file> 直接磁盘读
+  //   2) 其它远程 URL 走 fetch
+  //   3) 上限 5MB → 50MB（cometapi multipart i2i 实测 25MB 也能跑）
+  const MAX_BYTES = 50 * 1024 * 1024;
+
+  // 匹配 /uploads/<file>（任意主机）— 提取 file name
+  let uploadsName: string | null = null;
+  const localMatch = url.match(/\/uploads\/([^?#]+)/);
+  if (localMatch) {
+    uploadsName = decodeURIComponent(localMatch[1]);
+    // 防 path traversal
+    if (uploadsName.includes('..') || uploadsName.includes('/') || uploadsName.includes('\\')) {
+      return null;
+    }
+  }
+
+  if (uploadsName) {
+    try {
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+      const abs = path.join(process.cwd(), 'public', 'uploads', uploadsName);
+      const buf = await fs.readFile(abs);
+      if (buf.byteLength === 0) return null;
+      if (buf.byteLength > MAX_BYTES) return null;
+      return { base64: buf.toString('base64'), bytes: buf.byteLength };
+    } catch (e) {
+      // 磁盘不存在则 fall-through 到 fetch（极少发生，但保留兜底）
+    }
+  }
+
+  // 远程 URL fetch 路径
   let target = url;
   if (target.startsWith('/')) {
     const origin = (process.env.NEXT_PUBLIC_BASE_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '');
@@ -407,7 +439,7 @@ async function fetchUrlToBase64(
     const resp = await fetch(target, init);
     if (!resp.ok) return null;
     const buf = Buffer.from(await resp.arrayBuffer());
-    if (buf.byteLength > 5 * 1024 * 1024) return null;
+    if (buf.byteLength > MAX_BYTES) return null;
     return { base64: buf.toString('base64'), bytes: buf.byteLength };
   } catch {
     return null;
