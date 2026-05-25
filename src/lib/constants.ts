@@ -143,6 +143,7 @@ export const NAV_ITEMS: { href: string; label: string; hidden?: boolean }[] = [
   { href: '/suggestions', label: '运营建议', hidden: true },
   // v0.12 B4.1 hidden（Metric=1 placeholder，数据源未接）
   { href: '/analytics', label: '数据复盘', hidden: true },
+  { href: '/ai-tools', label: 'AI 工具' },
   { href: '/playground', label: 'AI 对话' },
   { href: '/calendar', label: '发布日历' },
   { href: '/adapters', label: 'API 适配器' },
@@ -207,7 +208,7 @@ export const NAV_GROUPS: {
     label: '工具',
     emoji: '🛠️',
     defaultCollapsed: true,
-    hrefs: ['/playground', '/calendar', '/adapters', '/presets'],
+    hrefs: ['/ai-tools', '/playground', '/calendar', '/adapters', '/presets'],
   },
   {
     slug: 'system',

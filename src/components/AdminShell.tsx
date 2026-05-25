@@ -76,6 +76,8 @@ function iconFor(href: string) {
       return PencilLine;
     case '/image':
       return ImageIcon;
+    case '/ai-tools':
+      return Wand2;
     case '/playground':
       return MessageSquare;
     case '/workspace':
