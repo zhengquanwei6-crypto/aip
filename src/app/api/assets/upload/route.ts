@@ -4,6 +4,7 @@ import { saveUploadedFile } from '@/lib/storage';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300; // v0.13 B3.1: 5 分钟，给大文件留余量
 
 export async function POST(req: NextRequest) {
   try {

@@ -4,7 +4,7 @@
  * v0.13 B3 · ImgbedClient
  *
  * 功能：
- *   - 顶部上传区（拖拽 + 多文件 + ≤10MB · PNG/JPG/WebP/GIF）
+ *   - 顶部上传区（拖拽 + 多文件 · 体积无上限 · PNG/JPG/WebP/GIF）
  *   - 三 tab 切换（全部 / AI 生成 / 手动上传）· URL 同步 ?tab=
  *   - 网格列表：缩略图 + /i/<id> 短链 + 复制按钮 + 删除按钮 + 来源徽章
  *   - 分页 · prev / next · 显示 当前页/总页
@@ -55,7 +55,7 @@ const ALLOWED_MIME = new Set([
   'image/webp',
   'image/gif',
 ]);
-const MAX_BYTES = 10 * 1024 * 1024;
+// v0.13 B3.1: 上传体积上限取消（用户原话「不设尺寸、空间限制」）
 
 const TABS: { value: Props['tab']; label: string; icon: typeof Layers }[] = [
   { value: 'all', label: '全部', icon: Layers },
@@ -133,10 +133,6 @@ export default function ImgbedClient(props: Props) {
     for (const f of fileArr) {
       if (!ALLOWED_MIME.has(f.type)) {
         rejected.push(`${f.name}（类型 ${f.type || '未知'} 不在白名单）`);
-        continue;
-      }
-      if (f.size > MAX_BYTES) {
-        rejected.push(`${f.name}（${(f.size / 1024 / 1024).toFixed(1)}MB > 10MB）`);
         continue;
       }
       accepted.push(f);
@@ -236,7 +232,7 @@ export default function ImgbedClient(props: Props) {
           拖拽图片到此处 · 或点击下方按钮选择文件
         </p>
         <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
-          支持 PNG / JPG / WebP / GIF · 单文件 ≤ 10MB · 可一次选多张
+          支持 PNG / JPG / WebP / GIF · 可一次选多张 · 体积无上限（仅受 VPS 磁盘约束）
         </p>
         <label className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-brand-600 hover:bg-brand-700 disabled:bg-slate-400 text-white text-sm font-medium cursor-pointer transition-colors">
           {busy ? (
