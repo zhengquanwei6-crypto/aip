@@ -9,12 +9,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { runImageGenerate, type ImageMode } from '@/lib/image-runner';
+import { upscaleLocal } from '@/lib/image-upscale';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
-const MAX_BASE64_BYTES = 5 * 1024 * 1024 * 4 / 3;
+const MAX_BASE64_BYTES = 200 * 1024 * 1024 * 4 / 3;
 
 interface PlaygroundImageRequest {
   adapterSlug?: string;
@@ -23,6 +24,8 @@ interface PlaygroundImageRequest {
   size?: string;
   quality?: string;
   aspectRatio?: string;
+  /** v0.13 BUG-M30: 清晰度档 */
+  tier?: '1k' | '2k' | '4k';
   n?: number;
   platform?: string;
   category?: string;
@@ -80,6 +83,10 @@ export async function POST(req: NextRequest) {
       typeof body.quality === 'string' && body.quality.trim() ? body.quality.trim() : undefined;
     const aspectRatio: string | undefined =
       typeof body.aspectRatio === 'string' && body.aspectRatio.trim() ? body.aspectRatio.trim() : undefined;
+    // v0.13 BUG-M30: tier (1k/2k/4k)
+    const tierRaw = typeof body.tier === 'string' ? body.tier.trim().toLowerCase() : '';
+    const tier: '1k' | '2k' | '4k' | undefined =
+      tierRaw === '1k' || tierRaw === '2k' || tierRaw === '4k' ? tierRaw : undefined;
     const n = clampInt(body.n, 1, 4, 1);
     const platform = typeof body.platform === 'string' ? body.platform : undefined;
     const category = typeof body.category === 'string' ? body.category : undefined;
@@ -100,7 +107,7 @@ export async function POST(req: NextRequest) {
     }
     if (sourceImageBase64 && sourceImageBase64.length > MAX_BASE64_BYTES) {
       return NextResponse.json(
-        { ok: false, error: `源图过大（>5MB）：base64 长度 ${sourceImageBase64.length}` },
+        { ok: false, error: `源图过大（>200MB）：base64 长度 ${sourceImageBase64.length}` },
         { status: 413 },
       );
     }
@@ -110,6 +117,7 @@ export async function POST(req: NextRequest) {
       ...(size !== undefined ? { size } : {}),
       ...(quality !== undefined ? { quality } : {}),
       ...(aspectRatio !== undefined ? { aspectRatio } : {}),
+      ...(tier !== undefined ? { tier } : {}),
       n,
       mode,
       ...(sourceImageUrl !== undefined ? { sourceImageUrl } : {}),
@@ -149,16 +157,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const assets = [];
+    // v0.13 B5: 拿到上游 savedUrls 后按 tier 软放大（1k 不动 / 2k 4k 长边等比放大）
+    const upscaled: { url: string; w: number; h: number; bytes: number; upscaled: boolean }[] = [];
     for (const url of r.savedUrls) {
-      const fileName = url.split('/').pop() || '';
+      try {
+        const u = await upscaleLocal(url, tier ?? '1k');
+        upscaled.push({ url: u.url, w: u.width, h: u.height, bytes: u.bytes, upscaled: u.upscaled });
+      } catch (e) {
+        upscaled.push({ url, w: 0, h: 0, bytes: 0, upscaled: false });
+      }
+    }
+
+    const assets = [];
+    for (const item of upscaled) {
+      const fileName = item.url.split('/').pop() || '';
       const a = await prisma.asset.create({
         data: {
           type: imageType,
           source: 'ai_generated',
           platform: platform ?? null,
           category: category ?? null,
-          url,
+          url: item.url,
           prompt,
           fileName,
         },
@@ -177,6 +196,8 @@ export async function POST(req: NextRequest) {
           sourceImageUrl: sourceImageUrl ? sourceImageUrl.slice(0, 200) : null,
           sourceImageBase64Len: sourceImageBase64?.length ?? 0,
           platform, category, imageType,
+          // v0.13 B5
+          tier,
         }),
         output: JSON.stringify({
           urls: r.savedUrls,
@@ -197,6 +218,9 @@ export async function POST(req: NextRequest) {
       durationMs: r.durationMs,
       latencyMs,
       trace: r.trace,
+      // v0.13 B5
+      tier: tier ?? '1k',
+      outputDimensions: upscaled.map((u) => ({ w: u.w, h: u.h, upscaled: u.upscaled })),
     });
   } catch (err) {
     return NextResponse.json(
