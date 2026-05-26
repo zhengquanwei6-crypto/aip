@@ -194,7 +194,7 @@ export default function ClientDetailClient({ client }: { client: Client }) {
                     }
                   />
                 </Field>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <button
                     onClick={() => setEditing(false)}
                     className="btn-secondary"
@@ -248,7 +248,7 @@ export default function ClientDetailClient({ client }: { client: Client }) {
                       .join(' ')}
                   </div>
                 )}
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-100">
                   <Stat label="累计订单" value={`${c.totalOrders} 单`} />
                   <Stat
                     label="总成交"

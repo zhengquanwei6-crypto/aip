@@ -225,7 +225,7 @@ export default function PresetsClient({ initial }: { initial: Preset[] }) {
                 }
               />
             </Field>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <Field label="图片类型">
                 <select
                   className="input"
@@ -262,7 +262,7 @@ export default function PresetsClient({ initial }: { initial: Preset[] }) {
               />
               <span className="text-sm">设为默认（图片生成时自动套用）</span>
             </label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button onClick={() => setEditing(null)} className="btn-secondary">
                 取消
               </button>

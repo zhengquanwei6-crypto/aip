@@ -1,3 +1,4 @@
+// v0.13 mobile m6: xhs grid + sticky responsive
 'use client';
 
 /**
@@ -532,7 +533,7 @@ function InputForm({
 
       <Card>
         <CardHeader title="内容类型" />
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 sm:grid-cols-4 gap-2">
           {CONTENT_TYPES.map((c) => (
             <button
               key={c}
@@ -554,7 +555,7 @@ function InputForm({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Card>
           <CardHeader title="案例素材" />
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
             {(['有真实案例', '没有真实案例', '使用模拟案例'] as const).map((c) => (
               <button
                 key={c}
@@ -573,7 +574,7 @@ function InputForm({
 
         <Card>
           <CardHeader title="是否强转化" />
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {(['是', '否'] as const).map((c) => (
               <button
                 key={c}
@@ -593,7 +594,7 @@ function InputForm({
 
       <Card>
         <CardHeader title="风格方向" />
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 sm:grid-cols-4 gap-2">
           {STYLE_PRESETS.map((s) => (
             <button
               key={s}
@@ -761,7 +762,7 @@ function DraftReview({
       {draft.coverTextOptions.length > 0 && (
         <Card>
           <CardHeader title="封面文案（3 备选）" icon={Star} />
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {draft.coverTextOptions.map((c, i) => {
               const isRec = i === draft.recommendedCoverIdx;
               return (
@@ -794,7 +795,7 @@ function DraftReview({
       {/* 6 页配图分镜 */}
       <Card>
         <CardHeader title={`6 页配图分镜${phase === 'done' ? '（已出图）' : '（草稿）'}`} icon={ImageIcon} />
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 sm:grid-cols-3 gap-3">
           {editedPages.map((p, i) => {
             const meta = PAGE_ROLE_META[p.pageRole] || PAGE_ROLE_META['噱头封面'];
             const Icon = meta.icon;
@@ -904,7 +905,7 @@ function DraftReview({
 
       {/* 操作区 */}
       {phase === 'review' && (
-        <div className="sticky bottom-4 z-10 rounded-xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/60 dark:border-slate-800/60 p-3 shadow-2xl shadow-pink-500/10 flex gap-2">
+        <div className="sticky bottom-4 z-10 rounded-xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/60 dark:border-slate-800/60 p-3 shadow-2xl shadow-pink-500/10 flex flex-wrap gap-2 safe-area-bottom">
           <button
             type="button"
             onClick={onCopyAll}

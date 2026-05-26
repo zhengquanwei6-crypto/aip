@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import ClientsClient from './ClientsClient';
-import PricingClient from '../pricing/PricingClient';
+import PricingClient from './PricingClient';
 import { AgentLauncher } from '@/components/agents/AgentDrawer';
 import ClientsTabsShell, { type ClientsTab } from './ClientsTabsShell';
 

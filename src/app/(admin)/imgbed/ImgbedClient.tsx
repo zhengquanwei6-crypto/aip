@@ -1,3 +1,5 @@
+// v0.13 mobile m7: imgbed 2 cols on mobile
+// v0.13 mobile m5: tap-target-sm injected
 'use client';
 
 /**
@@ -311,7 +313,7 @@ export default function ImgbedClient(props: Props) {
           这一页还没有图。上传一张试试。
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-3">
           {items.map((it) => {
             const link = shortLink(it.id);
             const isCopied = copyId === it.id;
@@ -372,7 +374,7 @@ export default function ImgbedClient(props: Props) {
                   <button
                     type="button"
                     onClick={() => void copyToClipboard(link, it.id)}
-                    className="inline-flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 p-1.5 text-slate-600 dark:text-slate-300 transition-colors"
+                    className="tap-target-sm inline-flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 p-1.5 text-slate-600 dark:text-slate-300 transition-colors"
                     title="复制短链"
                   >
                     {isCopied ? (
@@ -385,7 +387,7 @@ export default function ImgbedClient(props: Props) {
                     href={link}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 p-1.5 text-slate-600 dark:text-slate-300 transition-colors"
+                    className="tap-target-sm inline-flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 p-1.5 text-slate-600 dark:text-slate-300 transition-colors"
                     title="新窗口打开"
                   >
                     <ExternalLink size={12} aria-hidden="true" />
@@ -393,7 +395,7 @@ export default function ImgbedClient(props: Props) {
                   <button
                     type="button"
                     onClick={() => void deleteAsset(it.id)}
-                    className="inline-flex items-center justify-center rounded border border-red-200 dark:border-red-900 bg-white dark:bg-slate-900 hover:bg-red-50 dark:hover:bg-red-900/30 p-1.5 text-red-600 dark:text-red-400 transition-colors"
+                    className="tap-target-sm inline-flex items-center justify-center rounded border border-red-200 dark:border-red-900 bg-white dark:bg-slate-900 hover:bg-red-50 dark:hover:bg-red-900/30 p-1.5 text-red-600 dark:text-red-400 transition-colors"
                     title="删除"
                   >
                     <Trash2 size={12} aria-hidden="true" />

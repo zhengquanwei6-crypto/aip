@@ -456,15 +456,15 @@ export default function AdapterEditorClient({ initial, slug }: Props) {
         <div className="card-body space-y-2">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <input
-              type="password"
-              className="input"
-              placeholder="测试用 API key（留空则用设置页 IMAGE_API_KEY）"
+              type="text"
+              className="input font-mono text-xs"
+              placeholder="测试用 API key（留空则按 设置页 → ApiKey 池 顺序自动 fallback）"
               value={testApiKey}
               onChange={(e) => setTestApiKey(e.target.value)}
             />
             <input
               className="input"
-              placeholder="测试 prompt"
+              placeholder="测试 prompt（默认: a cute cat sitting on a desk）"
               value={testPrompt}
               onChange={(e) => setTestPrompt(e.target.value)}
             />
@@ -533,11 +533,16 @@ export default function AdapterEditorClient({ initial, slug }: Props) {
 
           {testResult && (
             <div className="mt-2 space-y-2">
-              <div className={testResult.ok ? 'badge-green' : 'badge-red'}>
-                {testResult.ok ? `✓ 成功 ${testResult.durationMs ?? ''}ms` : `✗ 失败：${testResult.error ?? ''}`}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className={testResult.ok ? 'badge-green' : 'badge-red'}>
+                  {testResult.ok ? `✓ 成功 ${testResult.durationMs ?? ''}ms` : `✗ 失败：${testResult.error ?? ''}`}
+                </div>
+                {(testResult as { keySource?: string }).keySource && (
+                  <span className="text-[11px] text-slate-500">key 来源: {(testResult as { keySource?: string }).keySource}</span>
+                )}
               </div>
               {testResult.imageUrls && testResult.imageUrls.length > 0 && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 sm:grid-cols-4 gap-2">
                   {testResult.imageUrls.map((u, i) => (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img key={i} src={u} alt={`result-${i}`}

@@ -1,3 +1,5 @@
+// v0.13 mobile m7: seamless responsive verify
+// v0.13 mobile m5: tap-target-sm injected
 'use client';
 
 /**
@@ -193,7 +195,7 @@ export default function SeamlessClient() {
               type="button"
               onClick={() => void reprocessWithFeather()}
               disabled={busy}
-              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 disabled:opacity-50 transition-colors"
+              className="w-full tap-target-sm inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 disabled:opacity-50 transition-colors"
             >
               {busy ? (
                 <Loader2 size={12} className="animate-spin" aria-hidden="true" />
@@ -323,7 +325,7 @@ function ToolRow(props: {
       <button
         type="button"
         onClick={props.onCopy}
-        className="inline-flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 p-1.5 text-slate-600 dark:text-slate-300 transition-colors"
+        className="tap-target-sm inline-flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 p-1.5 text-slate-600 dark:text-slate-300 transition-colors"
         title="复制短链"
       >
         {props.copied ? (
@@ -335,7 +337,7 @@ function ToolRow(props: {
       <a
         href={props.url}
         download
-        className="inline-flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 p-1.5 text-slate-600 dark:text-slate-300 transition-colors"
+        className="tap-target-sm inline-flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 p-1.5 text-slate-600 dark:text-slate-300 transition-colors"
         title="下载"
       >
         <Download size={12} aria-hidden="true" />

@@ -66,6 +66,8 @@ interface ImageOptions {
   mode: ImageMode;
   sourceImageUrl: string;
   sourceImageBase64: string;
+  // v0.13 BUG-M30
+  tier?: '1k' | '2k' | '4k';
 }
 
 interface FormState {
@@ -196,7 +198,7 @@ const DEFAULT_IMG: ImageOptions = {
   sourceImageBase64: '',
 };
 
-const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
+const MAX_SOURCE_BYTES = 200 * 1024 * 1024; // v0.13 BUG-M32: 上限 200MB
 
 export interface PublishDirectorDrawerProps {
   open: boolean;
@@ -347,7 +349,7 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
   // v0.11 B9：上传源图
   async function handleSourceFile(file: File) {
     if (!file.type.startsWith('image/')) { toast.error('请选择图片文件'); return; }
-    if (file.size > MAX_SOURCE_BYTES) { toast.error(`图片过大（${(file.size / 1024 / 1024).toFixed(1)}MB）· 上限 5MB`); return; }
+    if (file.size > MAX_SOURCE_BYTES) { toast.error(`图片过大（${(file.size / 1024 / 1024).toFixed(1)}MB）· 上限 200MB`); return; }
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = String(reader.result || '');
@@ -570,7 +572,7 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
 
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
           <div className="rounded border border-slate-200 dark:border-slate-700 p-3 space-y-2.5">
-            <div className="grid grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <Field label="平台">
                 <select className="input" value={form.platform} onChange={(e) => up('platform', e.target.value as Platform)} disabled={busy}>
                   {PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
@@ -681,7 +683,7 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
                               data-source-image-file />
                             <button type="button" onClick={() => sourceFileInputRef.current?.click()} disabled={busy}
                               className="text-xs inline-flex items-center gap-1 rounded border border-violet-300 dark:border-violet-700 px-2 py-1 hover:bg-violet-100 dark:hover:bg-violet-900/40">
-                              <Upload size={12} aria-hidden="true" /> 上传源图（≤ 5MB）
+                              <Upload size={12} aria-hidden="true" /> 上传源图（≤ 200MB）
                             </button>
                             {(sourceImagePreview || img.sourceImageUrl) && (
                               <button type="button" onClick={clearSourceImage} disabled={busy}
@@ -704,7 +706,7 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
                     </div>
                   )}
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <Field label="风格预设">
                       <select className="input" value={img.stylePresetId} onChange={(e) => applyPreset(e.target.value)} disabled={busy}>
                         <option value="">自定义</option>
@@ -733,7 +735,7 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
                       placeholder="例：cluttered, watermark" disabled={busy} />
                   </Field>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <Field label="主色调"><input className="input" value={img.primaryColor} onChange={(e) => upImg('primaryColor', e.target.value)} placeholder="例：#F5C842 暖黄" disabled={busy} /></Field>
                     <Field label="辅色调"><input className="input" value={img.accentColor} onChange={(e) => upImg('accentColor', e.target.value)} placeholder="例：#2B3A55 深蓝灰" disabled={busy} /></Field>
                   </div>
@@ -940,7 +942,7 @@ export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTa
               )}
 
               {assets.length > 0 && (
-                <div className={['grid gap-3', assets.length === 1 ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3'].join(' ')}>
+                <div className={['grid gap-3', assets.length === 1 ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'].join(' ')}>
                   {assets.map((a, i) => (
                     <div key={i} className="rounded border border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col">
                       {a.url ? (

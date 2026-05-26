@@ -17,6 +17,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { X, Send, Loader2 } from 'lucide-react';
+import { KeyOverrideSelector, useKeyOverride } from '@/components/key-override/KeyOverrideSelector';
 import { toast } from '@/lib/toast';
 
 interface ChatTurn {
@@ -51,9 +52,12 @@ export function AgentDrawer({
   autoFirstMessage,
   context,
 }: AgentDrawerProps) {
+  const keyOverride = useKeyOverride(`chat:${slug}`);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState(prefill ?? '');
   const [pending, setPending] = useState(false);
+  // v0.12 任务2：服务端返回的会话 id，后续消息带上以续接
+  const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentAuto = useRef(false);
 
@@ -94,6 +98,7 @@ export function AgentDrawer({
       });
       const j = await r.json();
       if (!j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (j.conversationId) setConversationId(j.conversationId);
       setTurns([...newTurns, { role: 'assistant', content: j.content, model: j.model }]);
     } catch (e) {
       // v0.11 B4: setError → toast.error 统一错误展示
@@ -128,6 +133,7 @@ export function AgentDrawer({
               <div className="text-xs text-slate-500 dark:text-slate-400">DO router · 实时回答</div>
             </div>
           </div>
+          <KeyOverrideSelector scope={`chat:${slug}`} show={['llm']} className="mr-1" />
           <button
             onClick={onClose}
             className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800"

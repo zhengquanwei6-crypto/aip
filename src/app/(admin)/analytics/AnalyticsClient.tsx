@@ -121,7 +121,7 @@ export default function AnalyticsClient({
   return (
     <div className="space-y-6">
       {/* 统计卡片 */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
         <Stat label="本周总曝光" value={stats.weekImpressions} />
         <Stat label="本周私信" value={stats.weekMessages} />
         <Stat label="本周咨询" value={stats.weekConsult} />
@@ -141,7 +141,7 @@ export default function AnalyticsClient({
               📥 批量导入
             </a>
           </div>
-          <div className="card-body grid grid-cols-2 gap-3">
+          <div className="card-body grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="label">平台</label>
               <select

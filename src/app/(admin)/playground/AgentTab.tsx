@@ -149,7 +149,7 @@ export default function AgentTab({ agents }: Props) {
             <span>选择 Agent · 共 {agents.length}</span>
           </div>
 
-          <div data-agent-slug-list className="grid grid-cols-2 gap-1.5">
+          <div data-agent-slug-list className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
             {agents.map((a) => {
               const active = a.slug === slug;
               return (

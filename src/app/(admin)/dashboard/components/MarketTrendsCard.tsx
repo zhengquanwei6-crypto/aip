@@ -448,7 +448,7 @@ export default function MarketTrendsCard({
         ) : null}
 
         {/* KPI 行 */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 sm:grid-cols-3 gap-2">
           {kpiBlocks.map(({ point, placeholder }) => (
             <KpiBlock key={point.key} point={point} placeholder={placeholder} />
           ))}

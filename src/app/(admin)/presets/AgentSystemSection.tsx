@@ -309,7 +309,7 @@ export default function AgentSystemSection({ initial }: { initial: AgentRow[] })
 
             <DiffPanel current={editing.draft} builtin={editingRow.builtin} />
 
-            <div className="grid grid-cols-2 gap-2 pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setEditing(null)}
@@ -358,7 +358,7 @@ function DiffPanel({ current, builtin }: { current: string; builtin: string }) {
           内置 systemPrompt（src/lib/agent-types.ts）
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div>
           <div className="text-[10px] text-slate-500 mb-0.5">内置（fallback）</div>
           <pre className="text-[11px] font-mono bg-slate-50 dark:bg-slate-800 rounded p-2 whitespace-pre-wrap break-words leading-relaxed max-h-[260px] overflow-auto">

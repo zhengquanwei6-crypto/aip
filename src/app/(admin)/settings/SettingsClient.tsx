@@ -389,59 +389,19 @@ export default function SettingsClient({
     label: string,
     fallbackEnv: boolean,
   ) {
-    const meta = secretMeta[k];
-    const isEditing = !!editingKey[k];
-    if (!isEditing && meta?.isSet) {
-      return (
-        <Field label={label}>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              className="input flex-1 cursor-pointer"
-              readOnly
-              value={`••••••••（已配置 ${meta.length} 字节）`}
-              onClick={() => startEditKey(k)}
-            />
-            <button
-              type="button"
-              onClick={() => startEditKey(k)}
-              className="btn-secondary text-xs px-3 py-1.5 shrink-0"
-            >
-              修改
-            </button>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            出于安全，明文不再回显。点击"修改"输入新值，否则保留原值。
-          </p>
-        </Field>
-      );
-    }
+    // v0.12 任务1：用户要求所有字段（含 KEY）明文显示，不再脱敏
     return (
       <Field label={label}>
         <input
-          type="password"
-          className="input"
-          autoComplete="new-password"
+          type="text"
+          className="input font-mono text-xs"
+          autoComplete="off"
+          spellCheck={false}
           value={form[k]}
           onChange={(e) => up(k, e.target.value)}
-          placeholder={
-            meta?.isSet
-              ? '输入新 key（留空则取消修改）'
-              : fallbackEnv
-                ? '已从 .env 读取（如需修改请在此填写）'
-                : 'sk-...'
-          }
+          placeholder={fallbackEnv ? '已从 .env 读取（如需修改请在此填写）' : 'sk-...'}
         />
-        {meta?.isSet && (
-          <button
-            type="button"
-            onClick={() => cancelEditKey(k)}
-            className="text-xs text-slate-400 hover:text-slate-600 mt-1"
-          >
-            取消修改（保留原值）
-          </button>
-        )}
-        {!meta?.isSet && fallbackEnv && !form[k] && (
+        {!form[k] && fallbackEnv && (
           <p className="text-xs text-slate-400 mt-1">.env 中已配置，留空则使用 .env。</p>
         )}
       </Field>
@@ -459,6 +419,7 @@ export default function SettingsClient({
               <th>label</th>
               <th>baseUrl</th>
               <th>model</th>
+              <th>apiKey（明文）</th>
               <th>priority</th>
               <th>状态</th>
               <th>统计</th>
@@ -484,6 +445,7 @@ export default function SettingsClient({
                 </td>
                 <td className="text-xs font-mono">{maskUrl(r.baseUrl)}</td>
                 <td className="text-xs font-mono">{r.model}</td>
+                <td className="text-xs font-mono break-all max-w-[280px]">{r.apiKey || '(空)'}</td>
                 <td>{r.priority}</td>
                 <td>
                   {r.active ? (
@@ -950,7 +912,7 @@ function KeyDrawer({
               placeholder="例：deepseek-v4-pro / gpt-image-2"
             />
           </Field>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="priority（越小越优先）">
               <input
                 type="number"

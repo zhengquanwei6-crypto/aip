@@ -245,7 +245,7 @@ export default function TodayTasksClient({
             isLoading && (loadingAction === 'content' || loadingAction === 'image');
           const menuOpen = openMenuId === t.id;
           return (
-            <div className="card">
+            <div className="animate-fade-in card">
               <div className="card-body">
                 <div className="flex items-start justify-between flex-wrap gap-3 pl-8">
                   <div className="flex items-center gap-2 flex-wrap">

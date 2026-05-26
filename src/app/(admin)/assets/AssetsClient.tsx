@@ -329,7 +329,7 @@ export default function AssetsClient({
             },
           },
         ]}
-        cardGridClassName="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4"
+        cardGridClassName="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4"
         renderCard={(a) => {
           const fav = !!favMap[a.id];
           const pending = favPending.has(a.id);

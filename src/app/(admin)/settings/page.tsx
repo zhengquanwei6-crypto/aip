@@ -58,13 +58,13 @@ export default async function SettingsPage() {
   const map: Record<string, string> = {};
   for (const s of settings) map[s.key] = s.value;
 
-  // 注意：KEY 字段在 initial 中不传明文（避免 SSR 出现到 HTML 的明文）
+  // v0.12 任务1：用户不考虑安全，要求所有字段（含 KEY）明文显示
   const initial = {
     LLM_API_BASE_URL: map.LLM_API_BASE_URL || '',
-    LLM_API_KEY: '',
+    LLM_API_KEY: map.LLM_API_KEY || '',
     LLM_MODEL: map.LLM_MODEL || '',
     IMAGE_API_BASE_URL: map.IMAGE_API_BASE_URL || '',
-    IMAGE_API_KEY: '',
+    IMAGE_API_KEY: map.IMAGE_API_KEY || '',
     IMAGE_MODEL: map.IMAGE_MODEL || '',
     IMAGE_DEFAULT_ADAPTER: map.IMAGE_DEFAULT_ADAPTER || '',
   };

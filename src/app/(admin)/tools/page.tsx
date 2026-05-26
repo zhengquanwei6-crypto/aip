@@ -1,8 +1,8 @@
 import { prisma } from '@/lib/db';
 import { generateWeeklyReport } from '@/lib/weekly';
 import { extractMidPrice } from '@/lib/calculator';
-import WeeklyReportClient from '../weekly-report/WeeklyReportClient';
-import CalculatorClient from '../calculator/CalculatorClient';
+import WeeklyReportClient from './WeeklyReportClient';
+import CalculatorClient from './CalculatorClient';
 import ToolsTabsShell, { type ToolsTab } from './ToolsTabsShell';
 
 export const dynamic = 'force-dynamic';

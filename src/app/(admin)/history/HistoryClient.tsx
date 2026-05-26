@@ -21,6 +21,9 @@ const TYPE_LABEL: Record<string, string> = {
   image: '图片',
   image_prompt: '图片提示词',
   suggestion: '运营建议',
+  'platform-build': '平台产出',
+  'ai-search': 'AI 搜',
+  'ai-analysis': 'AI 分析',
 };
 
 const TYPE_BADGE: Record<string, string> = {
@@ -28,22 +31,35 @@ const TYPE_BADGE: Record<string, string> = {
   image: 'badge-yellow',
   image_prompt: 'badge-purple',
   suggestion: 'badge-green',
+  'platform-build': 'badge-pink',
+  'ai-search': 'badge-cyan',
+  'ai-analysis': 'badge-orange',
 };
 
 const TYPE_FILTER_OPTIONS = [
   { value: '', label: '全部类型' },
+  // v0.12 任务6：4 大分类
+  { value: '__chat__', label: '💬 AI 对话（chat-*）' },
+  { value: 'platform-build', label: '🎨 平台产出（小红书/闲鱼/千牛）' },
+  { value: 'ai-search', label: '🔍 AI 搜' },
+  { value: 'ai-analysis', label: '📊 AI 分析' },
+  // 旧分类保留
   { value: 'text', label: '文案' },
   { value: 'image', label: '图片' },
   { value: 'image_prompt', label: '图片提示词' },
   { value: 'suggestion', label: '运营建议' },
-  // v0.9 b3：跨 type 的虚拟筛选（input 含 "via":"publish-director" 的所有条目）
-  { value: '__publish_director__', label: '🎯 发布导演（publish-director）' },
+  { value: '__publish_director__', label: '🎯 发布导演' },
 ];
 
 /** v0.9 b3：检测是否来自 publish-director（看 input JSON 是否含 via:"publish-director"） */
 function isPublishDirector(row: HistoryRow): boolean {
   if (!row.input) return false;
   return row.input.includes('"via":"publish-director"');
+}
+
+/** v0.12 任务6：判断是否是 chat agent 产出（type=chat-{slug}）*/
+function isChatType(row: HistoryRow): boolean {
+  return typeof row.type === 'string' && row.type.startsWith('chat-');
 }
 
 function fmtDate(iso: string): string {
@@ -131,6 +147,7 @@ export default function HistoryClient({
             options: TYPE_FILTER_OPTIONS,
             predicate: (r, v) => {
               if (v === '__publish_director__') return isPublishDirector(r);
+              if (v === '__chat__') return isChatType(r);
               return r.type === v;
             },
           },
@@ -313,6 +330,21 @@ export default function HistoryClient({
                         <Copy size={12} />
                         复制 output
                       </button>
+                      {isChatType(it) && (() => {
+                        // model 字段格式："deepseek-v4-pro|conv:xxxx"，从中解析 convId
+                        const m = it.model.match(/\|conv:([a-z0-9]+)/);
+                        const convId = m?.[1];
+                        if (!convId) return null;
+                        return (
+                          <Link
+                            href={`/agents/conversation/${convId}`}
+                            className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
+                            title="打开对话恢复页继续聊"
+                          >
+                            💬 继续对话
+                          </Link>
+                        );
+                      })()}
                       <Link
                         href={`/content?prefill=${it.id}`}
                         className="text-xs text-emerald-600 hover:underline inline-flex items-center gap-1"

@@ -177,7 +177,7 @@ export function SystemHealthCard({ system }: SystemHealthCardProps) {
               API Keys 池（v0.11 B1）
             </dt>
           </div>
-          <dd className="mt-2 grid grid-cols-2 gap-2">
+          <dd className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div className="rounded-md bg-slate-50 dark:bg-slate-800/40 px-3 py-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-slate-600 dark:text-slate-300">
@@ -249,7 +249,7 @@ export function RecentFailuresCard({
         </div>
       </header>
       <div className="px-4 py-3 space-y-3">
-        <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-center">
           <div className="rounded-md bg-slate-50 dark:bg-slate-800/40 px-2 py-2">
             <div className="text-[11px] text-slate-500 dark:text-slate-400">
               发布导演

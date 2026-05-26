@@ -103,7 +103,7 @@ export default function TitleRefiner({ title, platform, onSelect }: Props) {
               <CompareTitles prev={previous} curr={current} />
             )}
 
-            <div className="grid grid-cols-3 gap-2 pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pt-2">
               <button
                 onClick={refine}
                 disabled={loading}
@@ -204,7 +204,7 @@ function CompareTitles({
             className="rounded border border-slate-200 dark:border-slate-700 p-2.5 space-y-1"
           >
             <span className="badge-blue">{style}</span>
-            <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
               <div
                 className={
                   'rounded px-2 py-1 ' +

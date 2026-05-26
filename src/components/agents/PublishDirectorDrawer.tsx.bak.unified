@@ -1,0 +1,993 @@
+'use client';
+
+/**
+ * <PublishDirectorDrawer> · v0.9 b2 (+ v0.11 B7 size/quality + B9 aspectRatio + i2i)
+ *
+ * v0.11 B9 新增：
+ *   - 比例预设 select（来自 adapter.aspectRatios）
+ *   - 图生图开关 + 源图选择器（仅 supportsImg2Img=true 显示）
+ *   - submit 时把 mode/sourceImageUrl/sourceImageBase64/aspectRatio 进 imageOptions
+ *
+ * v0.11 B15.1（仅微调）：
+ *   - 按 self-check §十一 的「size → aspect → quality」顺序重排「图片选项」三 select
+ *     （之前是 aspect → size → quality；语义无变化，仅 DOM 顺序）
+ *   - 比例 select 加 title 提示，列出当前 adapter 可选比例值（hover 即可看）
+ *   - 「比例预设」label 同时含 adapter 名（与 GenerateImageForPostDrawer 对齐）
+ *   - data-aspect-ratio-select / data-size-preset-select / data-quality-preset-select
+ *     hook 保留（walk smoke 仍可定位）
+ *   - 0 schema · 0 LLM/IMAGE 消耗 · 不动 photo-director slug 与 sync builder 路径
+ */
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  X,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  Wand2,
+  Image as ImageIcon,
+  RotateCw,
+  RefreshCw,
+  Settings as SettingsIcon,
+  AlertCircle,
+  Upload,
+} from 'lucide-react';
+import { toast } from '@/lib/toast';
+import {
+  PLATFORMS,
+  CATEGORIES,
+  CONTENT_TYPES,
+  TARGET_AUDIENCES,
+  TONES,
+} from '@/lib/constants';
+import ProgressBar from '@/components/ProgressBar';
+
+type Platform = 'xiaohongshu' | 'xianyu';
+type Regenerate = 'all' | 'content' | 'style' | 'image';
+type TextLanguage = 'zh' | 'en';
+type SizeStr = '1024x1024' | '1024x1536' | '1536x1024';
+type ImageMode = 't2i' | 'i2i';
+
+interface ImageOptions {
+  autoImage: boolean;
+  stylePresetId: string;
+  styleKeywords: string;
+  negativePrompt: string;
+  primaryColor: string;
+  accentColor: string;
+  textLanguage: TextLanguage;
+  n: number;
+  sameStyle: boolean;
+  asSeries: boolean;
+  size: string;
+  quality: string;
+  // v0.11 B9
+  aspectRatio: string;
+  mode: ImageMode;
+  sourceImageUrl: string;
+  sourceImageBase64: string;
+}
+
+interface FormState {
+  platform: Platform;
+  category: string;
+  contentType: string;
+  audience: string;
+  tone: string;
+  topic: string;
+}
+
+interface XHSContent {
+  titles?: string[];
+  body?: string;
+  coverText?: string;
+  imageSuggestion?: string;
+  tags?: string[];
+  cta?: string;
+}
+
+interface XYContent {
+  title?: string;
+  description?: string;
+  coverText?: string;
+  tiers?: { tier: string; name: string; priceRange: string }[];
+  orderFlow?: string[];
+  deliveryScope?: string;
+  revisionRule?: string;
+  preOrderNotes?: string[];
+  faq?: { q: string; a: string }[];
+  quickReplies?: string[];
+}
+
+type AnyContent = XHSContent | XYContent;
+
+interface SeriesItem {
+  scene?: string;
+  promptEn: string;
+}
+
+interface StylePrompt {
+  styleSummary: string;
+  promptEn: string;
+  negativeEn: string;
+  recommendedSize: SizeStr;
+  tips?: string[];
+  seriesPrompts?: SeriesItem[];
+  seriesPlan?: string;
+}
+
+interface AssetEntry {
+  id?: string;
+  url?: string;
+  scene?: string;
+  error?: string;
+  trace?: any;
+}
+
+interface Preset {
+  id: string;
+  name: string;
+  styleKeywords: string;
+  negativePrompt?: string | null;
+  size?: string;
+  imageType?: string;
+  isDefault?: boolean;
+}
+
+interface SizePreset { label: string; value: string; tier?: string | null; }
+interface QualityPreset { label: string; value: string; }
+interface AspectRatioPreset { label: string; ratio: string; sizeRule?: string | null; }
+interface AdapterSummary {
+  slug: string;
+  name?: string;
+  sizes: SizePreset[];
+  qualities: QualityPreset[];
+  aspectRatios: AspectRatioPreset[];
+  supportsImg2Img: boolean;
+}
+
+interface BuildResp {
+  ok: boolean;
+  stage?: string;
+  content?: AnyContent;
+  stylePrompt?: StylePrompt | null;
+  stylePromptError?: string | null;
+  stylePromptRaw?: string;
+  assets?: AssetEntry[];
+  asset?: { id?: string; url?: string } | null;
+  imageErrors?: { idx: number; scene?: string; error: string }[];
+  imageTrace?: any;
+  imageFallbackNote?: string | null;
+  contentModel?: string;
+  styleModel?: string;
+  taskId?: string | null;
+  taskUpdated?: boolean;
+  taskUpdateError?: string | null;
+  durationMs?: number;
+  error?: string;
+  raw?: string;
+}
+
+const DEFAULT_FORM: FormState = {
+  platform: 'xiaohongshu',
+  category: 'Logo',
+  contentType: '案例型',
+  audience: '电商卖家',
+  tone: '专业',
+  topic: '',
+};
+
+const DEFAULT_IMG: ImageOptions = {
+  autoImage: true,
+  stylePresetId: '',
+  styleKeywords: '',
+  negativePrompt: '',
+  primaryColor: '',
+  accentColor: '',
+  textLanguage: 'en',
+  n: 1,
+  sameStyle: true,
+  asSeries: true,
+  size: '',
+  quality: '',
+  aspectRatio: '',
+  mode: 't2i',
+  sourceImageUrl: '',
+  sourceImageBase64: '',
+};
+
+const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
+
+export interface PublishDirectorDrawerProps {
+  open: boolean;
+  onClose: () => void;
+  initialForm?: Partial<FormState>;
+  taskId?: string;
+  onTaskUpdated?: () => void;
+}
+
+export function PublishDirectorDrawer({ open, onClose, initialForm, taskId, onTaskUpdated }: PublishDirectorDrawerProps) {
+  const [form, setForm] = useState<FormState>({ ...DEFAULT_FORM, ...(initialForm || {}) });
+  const [img, setImg] = useState<ImageOptions>({ ...DEFAULT_IMG });
+  const [imgPanelOpen, setImgPanelOpen] = useState(true);
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [presetsLoaded, setPresetsLoaded] = useState(false);
+
+  const [adapter, setAdapter] = useState<AdapterSummary | null>(null);
+  const [adapterLoaded, setAdapterLoaded] = useState(false);
+
+  const [busy, setBusy] = useState(false);
+  const [busyIdx, setBusyIdx] = useState<number | null>(null);
+  const [stage, setStage] = useState<string>('');
+
+  const [content, setContent] = useState<AnyContent | null>(null);
+  const [stylePrompt, setStylePrompt] = useState<StylePrompt | null>(null);
+  const [stylePromptErr, setStylePromptErr] = useState<string | null>(null);
+  const [editedSummary, setEditedSummary] = useState('');
+  const [showEnPrompt, setShowEnPrompt] = useState(false);
+
+  const [assets, setAssets] = useState<AssetEntry[]>([]);
+  const [imageFallbackNote, setImageFallbackNote] = useState<string | null>(null);
+
+  const [contentModel, setContentModel] = useState<string | undefined>();
+  const [styleModel, setStyleModel] = useState<string | undefined>();
+  const [showContentDetails, setShowContentDetails] = useState(true);
+
+  // v0.11 B9：源图预览
+  const [sourceImagePreview, setSourceImagePreview] = useState<string | null>(null);
+  const sourceFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!open || presetsLoaded) return;
+    fetch('/api/image-presets')
+      .then((r) => r.json())
+      .then((j) => { if (j?.ok && Array.isArray(j.list)) setPresets(j.list); })
+      .catch(() => {})
+      .finally(() => setPresetsLoaded(true));
+  }, [open, presetsLoaded]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setAdapterLoaded(false);
+    async function load() {
+      try {
+        const h = await fetch('/api/health').then((r) => r.json()).catch(() => null);
+        const slug: string | null = h?.imageDefaultAdapter ?? null;
+        if (!slug) { if (!cancelled) { setAdapter(null); setAdapterLoaded(true); } return; }
+        const a = await fetch(`/api/adapters/${encodeURIComponent(slug)}`)
+          .then((r) => r.json()).catch(() => null);
+        if (cancelled) return;
+        const sizes: SizePreset[] = Array.isArray(a?.adapter?.sizes)
+          ? a.adapter.sizes.filter((s: any) => s && typeof s.value === 'string' && typeof s.label === 'string')
+          : [];
+        const qualities: QualityPreset[] = Array.isArray(a?.adapter?.qualities)
+          ? a.adapter.qualities.filter((q: any) => q && typeof q.value === 'string' && typeof q.label === 'string')
+          : [];
+        const aspectRatios: AspectRatioPreset[] = Array.isArray(a?.adapter?.aspectRatios)
+          ? a.adapter.aspectRatios.filter((r: any) => r && typeof r.ratio === 'string' && typeof r.label === 'string')
+          : [];
+        const supportsImg2Img: boolean = a?.adapter?.supportsImg2Img === true;
+        const summary: AdapterSummary = {
+          slug,
+          name: typeof a?.adapter?.name === 'string' ? a.adapter.name : slug,
+          sizes,
+          qualities,
+          aspectRatios,
+          supportsImg2Img,
+        };
+        setAdapter(summary);
+        setImg((s) => {
+          const next = { ...s };
+          if (sizes.length > 0 && (!s.size || !sizes.some((x) => x.value === s.size))) {
+            next.size = sizes[0].value;
+          }
+          if (qualities.length > 0 && (!s.quality || !qualities.some((x) => x.value === s.quality))) {
+            next.quality = qualities[0].value;
+          }
+          if (aspectRatios.length > 0 && (!s.aspectRatio || !aspectRatios.some((x) => x.ratio === s.aspectRatio))) {
+            next.aspectRatio = aspectRatios[0].ratio;
+          }
+          // 重置 i2i：adapter 不支持 i2i 时强制关
+          if (!supportsImg2Img) {
+            next.mode = 't2i';
+            next.sourceImageUrl = '';
+            next.sourceImageBase64 = '';
+          }
+          return next;
+        });
+      } catch {
+        if (!cancelled) setAdapter(null);
+      } finally {
+        if (!cancelled) setAdapterLoaded(true);
+      }
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, [open]);
+
+  function up<K extends keyof FormState>(k: K, v: FormState[K]) {
+    setForm((f) => ({ ...f, [k]: v }));
+  }
+  function upImg<K extends keyof ImageOptions>(k: K, v: ImageOptions[K]) {
+    setImg((s) => ({ ...s, [k]: v }));
+  }
+
+  function applyPreset(presetId: string) {
+    upImg('stylePresetId', presetId);
+    if (!presetId) return;
+    const p = presets.find((x) => x.id === presetId);
+    if (!p) return;
+    setImg((s) => ({
+      ...s,
+      stylePresetId: presetId,
+      styleKeywords: p.styleKeywords || s.styleKeywords,
+      negativePrompt: p.negativePrompt || s.negativePrompt,
+    }));
+  }
+
+  function reset() {
+    setContent(null);
+    setStylePrompt(null);
+    setStylePromptErr(null);
+    setEditedSummary('');
+    setAssets([]);
+    setImageFallbackNote(null);
+  }
+
+  // 比例切换：sizeRule 非空时同步 size
+  function onAspectChange(v: string) {
+    upImg('aspectRatio', v);
+    const rule = adapter?.aspectRatios.find((r) => r.ratio === v)?.sizeRule;
+    if (rule && rule.trim() && adapter?.sizes.some((s) => s.value === rule.trim())) {
+      upImg('size', rule.trim());
+    }
+  }
+
+  // v0.11 B9：上传源图
+  async function handleSourceFile(file: File) {
+    if (!file.type.startsWith('image/')) { toast.error('请选择图片文件'); return; }
+    if (file.size > MAX_SOURCE_BYTES) { toast.error(`图片过大（${(file.size / 1024 / 1024).toFixed(1)}MB）· 上限 5MB`); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      setSourceImagePreview(dataUrl);
+      const m = dataUrl.match(/^data:image\/[a-z]+;base64,(.+)$/i);
+      if (m) {
+        upImg('sourceImageBase64', m[1]);
+        upImg('sourceImageUrl', '');
+        toast.success(`已加载源图（${(file.size / 1024).toFixed(0)} KB）`);
+      } else {
+        toast.error('源图解析失败');
+      }
+    };
+    reader.onerror = () => toast.error('源图读取失败');
+    reader.readAsDataURL(file);
+  }
+  function clearSourceImage() {
+    upImg('sourceImageUrl', '');
+    upImg('sourceImageBase64', '');
+    setSourceImagePreview(null);
+    if (sourceFileInputRef.current) sourceFileInputRef.current.value = '';
+  }
+
+  function stageLabelFor(reg: Regenerate): string {
+    if (reg === 'content') return '正在写文案…';
+    if (reg === 'style') return '正在出风格 prompt…';
+    if (reg === 'image') return img.n > 1 ? `正在出图（${img.n} 张串行）…` : '正在出图…';
+    return img.n > 1
+      ? `正在写文案 → 出 prompt → 出 ${img.n} 张图…`
+      : '正在写文案 → 出 prompt → 出图…';
+  }
+
+  function buildImageOptionsPayload() {
+    return {
+      autoImage: img.autoImage,
+      stylePresetId: img.stylePresetId || undefined,
+      styleKeywords: img.styleKeywords || undefined,
+      negativePrompt: img.negativePrompt || undefined,
+      primaryColor: img.primaryColor || undefined,
+      accentColor: img.accentColor || undefined,
+      textLanguage: img.textLanguage,
+      n: img.n,
+      sameStyle: img.n > 1 ? img.sameStyle : false,
+      asSeries: img.n > 1 && img.sameStyle ? img.asSeries : false,
+      size: img.size || undefined,
+      quality: img.quality || undefined,
+      // v0.11 B9
+      aspectRatio: img.aspectRatio || undefined,
+      mode: img.mode,
+      ...(img.mode === 'i2i' && img.sourceImageUrl ? { sourceImageUrl: img.sourceImageUrl } : {}),
+      ...(img.mode === 'i2i' && img.sourceImageBase64 ? { sourceImageBase64: img.sourceImageBase64 } : {}),
+    };
+  }
+
+  const run = useCallback(
+    async (regenerate: Regenerate, opts?: { regenSingleIdx?: number }) => {
+      if (busy) return;
+      if (!form.topic.trim() && regenerate !== 'image' && regenerate !== 'style') {
+        toast.error('请填写主题');
+        return;
+      }
+      // i2i 校验
+      if (img.mode === 'i2i' && img.autoImage) {
+        if (!img.sourceImageUrl.trim() && !img.sourceImageBase64) {
+          toast.error('图生图模式需提供源图（URL 或上传文件）');
+          return;
+        }
+      }
+      setBusy(true);
+      setStage(stageLabelFor(regenerate));
+      if (typeof opts?.regenSingleIdx === 'number') setBusyIdx(opts.regenSingleIdx);
+
+      try {
+        let payloadImg = buildImageOptionsPayload();
+        let cachedStyle: any = stylePrompt;
+
+        if (regenerate === 'image' && typeof opts?.regenSingleIdx === 'number') {
+          payloadImg = { ...payloadImg, n: 1, sameStyle: false, asSeries: false };
+          if (stylePrompt?.seriesPrompts && stylePrompt.seriesPrompts[opts.regenSingleIdx]) {
+            const target = stylePrompt.seriesPrompts[opts.regenSingleIdx];
+            cachedStyle = {
+              ...stylePrompt,
+              promptEn: target.promptEn,
+              seriesPrompts: undefined,
+              seriesPlan: undefined,
+            };
+          }
+        }
+
+        const r = await fetch('/api/agents/publish-director/build', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            platform: form.platform,
+            category: form.category,
+            contentType: form.contentType,
+            topic: form.topic,
+            audience: form.audience,
+            tone: form.tone,
+            taskId: taskId || undefined,
+            imageOptions: payloadImg,
+            regenerate,
+            cachedContent: regenerate === 'style' || regenerate === 'image' ? content : undefined,
+            cachedStylePrompt: regenerate === 'image' ? cachedStyle : undefined,
+            styleSummaryHint: regenerate === 'style' ? editedSummary : undefined,
+          }),
+        });
+        const j: BuildResp = await r.json();
+        if (!j.ok) {
+          const msg = j.error || `HTTP ${r.status}`;
+          toast.error(msg);
+          return;
+        }
+
+        if (j.content) { setContent(j.content); setShowContentDetails(true); }
+        if (j.contentModel) setContentModel(j.contentModel);
+        if (j.styleModel) setStyleModel(j.styleModel);
+
+        if (regenerate !== 'content') {
+          if (j.stylePrompt) {
+            setStylePrompt(j.stylePrompt);
+            setStylePromptErr(null);
+            setEditedSummary(j.stylePrompt.styleSummary);
+          } else if (j.stylePromptError) {
+            setStylePromptErr(j.stylePromptError);
+          }
+        } else {
+          setStylePrompt(null);
+          setStylePromptErr(null);
+          setEditedSummary('');
+          setAssets([]);
+        }
+
+        if (regenerate === 'all' || regenerate === 'image') {
+          const newAssets = Array.isArray(j.assets) ? j.assets : j.asset ? [j.asset as AssetEntry] : [];
+          if (regenerate === 'image' && typeof opts?.regenSingleIdx === 'number') {
+            setAssets((prev) => {
+              const next = [...prev];
+              const replacement = newAssets[0] || {
+                error: '未返回 asset',
+                scene: prev[opts.regenSingleIdx!]?.scene,
+              };
+              next[opts.regenSingleIdx!] = replacement;
+              return next;
+            });
+          } else {
+            setAssets(newAssets);
+          }
+          setImageFallbackNote(j.imageFallbackNote ?? null);
+
+          if ((Array.isArray(j.imageErrors) && j.imageErrors.length > 0) ||
+              (Array.isArray(j.assets) && j.assets.every((a) => !a.url))) {
+            const errCount = (j.imageErrors ?? []).length;
+            if (errCount > 0) toast.error(`图片：${errCount} 张失败`);
+          }
+        }
+
+        const okMsg =
+          regenerate === 'all' ? `全流程完成（${img.n} 张图）`
+          : regenerate === 'content' ? '文案已重生'
+          : regenerate === 'style' ? 'prompt 已优化'
+          : typeof opts?.regenSingleIdx === 'number' ? `第 ${opts.regenSingleIdx + 1} 张已重生`
+          : '已生成新图';
+        toast.success(okMsg);
+
+        if (j.taskUpdated && onTaskUpdated) onTaskUpdated();
+        if (j.taskUpdateError) toast.error(`task 反写失败：${j.taskUpdateError}`);
+      } catch (e) {
+        toast.error((e as Error).message);
+      } finally {
+        setBusy(false);
+        setBusyIdx(null);
+        setStage('');
+      }
+    },
+    [busy, form, img, content, stylePrompt, editedSummary, taskId, onTaskUpdated],
+  );
+
+  if (!open) return null;
+
+  const xhs = content as XHSContent | null;
+  const xy = content as XYContent | null;
+  const showSameStyle = img.n > 1;
+  const showSeries = img.n > 1 && img.sameStyle;
+  const sizesPool = adapter?.sizes ?? [];
+  const qualitiesPool = adapter?.qualities ?? [];
+  const aspectRatiosPool = adapter?.aspectRatios ?? [];
+  const supportsImg2Img = !!adapter?.supportsImg2Img;
+  // v0.11 B15.1：title hover 提示当前 adapter 可选比例池
+  const aspectRatioTitle = aspectRatiosPool.length > 0
+    ? `当前 adapter 可选比例：${aspectRatiosPool.map((r) => r.ratio).join(' / ')}`
+    : '';
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div className="flex-1 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <aside className="w-full sm:w-[680px] h-full bg-white dark:bg-slate-900 shadow-xl flex flex-col">
+        <header className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">🎯</span>
+            <div>
+              <div className="font-semibold">
+                发布导演 publish-director
+                {taskId && (
+                  <span className="ml-2 text-xs bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 rounded px-1.5 py-0.5">
+                    🔗 task: {taskId.slice(0, 6)}…
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-slate-500">
+                {taskId ? '将关联到当前 task：成功后回写 status / title / body / coverText / imageUrl（v0.9 b3）'
+                       : '文案 → 风格 → 图片，每段可单独重生（v0.11 B9 比例 + 图生图）'}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="关闭">
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          <div className="rounded border border-slate-200 dark:border-slate-700 p-3 space-y-2.5">
+            <div className="grid grid-cols-2 gap-2.5">
+              <Field label="平台">
+                <select className="input" value={form.platform} onChange={(e) => up('platform', e.target.value as Platform)} disabled={busy}>
+                  {PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                </select>
+              </Field>
+              <Field label="类目">
+                <select className="input" value={form.category} onChange={(e) => up('category', e.target.value)} disabled={busy}>
+                  {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </Field>
+              <Field label="内容类型">
+                <select className="input" value={form.contentType} onChange={(e) => up('contentType', e.target.value)} disabled={busy}>
+                  {CONTENT_TYPES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </Field>
+              <Field label="目标客户">
+                <select className="input" value={form.audience} onChange={(e) => up('audience', e.target.value)} disabled={busy}>
+                  {TARGET_AUDIENCES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </Field>
+              <Field label="文案风格">
+                <select className="input" value={form.tone} onChange={(e) => up('tone', e.target.value)} disabled={busy}>
+                  {TONES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </Field>
+              <Field label="自动出图">
+                <label className="inline-flex items-center gap-2 text-sm select-none mt-1">
+                  <input type="checkbox" checked={img.autoImage} onChange={(e) => upImg('autoImage', e.target.checked)} disabled={busy} />
+                  自动跑第 3 步
+                </label>
+              </Field>
+            </div>
+            <Field label="主题">
+              <input className="input" value={form.topic} onChange={(e) => up('topic', e.target.value)} placeholder="例：奶茶店开业菜单升级" disabled={busy} />
+            </Field>
+
+            <div className="rounded border border-amber-200 dark:border-amber-700/40 bg-amber-50/50 dark:bg-amber-900/10">
+              <button type="button" onClick={() => setImgPanelOpen((v) => !v)}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-200">
+                <span className="inline-flex items-center gap-1"><SettingsIcon size={14} /> 图片选项</span>
+                {imgPanelOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+              {imgPanelOpen && (
+                <div className="px-2.5 pb-2.5 space-y-2 border-t border-amber-200 dark:border-amber-700/40">
+                  {/*
+                    v0.11 B7 + B9 + B15.1：尺寸 → 比例 → 质量三个 select
+                    DOM 顺序按 self-check §十一 spec：size → aspect → quality
+                    （之前是 aspect → size → quality；语义不变，仅 grid 顺序）
+                  */}
+                  {(aspectRatiosPool.length > 0 || sizesPool.length > 0 || qualitiesPool.length > 0) && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {sizesPool.length > 0 && (
+                        <Field label="尺寸预设">
+                          <select className="input" value={img.size} onChange={(e) => upImg('size', e.target.value)} disabled={busy}
+                            data-size-preset-select aria-label="尺寸预设">
+                            {sizesPool.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                          </select>
+                        </Field>
+                      )}
+                      {aspectRatiosPool.length > 0 && (
+                        <Field label={`比例预设${adapter?.name ? `（${adapter.name}）` : ''}`}>
+                          <select className="input" value={img.aspectRatio} onChange={(e) => onAspectChange(e.target.value)} disabled={busy}
+                            data-aspect-ratio-select aria-label="比例预设" title={aspectRatioTitle}>
+                            {aspectRatiosPool.map((r) => <option key={r.ratio} value={r.ratio}>{r.label}</option>)}
+                          </select>
+                        </Field>
+                      )}
+                      {qualitiesPool.length > 0 && (
+                        <Field label="质量预设">
+                          <select className="input" value={img.quality} onChange={(e) => upImg('quality', e.target.value)} disabled={busy}
+                            data-quality-preset-select aria-label="质量预设">
+                            {qualitiesPool.map((q) => <option key={q.value} value={q.value}>{q.label}</option>)}
+                          </select>
+                        </Field>
+                      )}
+                    </div>
+                  )}
+
+                  {/* v0.11 B9：图生图开关 + 源图选择器 */}
+                  {supportsImg2Img && (
+                    <div className="rounded border border-violet-200 dark:border-violet-700/40 bg-violet-50/40 dark:bg-violet-900/10 p-2 space-y-2">
+                      <label className="inline-flex items-center gap-2 text-sm font-medium text-violet-800 dark:text-violet-200 cursor-pointer">
+                        <input type="checkbox" checked={img.mode === 'i2i'}
+                          onChange={(e) => upImg('mode', e.target.checked ? 'i2i' : 't2i')} disabled={busy}
+                          data-i2i-toggle aria-label="图生图开关" />
+                        <ImageIcon size={14} aria-hidden="true" />
+                        图生图模式（image-to-image）
+                      </label>
+                      {img.mode === 'i2i' && (
+                        <div className="space-y-2">
+                          <Field label="源图 URL（外链或 /uploads/...）">
+                            <input className="input" type="text" value={img.sourceImageUrl}
+                              onChange={(e) => {
+                                upImg('sourceImageUrl', e.target.value);
+                                if (e.target.value.trim()) {
+                                  setSourceImagePreview(e.target.value);
+                                  upImg('sourceImageBase64', '');
+                                }
+                              }}
+                              disabled={busy}
+                              placeholder="https://example.com/source.png 或 /uploads/abc.png"
+                              data-source-image-url />
+                          </Field>
+                          <div className="text-xs text-slate-500">— 或 —</div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <input ref={sourceFileInputRef} type="file" accept="image/*" className="hidden"
+                              onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleSourceFile(f); }}
+                              data-source-image-file />
+                            <button type="button" onClick={() => sourceFileInputRef.current?.click()} disabled={busy}
+                              className="text-xs inline-flex items-center gap-1 rounded border border-violet-300 dark:border-violet-700 px-2 py-1 hover:bg-violet-100 dark:hover:bg-violet-900/40">
+                              <Upload size={12} aria-hidden="true" /> 上传源图（≤ 5MB）
+                            </button>
+                            {(sourceImagePreview || img.sourceImageUrl) && (
+                              <button type="button" onClick={clearSourceImage} disabled={busy}
+                                className="text-xs text-slate-500 hover:text-rose-500 inline-flex items-center gap-0.5">
+                                <X size={11} /> 清除
+                              </button>
+                            )}
+                          </div>
+                          {sourceImagePreview && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={sourceImagePreview} alt="source preview"
+                              className="max-h-24 rounded border border-slate-200 dark:border-slate-700" />
+                          )}
+                          <p className="text-[10px] text-violet-700 dark:text-violet-300 leading-relaxed">
+                            勾选后调用 image-to-image 接口（KIE Flux / GPT-2 i2i / OpenAI /images/edits）。
+                            系列模式时多张图共享同一源图。
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="风格预设">
+                      <select className="input" value={img.stylePresetId} onChange={(e) => applyPreset(e.target.value)} disabled={busy}>
+                        <option value="">自定义</option>
+                        {presets.map((p) => <option key={p.id} value={p.id}>{p.isDefault ? '★ ' : ''}{p.name}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="图片主语言">
+                      <div className="flex items-center gap-3 mt-1.5">
+                        <label className="inline-flex items-center gap-1 text-sm">
+                          <input type="radio" name="textLang" checked={img.textLanguage === 'zh'} onChange={() => upImg('textLanguage', 'zh')} disabled={busy} />中文
+                        </label>
+                        <label className="inline-flex items-center gap-1 text-sm">
+                          <input type="radio" name="textLang" checked={img.textLanguage === 'en'} onChange={() => upImg('textLanguage', 'en')} disabled={busy} />英文（推荐）
+                        </label>
+                      </div>
+                    </Field>
+                  </div>
+
+                  <Field label="风格关键词（自定义可改）">
+                    <input className="input" value={img.styleKeywords} onChange={(e) => upImg('styleKeywords', e.target.value)}
+                      placeholder="例：minimal flat, soft gradient, editorial layout"
+                      disabled={busy || !!img.stylePresetId} />
+                  </Field>
+                  <Field label="负向词（可选）">
+                    <input className="input" value={img.negativePrompt} onChange={(e) => upImg('negativePrompt', e.target.value)}
+                      placeholder="例：cluttered, watermark" disabled={busy} />
+                  </Field>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="主色调"><input className="input" value={img.primaryColor} onChange={(e) => upImg('primaryColor', e.target.value)} placeholder="例：#F5C842 暖黄" disabled={busy} /></Field>
+                    <Field label="辅色调"><input className="input" value={img.accentColor} onChange={(e) => upImg('accentColor', e.target.value)} placeholder="例：#2B3A55 深蓝灰" disabled={busy} /></Field>
+                  </div>
+
+                  <div>
+                    <label className="label">生成数量</label>
+                    <div className="flex items-center gap-2 mt-1">
+                      {[1, 2, 3, 4].map((k) => (
+                        <button key={k} type="button" onClick={() => upImg('n', k)} disabled={busy}
+                          className={['px-3 py-1 rounded text-sm border transition',
+                            img.n === k ? 'bg-blue-600 border-blue-600 text-white'
+                                        : 'border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800'].join(' ')}>{k}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {showSameStyle && (
+                    <div className="space-y-1 pl-1 border-l-2 border-amber-300 dark:border-amber-600">
+                      <label className="inline-flex items-center gap-2 text-sm select-none">
+                        <input type="checkbox" checked={img.sameStyle} onChange={(e) => upImg('sameStyle', e.target.checked)} disabled={busy} />同一风格（推荐）
+                      </label>
+                      {showSeries && (
+                        <div>
+                          <label className="inline-flex items-center gap-2 text-sm select-none">
+                            <input type="checkbox" checked={img.asSeries} onChange={(e) => upImg('asSeries', e.target.checked)} disabled={busy} />作为一套图（系列）
+                          </label>
+                          {img.asSeries && (
+                            <div className="text-[11px] text-slate-500 ml-6 mt-0.5 leading-relaxed">
+                              系列模式：让 LLM 先规划"{img.n} 张共主题不同切片"，再产出独立 promptEn。
+                              共享 palette / 字体 / 光线，subject 与构图不同。
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <button type="button" onClick={() => void run('all')} disabled={busy}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded px-3 py-2 text-sm inline-flex items-center justify-center gap-2">
+                {busy ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                {busy ? stage || '生成中…' : content ? `🎯 全部重生（${img.n} 张）` : `🎯 全部生成（${img.n} 张）`}
+              </button>
+              {content && (
+                <button type="button" onClick={() => { if (busy) return; reset(); }} disabled={busy}
+                  className="text-sm bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded px-3 py-2 inline-flex items-center gap-1" title="清空当前结果">
+                  <RefreshCw size={14} /> 重置
+                </button>
+              )}
+            </div>
+            {busy && <ProgressBar mode="indeterminate" label={stage || '处理中…'} />}
+          </div>
+
+          {/* ① 文案预览 */}
+          {content && (
+            <div className="rounded border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-slate-700">
+                <button onClick={() => setShowContentDetails((v) => !v)} className="text-sm font-medium inline-flex items-center gap-1">
+                  {showContentDetails ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  ① 文案
+                  {contentModel && <span className="text-[11px] text-slate-500 ml-1">({contentModel})</span>}
+                </button>
+                <button onClick={() => void run('content')} disabled={busy}
+                  className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 disabled:opacity-40">
+                  <RotateCw size={12} /> 重新生文案
+                </button>
+              </div>
+              {showContentDetails && (
+                <div className="px-3 py-2.5 space-y-2 text-sm">
+                  {form.platform === 'xiaohongshu' ? (
+                    <>
+                      {Array.isArray(xhs?.titles) && xhs!.titles!.length > 0 && (
+                        <div>
+                          <div className="text-xs text-slate-500 mb-0.5">标题候选</div>
+                          <ol className="list-decimal pl-5 space-y-0.5">{xhs!.titles!.map((t, i) => <li key={i}>{t}</li>)}</ol>
+                        </div>
+                      )}
+                      {xhs?.coverText && (<div><div className="text-xs text-slate-500 mb-0.5">封面大字</div><div>{xhs.coverText}</div></div>)}
+                      {xhs?.body && (<div><div className="text-xs text-slate-500 mb-0.5">正文</div><div className="whitespace-pre-wrap leading-relaxed text-[13px]">{xhs.body}</div></div>)}
+                      {Array.isArray(xhs?.tags) && xhs!.tags!.length > 0 && (
+                        <div>
+                          <div className="text-xs text-slate-500 mb-0.5">tags</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {xhs!.tags!.map((t, i) => <span key={i} className="text-[11px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">#{t}</span>)}
+                          </div>
+                        </div>
+                      )}
+                      {xhs?.cta && (<div><div className="text-xs text-slate-500 mb-0.5">CTA</div><div>{xhs.cta}</div></div>)}
+                    </>
+                  ) : (
+                    <>
+                      {xy?.title && (<div><div className="text-xs text-slate-500 mb-0.5">商品标题</div><div className="font-medium">{xy.title}</div></div>)}
+                      {xy?.coverText && (<div><div className="text-xs text-slate-500 mb-0.5">首图大字</div><div>{xy.coverText}</div></div>)}
+                      {Array.isArray(xy?.tiers) && xy!.tiers!.length > 0 && (
+                        <div>
+                          <div className="text-xs text-slate-500 mb-0.5">三档</div>
+                          <ul className="space-y-0.5">
+                            {xy!.tiers!.map((t, i) => (
+                              <li key={i} className="text-[13px]">
+                                <span className="text-slate-500">{t.tier}</span> {t.name} <span className="text-slate-500">{t.priceRange}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {xy?.description && (<div><div className="text-xs text-slate-500 mb-0.5">描述</div><div className="whitespace-pre-wrap leading-relaxed text-[13px]">{xy.description}</div></div>)}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ② 风格说明 */}
+          {(stylePrompt || stylePromptErr) && (
+            <div className="rounded border border-slate-200 dark:border-slate-700 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm font-medium inline-flex items-center gap-1">
+                  <Wand2 size={14} /> ② 风格说明（中文，可改）
+                  {styleModel && <span className="text-[11px] text-slate-500 ml-1">({styleModel})</span>}
+                </div>
+                <button onClick={() => void run('style')} disabled={busy}
+                  className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 disabled:opacity-40">
+                  <RotateCw size={12} /> 重新优化 prompt
+                </button>
+              </div>
+              {stylePromptErr && (
+                <div className="text-xs bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 rounded p-2 mb-2">
+                  ② 失败：{stylePromptErr}
+                  <span className="ml-1">— 你可以手改风格描述后再试。</span>
+                </div>
+              )}
+              {stylePrompt && (
+                <>
+                  <textarea value={editedSummary} onChange={(e) => setEditedSummary(e.target.value)} rows={3}
+                    className="w-full rounded border border-slate-300 dark:border-slate-700 bg-transparent px-2 py-1.5 text-sm" disabled={busy} />
+                  {stylePrompt.seriesPlan && (
+                    <div className="mt-2 text-xs bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded p-2">
+                      <div className="font-medium text-amber-800 dark:text-amber-200 mb-0.5">系列编排</div>
+                      <div className="text-amber-700 dark:text-amber-300 leading-relaxed">{stylePrompt.seriesPlan}</div>
+                    </div>
+                  )}
+                  {stylePrompt.tips && stylePrompt.tips.length > 0 && (
+                    <ul className="mt-2 text-xs text-slate-500 list-disc list-inside space-y-0.5">
+                      {stylePrompt.tips.map((t, i) => <li key={i}>{t}</li>)}
+                    </ul>
+                  )}
+                  <div className="mt-2 text-xs">
+                    <button onClick={() => setShowEnPrompt((v) => !v)} className="text-slate-500 hover:underline inline-flex items-center gap-1">
+                      {showEnPrompt ? <ChevronUp size={12} /> : <ChevronDown size={12} />} 实际发给上游的英文 prompt
+                    </button>
+                    {showEnPrompt && (
+                      <div className="mt-1.5 space-y-1.5 text-[11px] font-mono bg-slate-50 dark:bg-slate-800/60 rounded p-2 max-h-60 overflow-y-auto">
+                        {stylePrompt.seriesPrompts && stylePrompt.seriesPrompts.length > 0 ? (
+                          <>
+                            {stylePrompt.seriesPrompts.map((sp, i) => (
+                              <div key={i} className="border-b border-slate-200 dark:border-slate-700 pb-1.5 last:border-b-0">
+                                <div className="text-slate-500">#{i + 1} {sp.scene || '(无 scene)'}</div>
+                                <div className="whitespace-pre-wrap">{sp.promptEn}</div>
+                              </div>
+                            ))}
+                            <div className="text-slate-500">negative: {stylePrompt.negativeEn}</div>
+                            <div className="text-slate-500">size: {img.size || stylePrompt.recommendedSize} · aspectRatio: {img.aspectRatio || '—'} · mode: {img.mode}</div>
+                          </>
+                        ) : (
+                          <>
+                            <div><div className="text-slate-500">prompt:</div><div className="whitespace-pre-wrap">{stylePrompt.promptEn}</div></div>
+                            <div><div className="text-slate-500">negative:</div><div className="whitespace-pre-wrap">{stylePrompt.negativeEn}</div></div>
+                            <div className="text-slate-500">size: {img.size || stylePrompt.recommendedSize} · aspectRatio: {img.aspectRatio || '—'} · mode: {img.mode}</div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ③ 图片网格 */}
+          {(assets.length > 0 || imageFallbackNote) && (
+            <div className="rounded border border-slate-200 dark:border-slate-700 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm font-medium inline-flex items-center gap-1">
+                  <ImageIcon size={14} /> ③ 图片
+                  {assets.length > 0 && <span className="text-[11px] text-slate-500 ml-1">({assets.filter((a) => a.url).length}/{assets.length})</span>}
+                </div>
+                {stylePrompt && (
+                  <button onClick={() => void run('image')} disabled={busy}
+                    className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 disabled:opacity-40">
+                    <RotateCw size={12} /> {img.n > 1 ? `全部重生这 ${img.n} 张` : '再来一张'}
+                  </button>
+                )}
+              </div>
+
+              {imageFallbackNote && (
+                <div className="text-[11px] bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 rounded p-2 mb-2 inline-flex items-start gap-1.5">
+                  <AlertCircle size={12} className="mt-0.5 flex-shrink-0" />
+                  <span>{imageFallbackNote}</span>
+                </div>
+              )}
+
+              {assets.length > 0 && (
+                <div className={['grid gap-3', assets.length === 1 ? 'grid-cols-1' : 'grid-cols-2 lg:grid-cols-3'].join(' ')}>
+                  {assets.map((a, i) => (
+                    <div key={i} className="rounded border border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col">
+                      {a.url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={a.url} alt={a.scene || `image ${i + 1}`} className="w-full block" />
+                      ) : (
+                        <div className="aspect-[3/4] bg-red-50 dark:bg-red-950/30 flex items-center justify-center p-2 text-center">
+                          <div className="text-[11px] text-red-700 dark:text-red-300 leading-relaxed">
+                            <AlertCircle size={16} className="mx-auto mb-1" />
+                            <div>第 {i + 1} 张失败</div>
+                            <div className="break-all">{a.error || '未知错误'}</div>
+                          </div>
+                        </div>
+                      )}
+                      <div className="px-2 py-1.5 text-[11px] text-slate-500 border-t border-slate-200 dark:border-slate-700">
+                        {a.scene && <div className="font-medium text-slate-700 dark:text-slate-300 mb-0.5 truncate">{a.scene}</div>}
+                        <div className="flex items-center justify-between gap-1">
+                          <span>#{i + 1}</span>
+                          <div className="flex items-center gap-1.5">
+                            {a.url && <a href={a.url} target="_blank" rel="noopener" className="text-blue-600 hover:underline">原图</a>}
+                            <button type="button" onClick={() => void run('image', { regenSingleIdx: i })} disabled={busy}
+                              className="text-blue-600 hover:underline inline-flex items-center gap-0.5 disabled:opacity-40" title={`重生第 ${i + 1} 张`}>
+                              {busy && busyIdx === i ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
+                              重生
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+export default PublishDirectorDrawer;

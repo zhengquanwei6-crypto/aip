@@ -3,7 +3,7 @@ import { listPromptTemplates } from '@/lib/ai/prompts';
 import { AGENTS } from '@/lib/agent-types';
 import { listAgentCustomPrompts } from '@/lib/agents/system-prompt';
 import PresetsClient from './PresetsClient';
-import PromptsClient from '../prompts/PromptsClient';
+import PromptsClient from './PromptsClient';
 import AgentSystemSection, { type AgentRow } from './AgentSystemSection';
 import PresetsTabsShell, { type PresetsTab } from './PresetsTabsShell';
 

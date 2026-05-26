@@ -345,7 +345,7 @@ export default function ClientsClient({ initial }: { initial: ClientItem[] }) {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="font-semibold">新增客户</h3>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <input
                 className="input"
                 placeholder="昵称"
@@ -397,7 +397,7 @@ export default function ClientsClient({ initial }: { initial: ClientItem[] }) {
               value={draft.tags}
               onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
             />
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 onClick={() => setShowAdd(false)}
                 className="btn-secondary"

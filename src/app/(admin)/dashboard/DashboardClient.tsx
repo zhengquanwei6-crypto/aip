@@ -1,3 +1,4 @@
+// v0.13 mobile m3: dashboard responsive
 /**
  * v0.11 B3 · Dashboard 客户端组件
  * v0.11 B10 · 加入第 5 区：市场趋势卡（MarketTrendsCard）
@@ -57,7 +58,34 @@ export default function DashboardClient({ data }: DashboardClientProps) {
     data;
 
   return (
-    <div className="space-y-6 sm:space-y-8" data-v012-b3-dashboard>
+    <div      className="space-y-6 sm:space-y-8" data-v012-b3-dashboard>
+      {/* v0.12 任务5：AI 搜索头部 */}
+      <div className="card border-blue-200 dark:border-blue-900 bg-gradient-to-br from-blue-50 to-white dark:from-blue-950/40 dark:to-slate-900">
+        <div className="card-body">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const q = String(fd.get('q') || '').trim();
+              if (q) window.location.href = `/search?q=${encodeURIComponent(q)}`;
+            }}
+            className="flex items-center gap-2"
+          >
+            <span className="text-2xl">🔍</span>
+            <div className="flex-1">
+              <div className="text-xs text-slate-500 mb-1">AI 搜 · 联网查实时信息（小红书爆款 / 行业趋势 / 任何问题）</div>
+              <input
+                name="q"
+                className="input w-full"
+                placeholder="例如：小红书今日平面设计类目最火的主题是什么"
+              />
+            </div>
+            <button type="submit" className="btn-primary">搜索</button>
+          </form>
+        </div>
+      </div>
+
+
       {/* 0) v0.11 B15.7 磁盘警告（≥ 85% 才渲染） */}
       <DiskWarningCard diskUsage={diskUsage} />
 
@@ -94,7 +122,7 @@ export default function DashboardClient({ data }: DashboardClientProps) {
           关键指标
         </h2>
         {/* 任务进度 3 卡 */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <KpiCard
             label="待办"
             value={kpi.pendingTasks}
@@ -118,7 +146,7 @@ export default function DashboardClient({ data }: DashboardClientProps) {
           />
         </div>
         {/* 内容沉淀 2 卡 · v0.12 B4.1：客户 KPI 隐藏 */}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <KpiCard
             label="AI 输出"
             value={kpi.aioutputs}
@@ -149,7 +177,7 @@ export default function DashboardClient({ data }: DashboardClientProps) {
         >
           快速操作
         </h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <QuickAction
             label="新建任务"
             description="进入今日任务，安排新的发布计划"
@@ -161,7 +189,7 @@ export default function DashboardClient({ data }: DashboardClientProps) {
             label="创作"
             description="一站打通文案 + 图片"
             icon={<Wand2 className="h-5 w-5" />}
-            href="/create"
+            href="/work/xiaohongshu"
             tone="blue"
           />
           <QuickAction
