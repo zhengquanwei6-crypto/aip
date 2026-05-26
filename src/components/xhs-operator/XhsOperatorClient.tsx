@@ -807,10 +807,24 @@ function DraftReview({
                   p.imageUrl ? 'cursor-pointer hover:scale-[1.03] hover:shadow-xl hover:shadow-purple-500/20 hover:border-pink-300' : '',
                 ].join(' ')}
               >
-                <div className="aspect-[3/4] bg-slate-100 dark:bg-slate-800 relative">
+                <div className={`aspect-[3/4] relative ${p.imageUrl ? 'bg-slate-100 dark:bg-slate-800' : phase === 'review' ? 'bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-900 border-2 border-dashed border-slate-300 dark:border-slate-700' : 'bg-slate-100 dark:bg-slate-800'}`}>
                   {p.imageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={p.imageUrl} alt={p.pageTitle} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                  ) : phase === 'review' ? (
+                    /* v0.13 B8.1: 草稿卡片显示 imagePrompt 文本预览（替代空白图） */
+                    <div data-v013-b8-draft-prompt className="w-full h-full p-2.5 flex flex-col gap-1.5 overflow-hidden">
+                      <div className="flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-300 font-medium">
+                        <FileText size={10} aria-hidden="true" />
+                        待出图 · imagePrompt 草稿
+                      </div>
+                      <div className="text-[10px] leading-relaxed text-slate-600 dark:text-slate-300 font-mono whitespace-pre-wrap overflow-hidden flex-1" title={p.imagePrompt}>
+                        {p.imagePrompt && p.imagePrompt.length > 280 ? p.imagePrompt.slice(0, 280) + '…' : p.imagePrompt}
+                      </div>
+                      <div className="text-[9px] text-slate-400 dark:text-slate-500 italic shrink-0">
+                        ⚡ 点下方按钮一次性出图（消耗 6 token）
+                      </div>
+                    </div>
                   ) : phase === 'imaging' ? (
                     <div className="w-full h-full flex items-center justify-center">
                       <div className="relative">
