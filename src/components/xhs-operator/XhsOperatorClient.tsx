@@ -1,0 +1,1005 @@
+'use client';
+
+/**
+ * <XhsOperatorClient> · v0.13 BUG-M31
+ *   小红书运营智能体 v2 专属 UI（与 PlatformWorkspaceClient 解耦）
+ *
+ *   流程：① 表单输入 → ② AI 出草稿（不调图）→ ③ 用户审核 → ④ 一次性出 6 张图
+ *
+ *   高端交互：渐变背景、毛玻璃卡片、stagger 入场、spring 动画、骨架屏。
+ */
+
+import { useState, useEffect, useRef } from 'react';
+import {
+  Sparkles, Loader2, Wand2, Check, X, AlertCircle, ChevronRight, ChevronLeft,
+  Copy, Download, RefreshCw, Image as ImageIcon, FileText, Tag, MessageCircle,
+  Star, Lightbulb, Eye, AlertTriangle, Info, Lock, ArrowDown,
+} from 'lucide-react';
+import { KeyOverrideSelector } from '@/components/key-override/KeyOverrideSelector';
+
+// ─── 类型 ───
+
+type Phase = 'input' | 'drafting' | 'review' | 'imaging' | 'done';
+
+type ContentType = '设计前后对比' | '案例复盘' | '设计避坑' | '教程干货' | '老板常见问题' | '设计流程展示' | '作品集展示';
+
+interface FormState {
+  topic: string;
+  serviceType: string;
+  targetCustomer: string;
+  contentGoal: string;
+  contentType: ContentType;
+  caseMaterial: '有真实案例' | '没有真实案例' | '使用模拟案例';
+  styleDirection: string;
+  sellingPoint: string;
+  needConversion: '是' | '否';
+}
+
+interface PageSpec {
+  pageRole: string;
+  pageTitle: string;
+  mainText: string;
+  subText: string;
+  layout: string;
+  color: string;
+  font?: string;
+  material: string;
+  imagePrompt: string;
+  imageNegativePrompt?: string;
+  imageUrl?: string;
+  imageError?: string;
+}
+
+interface SelfCheckItem { question: string; passed: boolean; note?: string; }
+
+interface DraftData {
+  topicAngle: string;
+  contentStrategy: string;
+  titles: string[];
+  recommendedTitleIdx: number;
+  recommendedReason: string;
+  coverTextOptions: string[];
+  recommendedCoverIdx: number;
+  body3Lines: string;
+  body: string;
+  pages: PageSpec[];
+  tags: string[];
+  commentHooks: string[];
+  selfCheck: SelfCheckItem[];
+  needsSimulatedCaseTag: boolean;
+  needsAiAssistNote: boolean;
+  imageNegativeGlobal: string;
+  styleSummary: string;
+  imageGenerationGuidance: string;
+}
+
+// ─── 常量 ───
+
+const CONTENT_TYPES: ContentType[] = [
+  '设计前后对比', '案例复盘', '设计避坑', '教程干货',
+  '老板常见问题', '设计流程展示', '作品集展示',
+];
+
+const STYLE_PRESETS = [
+  '高级感', '极简', '可爱', '国潮', '复古', '科技感', '餐饮食欲感', '商务专业感',
+];
+
+const PAGE_ROLE_META: Record<string, { color: string; icon: any; desc: string }> = {
+  '噱头封面': { color: 'from-purple-500 to-pink-500', icon: Star,        desc: '提高点击率 · 不放完整产品' },
+  '问题展示': { color: 'from-orange-500 to-red-500',  icon: AlertTriangle, desc: '让用户代入 · 模拟案例' },
+  '设计思路': { color: 'from-blue-500 to-cyan-500',   icon: Lightbulb,    desc: '展示专业度 · 调整逻辑' },
+  '前后对比': { color: 'from-emerald-500 to-teal-500', icon: Eye,        desc: '视觉冲击 · 第一次完整展示' },
+  '细节拆解': { color: 'from-amber-500 to-yellow-500', icon: Info,        desc: '收藏价值 · 拆字体配色' },
+  '总结互动': { color: 'from-violet-500 to-fuchsia-500', icon: MessageCircle, desc: '引导评论收藏' },
+};
+
+// ─── SSE 助手（v0.14）─────────────────────────────────────────
+// 说明：build-all 现在用 Server-Sent Events 包装，每 5 秒发一次 ping 心跳，
+// 这样浏览器/运营商网关都不会因为 60 秒静默把连接切掉，彻底告别 504。
+// 服务端最后会发一个 event: result，data 是 { status, body } JSON。
+async function fetchBuildAllSSE(
+  url: string,
+  payload: any,
+): Promise<{ status: number; body: any }> {
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
+    body: JSON.stringify(payload),
+  });
+  const ct = resp.headers.get('content-type') || '';
+  // 不是 SSE — 可能上游网关直接返了 HTML 错误页（大概率不会再发生，但兜底）
+  if (!ct.includes('text/event-stream')) {
+    if (ct.includes('application/json')) {
+      const j = await resp.json().catch(() => null);
+      return { status: resp.status, body: j ?? { ok: false, error: `HTTP ${resp.status}` } };
+    }
+    const text = await resp.text();
+    const isHtml = text.trim().startsWith('<');
+    return {
+      status: resp.status,
+      body: {
+        ok: false,
+        error: isHtml
+          ? `网关返回了 HTML 错误页（HTTP ${resp.status}），通常是上游超时或路径不对`
+          : `非预期的响应类型：${ct} ${text.slice(0, 200)}`,
+      },
+    };
+  }
+  if (!resp.body) {
+    return { status: 500, body: { ok: false, error: '响应没有 body 流' } };
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+  let resultPayload: { status: number; body: any } | null = null;
+
+  // SSE 事件之间用空行（\n\n）分隔；按行解析 event/data 字段。
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // 拆出完整事件（以 \n\n 结尾）
+    let eventEnd: number;
+    while ((eventEnd = buffer.indexOf('\n\n')) !== -1) {
+      const rawEvent = buffer.slice(0, eventEnd);
+      buffer = buffer.slice(eventEnd + 2);
+      let eventName = 'message';
+      let dataLines: string[] = [];
+      for (const line of rawEvent.split('\n')) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+      }
+      const dataStr = dataLines.join('\n');
+      if (eventName === 'result' && dataStr) {
+        try {
+          resultPayload = JSON.parse(dataStr);
+        } catch {
+          resultPayload = { status: 500, body: { ok: false, error: '结果 JSON 解析失败' } };
+        }
+      }
+      // ping / started / done 仅作为心跳，不处理
+    }
+  }
+
+  if (!resultPayload) {
+    return { status: 500, body: { ok: false, error: '流式响应已结束但没有 event: result（可能上游异常）' } };
+  }
+  return resultPayload;
+}
+
+// ─── 组件 ───
+
+export default function XhsOperatorClient() {
+  // 表单
+  const [form, setForm] = useState<FormState>({
+    topic: '',
+    serviceType: '',
+    targetCustomer: '',
+    contentGoal: '',
+    contentType: '设计前后对比',
+    caseMaterial: '使用模拟案例',
+    styleDirection: '高级感',
+    sellingPoint: '',
+    needConversion: '否',
+  });
+
+  const [phase, setPhase] = useState<Phase>('input');
+  const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<DraftData | null>(null);
+  const [llmMs, setLlmMs] = useState<number>(0);
+  const [imgMs, setImgMs] = useState<number>(0);
+  const [activeImageIdx, setActiveImageIdx] = useState<number | null>(null);
+  // v0.13 B6 fix #3
+  const [coverFailDowngrade, setCoverFailDowngrade] = useState<boolean>(false);
+  const [editedPages, setEditedPages] = useState<PageSpec[]>([]);  // 用户可微调
+
+  // 出图模式 v2 不重新草稿，直接用 editedPages
+  const isComposing = useRef(false);
+
+  // ─── 1. 出草稿 ───
+  async function runDraft() {
+    if (!form.topic.trim()) { setError('请填写主题'); return; }
+    setError(null);
+    setPhase('drafting');
+    setDraft(null);
+
+    try {
+      const t0 = Date.now();
+      // v0.13 B6 fix #3: 重置降级标志（每次调用前）
+      setCoverFailDowngrade(false);
+      const { status, body: j } = await fetchBuildAllSSE('/api/agents/xiaohongshu-operator/build-all', {
+        topic: form.topic.trim(),
+        mode: 'draft',
+        clarifyAnswers: {
+          服务类型: form.serviceType,
+          目标客户: form.targetCustomer,
+          内容目的: form.contentGoal,
+          内容类型: form.contentType,
+          案例素材: form.caseMaterial,
+          风格方向: form.styleDirection,
+          核心卖点: form.sellingPoint,
+          是否强转化: form.needConversion,
+        },
+      });
+      if (status >= 400 || !j?.ok) {
+        setError(j?.error || `HTTP ${status}`);
+        setPhase('input');
+        return;
+      }
+      const d: DraftData = {
+        topicAngle: j.topicAngle ?? form.contentType,
+        contentStrategy: j.contentStrategy ?? '',
+        titles: j.titles ?? [],
+        recommendedTitleIdx: j.recommendedTitleIdx ?? 0,
+        recommendedReason: j.recommendedReason ?? '',
+        coverTextOptions: j.coverTextOptions ?? [],
+        recommendedCoverIdx: j.recommendedCoverIdx ?? 0,
+        body3Lines: j.body3Lines ?? '',
+        body: j.body ?? '',
+        pages: j.pages ?? [],
+        tags: j.tags ?? [],
+        commentHooks: j.commentHooks ?? [],
+        selfCheck: j.selfCheck ?? [],
+        needsSimulatedCaseTag: j.needsSimulatedCaseTag ?? false,
+        needsAiAssistNote: j.needsAiAssistNote ?? false,
+        imageNegativeGlobal: j.imageNegativeGlobal ?? '',
+        styleSummary: j.styleSummary ?? '',
+        imageGenerationGuidance: j.imageGenerationGuidance ?? '',
+      };
+      setDraft(d);
+      setEditedPages(d.pages);
+      setLlmMs(Date.now() - t0);
+      setPhase('review');
+    } catch (e: any) {
+      setError(e?.message || '网络错误');
+      setPhase('input');
+    }
+  }
+
+  // ─── 2. 一次性出 6 张图 ───
+  async function runImaging() {
+    if (!draft) return;
+    setError(null);
+    setPhase('imaging');
+    try {
+      const t0 = Date.now();
+      // v0.13 B6 fix #3: 重置降级标志（每次调用前）
+      setCoverFailDowngrade(false);
+      const { status, body: j } = await fetchBuildAllSSE('/api/agents/xiaohongshu-operator/build-all', {
+        topic: form.topic.trim(),
+        mode: 'full',
+        clarifyAnswers: {
+          服务类型: form.serviceType,
+          目标客户: form.targetCustomer,
+          内容目的: form.contentGoal,
+          内容类型: form.contentType,
+          案例素材: form.caseMaterial,
+          风格方向: form.styleDirection,
+          核心卖点: form.sellingPoint,
+          是否强转化: form.needConversion,
+        },
+      });
+      if (status >= 400 || !j?.ok) {
+        setError(j?.error || `HTTP ${status}`);
+        setPhase('review');
+        return;
+      }
+      // v0.13 BUG-M34: 后端 full 模式返回的 text.pages 是「LLM 文案 + imageUrl + imageError + assetId + mode」全字段
+      //   合并策略：以 editedPages（用户审核过的草稿）为底，用响应里的 imageUrl 等图片字段叠加
+      //   万一 j.text.pages 缺图，再降级用 j.images[i].url
+      const respPages: any[] = j.text?.pages || [];
+      const respImages: any[] = j.images || []; // outcomes[]: { index, url, error, mode, ... }
+      const pagesWithImg: PageSpec[] = editedPages.map((basePage, i) => {
+        const respPage = respPages[i] || {};
+        const respImg = respImages[i] || respImages.find((x) => x?.index === i);
+        return {
+          ...basePage,
+          imageUrl: respPage.imageUrl || respImg?.url || undefined,
+          imageError: respPage.imageError || respImg?.error || undefined,
+        };
+      });
+      // 调试日志：dev/prod 都打，方便排查（用户报"看不到图"时直接看 console）
+      // eslint-disable-next-line no-console
+      console.info('[xhs-v2] full 模式响应：', {
+        ok: j.ok,
+        pagesCount: respPages.length,
+        imagesCount: respImages.length,
+        firstImageUrl: pagesWithImg[0]?.imageUrl || '(无)',
+        lastImageUrl: pagesWithImg[pagesWithImg.length - 1]?.imageUrl || '(无)',
+      });
+      setEditedPages(pagesWithImg);
+      setImgMs(Date.now() - t0);
+      setPhase('done');
+    } catch (e: any) {
+      setError(e?.message || '网络错误');
+      setPhase('review');
+    }
+  }
+
+  // ─── 复制全文 ───
+  function copyAll() {
+    if (!draft) return;
+    const lines = [
+      `【标题】${draft.titles[draft.recommendedTitleIdx] || draft.titles[0] || ''}`,
+      '',
+      draft.body3Lines,
+      '',
+      draft.body,
+      '',
+      draft.tags.map((t) => (t.startsWith('#') ? t : '#' + t)).join(' '),
+    ];
+    if (draft.needsSimulatedCaseTag) lines.push('\n（模拟案例）');
+    if (draft.needsAiAssistNote) lines.push('（部分内容由 AI 辅助生成，已人工修改）');
+    navigator.clipboard.writeText(lines.join('\n')).then(
+      () => alertToast('已复制全部文案'),
+      () => alertToast('复制失败'),
+    );
+  }
+
+  function alertToast(msg: string) {
+    // 简易 toast：用浏览器原生
+    const div = document.createElement('div');
+    div.textContent = msg;
+    div.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-slate-900 text-white text-sm shadow-lg';
+    document.body.appendChild(div);
+    setTimeout(() => div.remove(), 1800);
+  }
+
+  // ─── 渲染 ───
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-purple-50/30 to-pink-50/30 dark:from-slate-950 dark:via-purple-950/20 dark:to-pink-950/10">
+      <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-5">
+        {/* 顶栏 */}
+        <header className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-pink-500 via-rose-500 to-red-500 flex items-center justify-center text-2xl shadow-lg shadow-pink-500/30">
+              📕
+            </div>
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-pink-600 via-rose-600 to-purple-600 bg-clip-text text-transparent">
+                小红书运营 v2
+              </h1>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                平面设计接单图文笔记 · 6 页结构 · 草稿优先
+              </p>
+            </div>
+          </div>
+          <KeyOverrideSelector scope="xiaohongshu-operator" show={['llm', 'image']} />
+        </header>
+
+        {/* 进度指示 */}
+        <PhaseIndicator phase={phase} />
+
+        {/* 错误条 */}
+        {coverFailDowngrade && (
+        <div data-v013-b6-cover-fail className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 text-xs text-amber-900 dark:text-amber-100 flex items-start gap-2">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <div>
+            <strong>系列一致性已降级</strong>：封面图（第 1 张）生成失败，其余 5 张已退回独立 t2i 模式（无 i2i 同源），所以画面风格可能不统一。建议刷新重试。
+          </div>
+        </div>
+      )}
+      {error && (
+          <div className="rounded-xl border border-red-200 dark:border-red-900 bg-gradient-to-r from-red-50 to-pink-50 dark:from-red-900/20 dark:to-pink-900/20 p-3 flex items-start gap-2 animate-shake">
+            <AlertCircle size={16} className="text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+            <span className="text-sm text-red-800 dark:text-red-200 break-all">{error}</span>
+          </div>
+        )}
+
+        {/* 阶段 1: 输入表单 */}
+        {phase === 'input' && (
+          <InputForm form={form} setForm={setForm} onSubmit={runDraft} />
+        )}
+
+        {/* 阶段 2: 草稿生成中 */}
+        {phase === 'drafting' && (
+          <DraftLoading />
+        )}
+
+        {/* 阶段 3: 草稿审核 */}
+        {(phase === 'review' || phase === 'imaging' || phase === 'done') && draft && (
+          <DraftReview
+            form={form}
+            draft={draft}
+            editedPages={editedPages}
+            phase={phase}
+            llmMs={llmMs}
+            imgMs={imgMs}
+            onRegenerate={() => { setPhase('input'); }}
+            onConfirmImaging={runImaging}
+            onCopyAll={copyAll}
+            onSelectImage={setActiveImageIdx}
+            activeImageIdx={activeImageIdx}
+          />
+        )}
+
+        {/* Lightbox（点开看大图）*/}
+        {activeImageIdx !== null && draft && editedPages[activeImageIdx]?.imageUrl && (
+          <Lightbox
+            page={editedPages[activeImageIdx]}
+            index={activeImageIdx}
+            total={editedPages.length}
+            onClose={() => setActiveImageIdx(null)}
+            onPrev={() => setActiveImageIdx((idx) => idx === null ? null : (idx - 1 + editedPages.length) % editedPages.length)}
+            onNext={() => setActiveImageIdx((idx) => idx === null ? null : (idx + 1) % editedPages.length)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ───────────────── 子组件 ─────────────────
+
+function PhaseIndicator({ phase }: { phase: Phase }) {
+  const steps = [
+    { id: 'input',    label: '填写' },
+    { id: 'drafting', label: '草稿' },
+    { id: 'review',   label: '审核' },
+    { id: 'imaging',  label: '出图' },
+    { id: 'done',     label: '完成' },
+  ];
+  const currentIdx = steps.findIndex((s) => s.id === phase);
+
+  return (
+    <div className="rounded-xl bg-white/60 dark:bg-slate-900/50 backdrop-blur-md border border-slate-200/60 dark:border-slate-800/60 p-3">
+      <div className="flex items-center justify-between gap-2">
+        {steps.map((s, i) => {
+          const isActive = i === currentIdx;
+          const isDone = i < currentIdx;
+          return (
+            <div key={s.id} className="flex items-center flex-1">
+              <div className="flex flex-col items-center gap-1.5">
+                <div
+                  className={[
+                    'w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold transition-all duration-500',
+                    isActive
+                      ? 'bg-gradient-to-br from-pink-500 to-purple-600 text-white shadow-lg shadow-pink-500/40 scale-110'
+                      : isDone
+                        ? 'bg-emerald-500 text-white'
+                        : 'bg-slate-200 dark:bg-slate-800 text-slate-500',
+                  ].join(' ')}
+                >
+                  {isDone ? <Check size={14} /> : i + 1}
+                </div>
+                <span className={`text-[11px] ${isActive ? 'text-pink-600 dark:text-pink-400 font-medium' : 'text-slate-500 dark:text-slate-400'}`}>
+                  {s.label}
+                </span>
+              </div>
+              {i < steps.length - 1 && (
+                <div className={`h-0.5 flex-1 mx-1 transition-colors duration-500 ${i < currentIdx ? 'bg-emerald-400' : 'bg-slate-200 dark:bg-slate-700'}`} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function InputForm({
+  form, setForm, onSubmit,
+}: { form: FormState; setForm: (f: FormState) => void; onSubmit: () => void }) {
+
+  function update<K extends keyof FormState>(k: K, v: FormState[K]) {
+    setForm({ ...form, [k]: v });
+  }
+
+  return (
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <Card>
+        <CardHeader title="主题" required />
+        <textarea
+          value={form.topic}
+          onChange={(e) => update('topic', e.target.value)}
+          onCompositionStart={() => {}}
+          onCompositionEnd={(e) => update('topic', (e.target as HTMLTextAreaElement).value)}
+          placeholder="例如：餐饮店海报设计前后对比 / 小店 logo 改造避坑教程 / 名片设计 5 个常见错误"
+          rows={2}
+          className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all resize-none"
+        />
+      </Card>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader title="服务类型" />
+          <input
+            value={form.serviceType}
+            onChange={(e) => update('serviceType', e.target.value)}
+            onCompositionEnd={(e) => update('serviceType', (e.target as HTMLInputElement).value)}
+            placeholder="如：餐饮店海报 / logo / 菜单 / 名片"
+            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all"
+          />
+        </Card>
+
+        <Card>
+          <CardHeader title="目标客户" />
+          <input
+            value={form.targetCustomer}
+            onChange={(e) => update('targetCustomer', e.target.value)}
+            onCompositionEnd={(e) => update('targetCustomer', (e.target as HTMLInputElement).value)}
+            placeholder="如：餐饮店老板 / 美甲店老板"
+            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all"
+          />
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader title="内容类型" />
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {CONTENT_TYPES.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => update('contentType', c)}
+              className={[
+                'py-2 px-3 rounded-xl border text-sm transition-all duration-300',
+                form.contentType === c
+                  ? 'border-pink-500 bg-gradient-to-br from-pink-50 to-rose-50 dark:from-pink-900/30 dark:to-rose-900/20 text-pink-700 dark:text-pink-300 font-medium ring-2 ring-pink-300/50 shadow-sm scale-[1.02]'
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:border-pink-300 hover:scale-[1.02]',
+              ].join(' ')}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader title="案例素材" />
+          <div className="grid grid-cols-3 gap-1.5">
+            {(['有真实案例', '没有真实案例', '使用模拟案例'] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => update('caseMaterial', c)}
+                className={[
+                  'py-2 rounded-lg border text-xs transition-all duration-300',
+                  form.caseMaterial === c
+                    ? 'border-pink-500 bg-pink-50 dark:bg-pink-900/30 text-pink-700 dark:text-pink-300 font-medium'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-pink-300',
+                ].join(' ')}
+              >{c}</button>
+            ))}
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader title="是否强转化" />
+          <div className="grid grid-cols-2 gap-2">
+            {(['是', '否'] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => update('needConversion', c)}
+                className={[
+                  'py-2 rounded-lg border text-sm transition-all duration-300',
+                  form.needConversion === c
+                    ? 'border-pink-500 bg-pink-50 dark:bg-pink-900/30 text-pink-700 dark:text-pink-300 font-medium'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-pink-300',
+                ].join(' ')}
+              >{c}</button>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader title="风格方向" />
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {STYLE_PRESETS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => update('styleDirection', s)}
+              className={[
+                'py-2 px-3 rounded-xl border text-sm transition-all duration-300',
+                form.styleDirection === s
+                  ? 'border-pink-500 bg-pink-50 dark:bg-pink-900/30 text-pink-700 dark:text-pink-300 font-medium'
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-pink-300',
+              ].join(' ')}
+            >{s}</button>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="核心卖点" />
+        <textarea
+          value={form.sellingPoint}
+          onChange={(e) => update('sellingPoint', e.target.value)}
+          onCompositionEnd={(e) => update('sellingPoint', (e.target as HTMLTextAreaElement).value)}
+          placeholder="如：能帮小店老板把杂乱促销信息整理得清楚专业"
+          rows={2}
+          className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all resize-none"
+        />
+      </Card>
+
+      <Card>
+        <CardHeader title="内容目的" />
+        <input
+          value={form.contentGoal}
+          onChange={(e) => update('contentGoal', e.target.value)}
+          onCompositionEnd={(e) => update('contentGoal', (e.target as HTMLInputElement).value)}
+          placeholder="如：增加曝光 / 获得收藏 / 引导咨询"
+          className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all"
+        />
+      </Card>
+
+      <button
+        type="button"
+        onClick={onSubmit}
+        disabled={!form.topic.trim()}
+        className="group relative w-full overflow-hidden flex items-center justify-center gap-2 py-3.5 rounded-xl bg-gradient-to-r from-pink-500 via-rose-500 to-purple-600 hover:from-pink-600 hover:via-rose-600 hover:to-purple-700 disabled:from-slate-400 disabled:to-slate-500 disabled:cursor-not-allowed text-white font-semibold shadow-lg shadow-pink-500/30 hover:shadow-xl hover:shadow-pink-500/40 transition-all duration-300 hover:scale-[1.01] active:scale-[0.99]"
+      >
+        <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-200%] group-hover:translate-x-[200%] transition-transform duration-1000" />
+        <Wand2 size={18} className="group-hover:rotate-12 transition-transform" />
+        <span>AI 出草稿（不出图）</span>
+        <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
+      </button>
+      <p className="text-center text-xs text-slate-500 dark:text-slate-400">
+        ⚡ 这一步只调 LLM 文本模型，不消耗图片成本。审核后再点"确认出图"才一次性生成 6 张。
+      </p>
+    </div>
+  );
+}
+
+function DraftLoading() {
+  return (
+    <div className="space-y-4 animate-in fade-in duration-300">
+      <div className="rounded-xl border border-slate-200/60 dark:border-slate-800/60 bg-white/60 dark:bg-slate-900/50 backdrop-blur-md p-6 flex items-center justify-center gap-3">
+        <div className="relative">
+          <Loader2 size={28} className="animate-spin text-pink-500" />
+          <div className="absolute inset-0 w-7 h-7 rounded-full bg-pink-500/20 animate-ping" />
+        </div>
+        <div>
+          <div className="font-semibold text-slate-800 dark:text-slate-100">AI 正在写脚本…</div>
+          <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">通常 30-60 秒，包含 6 页 imagePrompt + 12 项自检</div>
+        </div>
+      </div>
+
+      {/* 骨架屏 */}
+      {Array.from({ length: 3 }).map((_, i) => (
+        <div key={i} className="rounded-xl border border-slate-200/60 dark:border-slate-800/60 bg-white/60 dark:bg-slate-900/50 backdrop-blur-md p-4 space-y-2">
+          <div className="h-3 w-1/4 rounded bg-gradient-to-r from-slate-200 via-slate-300 to-slate-200 dark:from-slate-800 dark:via-slate-700 dark:to-slate-800 animate-shimmer" style={{ backgroundSize: '200% 100%' }} />
+          <div className="h-3 w-3/4 rounded bg-gradient-to-r from-slate-200 via-slate-300 to-slate-200 dark:from-slate-800 dark:via-slate-700 dark:to-slate-800 animate-shimmer" style={{ backgroundSize: '200% 100%', animationDelay: '0.15s' }} />
+          <div className="h-3 w-1/2 rounded bg-gradient-to-r from-slate-200 via-slate-300 to-slate-200 dark:from-slate-800 dark:via-slate-700 dark:to-slate-800 animate-shimmer" style={{ backgroundSize: '200% 100%', animationDelay: '0.3s' }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DraftReview({
+  form, draft, editedPages, phase, llmMs, imgMs,
+  onRegenerate, onConfirmImaging, onCopyAll, onSelectImage, activeImageIdx,
+}: {
+  form: FormState; draft: DraftData; editedPages: PageSpec[];
+  phase: Phase; llmMs: number; imgMs: number;
+  onRegenerate: () => void; onConfirmImaging: () => void; onCopyAll: () => void;
+  onSelectImage: (i: number | null) => void; activeImageIdx: number | null;
+}) {
+  const passedCount = draft.selfCheck.filter((s) => s.passed).length;
+  const totalCheck = draft.selfCheck.length;
+
+  return (
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {/* 选题方向 + 内容策略 */}
+      <Card>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-pink-500 to-rose-500 text-white text-xs font-medium">
+              {draft.topicAngle}
+            </span>
+            <span className="text-xs text-slate-500">
+              ⏱️ 草稿 {(llmMs / 1000).toFixed(1)}s
+              {phase === 'done' && imgMs > 0 && ` · 出图 ${(imgMs / 1000).toFixed(1)}s`}
+            </span>
+          </div>
+          {(draft.needsSimulatedCaseTag || draft.needsAiAssistNote) && (
+            <div className="flex gap-1.5">
+              {draft.needsSimulatedCaseTag && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">模拟案例</span>}
+              {draft.needsAiAssistNote && <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">AI 辅助</span>}
+            </div>
+          )}
+        </div>
+        <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed">{draft.contentStrategy}</p>
+      </Card>
+
+      {/* 5 备选标题 */}
+      {draft.titles.length > 0 && (
+        <Card>
+          <CardHeader title="标题（5 个备选 · 推荐已标）" icon={FileText} />
+          <ul className="space-y-1.5">
+            {draft.titles.map((t, i) => {
+              const isRec = i === draft.recommendedTitleIdx;
+              return (
+                <li
+                  key={i}
+                  className={[
+                    'flex items-start gap-2 px-2.5 py-2 rounded-lg transition-all',
+                    isRec
+                      ? 'bg-gradient-to-r from-pink-50 to-rose-50 dark:from-pink-900/30 dark:to-rose-900/20 ring-2 ring-pink-300/50'
+                      : 'hover:bg-slate-50 dark:hover:bg-slate-800/50',
+                  ].join(' ')}
+                >
+                  <span className={`text-xs font-mono mt-0.5 ${isRec ? 'text-pink-600 dark:text-pink-400 font-semibold' : 'text-slate-400'}`}>
+                    {i + 1}.
+                  </span>
+                  <div className="flex-1">
+                    <div className={`text-sm ${isRec ? 'font-semibold text-slate-900 dark:text-slate-50' : 'text-slate-700 dark:text-slate-200'}`}>
+                      {t}
+                      {isRec && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-pink-500 text-white">推荐</span>}
+                    </div>
+                    {isRec && draft.recommendedReason && (
+                      <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">💡 {draft.recommendedReason}</div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard.writeText(t)}
+                    className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+                    title="复制此标题"
+                  >
+                    <Copy size={13} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
+      )}
+
+      {/* 3 封面文案 */}
+      {draft.coverTextOptions.length > 0 && (
+        <Card>
+          <CardHeader title="封面文案（3 备选）" icon={Star} />
+          <div className="grid grid-cols-3 gap-2">
+            {draft.coverTextOptions.map((c, i) => {
+              const isRec = i === draft.recommendedCoverIdx;
+              return (
+                <div
+                  key={i}
+                  className={[
+                    'rounded-lg border p-3 text-center transition-all duration-300',
+                    isRec
+                      ? 'border-pink-500 bg-gradient-to-br from-pink-50 to-rose-50 dark:from-pink-900/30 dark:to-rose-900/20 ring-2 ring-pink-300/50 shadow-md'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-pink-300',
+                  ].join(' ')}
+                >
+                  <div className="text-base font-bold text-slate-800 dark:text-slate-100 leading-tight">{c}</div>
+                  {isRec && <div className="text-[10px] mt-1 text-pink-600 dark:text-pink-400">推荐</div>}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* 正文前三行 */}
+      {draft.body3Lines && (
+        <Card>
+          <CardHeader title="正文前三行" icon={FileText} />
+          <pre className="text-sm leading-relaxed whitespace-pre-wrap text-slate-700 dark:text-slate-200 font-sans">{draft.body3Lines}</pre>
+        </Card>
+      )}
+
+      {/* 6 页配图分镜 */}
+      <Card>
+        <CardHeader title={`6 页配图分镜${phase === 'done' ? '（已出图）' : '（草稿）'}`} icon={ImageIcon} />
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {editedPages.map((p, i) => {
+            const meta = PAGE_ROLE_META[p.pageRole] || PAGE_ROLE_META['噱头封面'];
+            const Icon = meta.icon;
+            return (
+              <div
+                key={i}
+                onClick={() => p.imageUrl && onSelectImage(i)}
+                className={[
+                  'group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 transition-all duration-300',
+                  p.imageUrl ? 'cursor-pointer hover:scale-[1.03] hover:shadow-xl hover:shadow-purple-500/20 hover:border-pink-300' : '',
+                ].join(' ')}
+              >
+                <div className="aspect-[3/4] bg-slate-100 dark:bg-slate-800 relative">
+                  {p.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.imageUrl} alt={p.pageTitle} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                  ) : phase === 'imaging' ? (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <div className="relative">
+                        <Loader2 size={20} className="animate-spin text-pink-500" />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={`w-full h-full bg-gradient-to-br ${meta.color} opacity-15 flex items-center justify-center`}>
+                      <Icon size={28} className="text-slate-400" />
+                    </div>
+                  )}
+                  <div className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-black/70 backdrop-blur-sm text-white text-[10px] font-mono">
+                    P{i + 1}
+                  </div>
+                  <div className={`absolute top-1.5 right-1.5 px-2 py-0.5 rounded-md bg-gradient-to-r ${meta.color} text-white text-[10px] font-medium shadow-lg`}>
+                    {p.pageRole}
+                  </div>
+                </div>
+                <div className="p-2.5">
+                  <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">{p.pageTitle}</div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">{meta.desc}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* 自检 */}
+      {draft.selfCheck.length > 0 && (
+        <Card>
+          <div className="flex items-center justify-between mb-2.5">
+            <CardHeader title="发布前自检（12 项）" icon={Check} />
+            <span className={`text-sm font-semibold ${passedCount >= totalCheck * 0.85 ? 'text-emerald-600' : passedCount >= totalCheck * 0.6 ? 'text-amber-600' : 'text-red-600'}`}>
+              {passedCount}/{totalCheck} 通过
+            </span>
+          </div>
+          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
+            {draft.selfCheck.map((c, i) => (
+              <li key={i} className="flex items-start gap-1.5 px-2 py-1 rounded-md bg-slate-50 dark:bg-slate-800/50">
+                {c.passed ? <Check size={13} className="text-emerald-500 flex-shrink-0 mt-0.5" /> : <X size={13} className="text-red-500 flex-shrink-0 mt-0.5" />}
+                <span className="text-slate-700 dark:text-slate-200">{c.question}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {/* 标签 + 评论引导 */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {draft.tags.length > 0 && (
+          <Card>
+            <CardHeader title="话题标签" icon={Tag} />
+            <div className="flex flex-wrap gap-1.5">
+              {draft.tags.map((tag, i) => (
+                <span key={i} className="text-xs px-2.5 py-1 rounded-full bg-gradient-to-r from-pink-50 to-rose-50 dark:from-pink-900/30 dark:to-rose-900/20 text-pink-700 dark:text-pink-300 border border-pink-200 dark:border-pink-800">
+                  {tag.startsWith('#') ? tag : '#' + tag}
+                </span>
+              ))}
+            </div>
+          </Card>
+        )}
+        {draft.commentHooks.length > 0 && (
+          <Card>
+            <CardHeader title="评论区引导" icon={MessageCircle} />
+            <ul className="space-y-1.5 text-sm">
+              {draft.commentHooks.map((h, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span className="text-pink-500 mt-0.5">•</span>
+                  <span className="text-slate-700 dark:text-slate-200">{h}</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
+      </div>
+
+      {/* 操作区 */}
+      {phase === 'review' && (
+        <div className="sticky bottom-4 z-10 rounded-xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/60 dark:border-slate-800/60 p-3 shadow-2xl shadow-pink-500/10 flex gap-2">
+          <button
+            type="button"
+            onClick={onCopyAll}
+            className="px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-200 hover:border-pink-300 hover:bg-pink-50 dark:hover:bg-pink-900/30 transition-all flex items-center gap-1.5"
+          >
+            <Copy size={14} /> 复制全部文案
+          </button>
+          <button
+            type="button"
+            onClick={onRegenerate}
+            className="px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-200 hover:border-pink-300 transition-all flex items-center gap-1.5"
+          >
+            <RefreshCw size={14} /> 重新填表
+          </button>
+          <button
+            type="button"
+            onClick={onConfirmImaging}
+            className="group relative flex-1 overflow-hidden px-4 py-2.5 rounded-lg bg-gradient-to-r from-pink-500 via-rose-500 to-purple-600 hover:from-pink-600 hover:via-rose-600 hover:to-purple-700 text-white text-sm font-semibold shadow-lg shadow-pink-500/30 hover:shadow-xl hover:shadow-pink-500/40 transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2"
+          >
+            <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-200%] group-hover:translate-x-[200%] transition-transform duration-1000" />
+            <Sparkles size={16} />
+            确认 · 一次性生成 6 张图
+            <ChevronRight size={14} />
+          </button>
+        </div>
+      )}
+
+      {phase === 'imaging' && (
+        <div className="rounded-xl bg-gradient-to-r from-pink-50 to-purple-50 dark:from-pink-900/20 dark:to-purple-900/20 border border-pink-200 dark:border-pink-800 p-4 flex items-center gap-3">
+          <Loader2 size={20} className="animate-spin text-pink-500" />
+          <div>
+            <div className="font-semibold text-slate-800 dark:text-slate-100">正在出图…</div>
+            <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">封面 t2i + 后 5 张并发 i2i · 通常 60-180 秒</div>
+          </div>
+        </div>
+      )}
+
+      {phase === 'done' && (
+        <div className="rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20 border border-emerald-200 dark:border-emerald-800 p-4 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-white">
+            <Check size={16} />
+          </div>
+          <div>
+            <div className="font-semibold text-slate-800 dark:text-slate-100">完成</div>
+            <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">点击图片查看大图 · 可下载到本地后用 PS 调文字</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Lightbox({
+  page, index, total, onClose, onPrev, onNext,
+}: {
+  page: PageSpec; index: number; total: number;
+  onClose: () => void; onPrev: () => void; onNext: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'ArrowLeft') onPrev();
+      else if (e.key === 'ArrowRight') onNext();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, onPrev, onNext]);
+
+  if (!page.imageUrl) return null;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <button onClick={onClose} className="absolute top-4 right-4 p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white"><X size={20} /></button>
+      <button onClick={onPrev} className="absolute left-4 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white"><ChevronLeft size={24} /></button>
+      <button onClick={onNext} className="absolute right-4 top-1/2 -translate-y-1/2 p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white"><ChevronRight size={24} /></button>
+      <div className="max-w-3xl w-full">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={page.imageUrl} alt="" className="w-full rounded-lg shadow-2xl" />
+        <div className="mt-3 text-center text-white">
+          <div className="text-base font-medium">{page.pageTitle}</div>
+          <div className="text-xs opacity-70 mt-1">{index + 1} / {total} · {page.pageRole}</div>
+        </div>
+        <div className="mt-3 flex justify-center gap-2">
+          <a
+            href={page.imageUrl}
+            download
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm transition-colors"
+          >
+            <Download size={14} /> 下载
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`rounded-xl border border-slate-200/60 dark:border-slate-800/60 bg-white/70 dark:bg-slate-900/60 backdrop-blur-md p-4 shadow-sm ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+function CardHeader({ title, required, icon: IconCmp }: { title: string; required?: boolean; icon?: any }) {
+  return (
+    <div className="flex items-center gap-1.5 mb-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200 uppercase tracking-wide">
+      {IconCmp && <IconCmp size={13} className="text-pink-500" />}
+      {title}
+      {required && <span className="text-pink-500">*</span>}
+    </div>
+  );
+}
