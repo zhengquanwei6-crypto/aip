@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import ThemeProvider, { themeInitScript } from '@/components/ThemeProvider';
+import { Toaster } from '@/components/ui/toaster';
 
 /**
  * v0.12 B4.2：站点更名「平面设计接单 AI 运营工作台」→「果冻的AI · 智能体工作台」。
@@ -18,6 +19,7 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 5,
+  viewportFit: 'cover',  // v0.13 mobile: iPhone 刘海屏适配
   themeColor: '#0a0a0a',
 };
 
@@ -33,6 +35,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-screen">
         <ThemeProvider>{children}</ThemeProvider>
+              <Toaster />
       </body>
     </html>
   );

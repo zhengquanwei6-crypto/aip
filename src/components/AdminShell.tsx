@@ -1,3 +1,5 @@
+// v0.13 mobile m5: tap-target-sm injected
+// v0.13 mobile m1: hamburger 44px + safe-area-top
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -220,11 +222,11 @@ export default function AdminShell({
       </div>
 
       <div className="flex-1 flex flex-col min-w-0 w-full">
-        <header className="h-14 bg-white/90 dark:bg-slate-900/90 backdrop-blur border-b border-slate-200 dark:border-slate-800 px-3 sm:px-6 flex items-center gap-3 sticky top-0 z-30">
+        <header data-v013-mobile-m1 className="h-14 safe-area-top bg-white/90 dark:bg-slate-900/90 backdrop-blur border-b border-slate-200 dark:border-slate-800 px-3 sm:px-6 flex items-center gap-3 sticky top-0 z-30">
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="lg:hidden -ml-1 inline-flex items-center justify-center w-9 h-9 rounded text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="lg:hidden -ml-1 tap-target-sm inline-flex items-center justify-center w-11 h-11 rounded text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
             aria-label="打开菜单"
           >
             <Menu className="h-5 w-5" aria-hidden="true" />
@@ -506,7 +508,7 @@ function SidebarContent({
           title="使用手册"
           data-docs-quicklink
           className={clsx(
-            'inline-flex items-center justify-center gap-1.5 rounded text-xs text-slate-500 hover:text-brand-700 hover:bg-brand-50 dark:hover:bg-brand-900/20 dark:text-slate-400 dark:hover:text-brand-300 transition-colors',
+            'tap-target-sm inline-flex items-center justify-center gap-1.5 rounded text-xs text-slate-500 hover:text-brand-700 hover:bg-brand-50 dark:hover:bg-brand-900/20 dark:text-slate-400 dark:hover:text-brand-300 transition-colors',
             collapsed ? 'h-9' : 'h-8 px-2',
           )}
         >
@@ -519,7 +521,7 @@ function SidebarContent({
             onClick={onToggleCollapsed}
             data-sidebar-toggle
             className={clsx(
-              'w-full inline-flex items-center justify-center gap-1.5 rounded text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 dark:text-slate-400 transition-colors',
+              'w-full tap-target-sm inline-flex items-center justify-center gap-1.5 rounded text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 dark:text-slate-400 transition-colors',
               collapsed ? 'h-9' : 'h-8 px-2',
             )}
             aria-pressed={collapsed}

@@ -2,6 +2,86 @@
 @tailwind components;
 @tailwind utilities;
 
+/* v0.13 设计系统令牌 — HSL 格式（无空格无逗号，方便 alpha 复合）
+ *  果冻紫主色（用户 brand 色 #b08be8）→ HSL 269 65% 73%
+ *  light: 紫白渐变；dark: 深紫炭灰
+ */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 4%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 4%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 4%;
+
+    --primary: 269 65% 65%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 269 30% 95%;
+    --secondary-foreground: 269 50% 30%;
+
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+
+    --accent: 330 80% 60%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 269 65% 65%;
+
+    --radius: 0.75rem;
+
+    --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+
+  .dark {
+    --background: 240 10% 4%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 10% 7%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 10% 7%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 269 70% 70%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 5% 65%;
+
+    --accent: 330 70% 65%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 269 70% 70%;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+
 :root {
   --background: #f7f8fa;
   --foreground: #1f2937;
@@ -196,5 +276,78 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* v0.13 BUG-M30 fix-2: 错误条抖动动画 */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-3px); }
+  20%, 40%, 60%, 80% { transform: translateX(3px); }
+}
+.animate-shake {
+  animation: shake 0.4s cubic-bezier(.36, .07, .19, .97) both;
+}
+
+/* v0.13 BUG-M31: 骨架屏 shimmer 动画 */
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.animate-shimmer {
+  animation: shimmer 1.5s infinite linear;
+}
+
+
+/* v0.13 mobile utilities */
+@layer utilities {
+  /* Apple HIG 触控目标 44×44pt */
+  .tap-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .tap-target-sm {
+    min-height: 40px;
+  }
+  /* iPhone 刘海屏 / Android 手势条安全区 */
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0);
+  }
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .safe-area-x {
+    padding-left: env(safe-area-inset-left, 0);
+    padding-right: env(safe-area-inset-right, 0);
+  }
+  /* 移动端字号下限：避免 < 11px 导致难读 */
+  .text-mobile-xs {
+    font-size: clamp(11px, 0.7rem, 12px);
+    line-height: 1.5;
+  }
+  /* 移动端长按图片不弹出菜单（看图床用户友好）*/
+  .no-callout {
+    -webkit-touch-callout: none;
+  }
+  /* 移除 iOS Safari 自动缩放（input focus 时） */
+  input[type='text'],
+  input[type='search'],
+  input[type='number'],
+  input[type='email'],
+  input[type='tel'],
+  textarea,
+  select {
+    font-size: 16px;
+  }
+  @media (min-width: 640px) {
+    input[type='text'],
+    input[type='search'],
+    input[type='number'],
+    input[type='email'],
+    input[type='tel'],
+    textarea,
+    select {
+      font-size: 14px;
+    }
   }
 }
