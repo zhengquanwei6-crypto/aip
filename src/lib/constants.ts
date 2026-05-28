@@ -113,7 +113,7 @@ export const NAV_ITEMS: { href: string; label: string; hidden?: boolean }[] = [
   { href: '/calendar', label: '发布日历', hidden: true },
   { href: '/ai-tools', label: 'AI 工具' },
   { href: '/playground', label: 'AI 对话' },
-  { href: '/adapters', label: 'API 适配器' },
+  { href: '/adapters', label: 'API 适配器', hidden: true }, // v0.14-z57: 整合到 /settings 底部 section
   { href: '/presets', label: '模板' },
   { href: '/imgbed', label: '图床', hidden: true }, // v0.14-z55: 整合到 /workspace?tab=imgbed
   { href: '/docs', label: '使用手册' },
