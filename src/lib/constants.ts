@@ -97,7 +97,7 @@ export const PRICE_TIERS = ['引流款', '标准款', '利润款'] as const;
  */
 export const NAV_ITEMS: { href: string; label: string; hidden?: boolean }[] = [
   { href: '/dashboard', label: '首页看板' },
-  { href: '/search', label: 'AI 搜', hidden: true }, // v0.14-z59: 空壳 wrapper，URL 仍 200
+  { href: '/search', label: '语义搜索' }, // v0.14-z78: 真做了
   { href: '/analysis', label: 'AI 分析', hidden: true }, // v0.14-z59: 空壳 wrapper
   { href: '/today', label: '今日任务' },
   { href: '/work/xiaohongshu', label: '小红书运营' },
