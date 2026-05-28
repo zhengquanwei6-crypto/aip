@@ -171,8 +171,10 @@ export async function statsCollection(
   cfg: ZillizConfig,
   name: string,
 ): Promise<{ rowCount: number }> {
+  // v0.14-z88-counter: dedicated cluster 的 get_stats 和 count(*) 都不准，
+  // 改用 entities/query 拉所有 id (filter='') 然后数返回的条数。
+  // limit 上限 16384，超出按 16384 算（已足够）。
   mustConfig(cfg);
-  // v0.14-z77: dedicated cluster 的 get_stats 始终返回 0，用 entities/query count(*) 替代
   try {
     const j = await fetchJSON<{ data: any[] }>(
       `${cfg.endpoint}/v2/vectordb/entities/query`,
@@ -181,19 +183,16 @@ export async function statsCollection(
         headers: authHeaders(cfg),
         body: JSON.stringify({
           collectionName: name,
-          filter: '',
-          outputFields: ["count(*)"],
-          limit: 1,
+          filter: 'id != ""',
+          outputFields: ["id"],
+          limit: 16384,
         }),
+        timeoutMs: 20000,
       },
     );
-    const arr = Array.isArray(j?.data) ? j.data : [];
-    if (arr.length === 0) return { rowCount: 0 };
-    const first = arr[0];
-    const count = first?.["count(*)"] ?? first?.count ?? 0;
-    return { rowCount: Number(count) || 0 };
-  } catch (e) {
-    // count(*) 不被支持时 fallback 到 get_stats
+    return { rowCount: Array.isArray(j?.data) ? j.data.length : 0 };
+  } catch {
+    // fallback: get_stats
     try {
       const j = await fetchJSON<{ data: { rowCount: number } }>(
         `${cfg.endpoint}/v2/vectordb/collections/get_stats`,

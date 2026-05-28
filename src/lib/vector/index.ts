@@ -232,12 +232,19 @@ export async function vectorStatus(): Promise<{
   } as Awaited<ReturnType<typeof vectorStatus>>;
   if (!cfg.enabled || !cfg.endpoint || !cfg.token) return out;
   try {
+    // v0.14-z88-status-fix: dedicated cluster 的 stats 不可信，用 query 直接数
     const hHist = await hasCollection(cfg, COLLECTIONS.HISTORY.collectionName);
     out.history.exists = hHist;
-    if (hHist) out.history.rows = (await statsCollection(cfg, COLLECTIONS.HISTORY.collectionName)).rowCount;
+    if (hHist) {
+      const stats = await statsCollection(cfg, COLLECTIONS.HISTORY.collectionName);
+      out.history.rows = stats.rowCount;
+    }
     const hAsset = await hasCollection(cfg, COLLECTIONS.ASSETS.collectionName);
     out.assets.exists = hAsset;
-    if (hAsset) out.assets.rows = (await statsCollection(cfg, COLLECTIONS.ASSETS.collectionName)).rowCount;
+    if (hAsset) {
+      const stats = await statsCollection(cfg, COLLECTIONS.ASSETS.collectionName);
+      out.assets.rows = stats.rowCount;
+    }
   } catch (e) {
     out.error = (e as Error).message || String(e);
   }
