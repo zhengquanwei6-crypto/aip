@@ -101,6 +101,36 @@ export default function SettingsClient({
   const [saving, setSaving] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [adapterList, setAdapterList] = useState(adapters);
+
+  // v0.14-z63: Zilliz / Embedding 配置
+  type VectorMaskedSecret = { isSet: boolean; preview: string; length: number };
+  type VectorConfig = {
+    VECTOR_ENABLED: string;
+    VECTOR_ZILLIZ_ENDPOINT: string;
+    VECTOR_ZILLIZ_TOKEN: VectorMaskedSecret;
+    EMBEDDING_BASE_URL: string;
+    EMBEDDING_API_KEY: VectorMaskedSecret;
+    EMBEDDING_MODEL: string;
+  };
+  const [vectorConfig, setVectorConfig] = useState<VectorConfig | null>(null);
+  const [vectorStatus, setVectorStatus] = useState<{
+    enabled: boolean;
+    endpoint: string;
+    history: { exists: boolean; rows: number };
+    assets: { exists: boolean; rows: number };
+    error?: string;
+  } | null>(null);
+  const [vectorEditing, setVectorEditing] = useState(false);
+  const [vectorDraft, setVectorDraft] = useState({
+    VECTOR_ENABLED: '0',
+    VECTOR_ZILLIZ_ENDPOINT: '',
+    VECTOR_ZILLIZ_TOKEN: '',
+    EMBEDDING_BASE_URL: '',
+    EMBEDDING_API_KEY: '',
+    EMBEDDING_MODEL: '',
+  });
+  const [vectorBusy, setVectorBusy] = useState<'save' | 'embed-test' | 'backfill' | null>(null);
+  const [embedTestResult, setEmbedTestResult] = useState<string>('');
   const [testing, setTesting] = useState<'llm' | 'image' | null>(null);
 
   // === v0.11 B1 · API Key 池 ===
@@ -146,6 +176,95 @@ export default function SettingsClient({
   useEffect(() => {
     void refreshPool();
   }, []);
+
+  // v0.14-z63: 拉 vector 配置 + 状态
+  async function refreshVector() {
+    try {
+      const [cfgRes, stRes] = await Promise.all([
+        fetch('/api/vector/config', { cache: 'no-store' }),
+        fetch('/api/vector/status', { cache: 'no-store' }),
+      ]);
+      const cfg = await cfgRes.json();
+      const st = await stRes.json();
+      if (cfg.ok) setVectorConfig(cfg.config);
+      if (st.ok) setVectorStatus(st);
+      else setVectorStatus({ enabled: false, endpoint: '', history: { exists: false, rows: 0 }, assets: { exists: false, rows: 0 }, error: st.error });
+    } catch (e) {
+      // ignore
+    }
+  }
+  useEffect(() => {
+    void refreshVector();
+  }, []);
+
+  async function saveVector() {
+    setVectorBusy('save');
+    try {
+      const body: any = {
+        VECTOR_ENABLED: vectorDraft.VECTOR_ENABLED,
+        VECTOR_ZILLIZ_ENDPOINT: vectorDraft.VECTOR_ZILLIZ_ENDPOINT,
+        EMBEDDING_BASE_URL: vectorDraft.EMBEDDING_BASE_URL,
+        EMBEDDING_MODEL: vectorDraft.EMBEDDING_MODEL,
+      };
+      if (vectorDraft.VECTOR_ZILLIZ_TOKEN.trim()) body.VECTOR_ZILLIZ_TOKEN = vectorDraft.VECTOR_ZILLIZ_TOKEN;
+      if (vectorDraft.EMBEDDING_API_KEY.trim()) body.EMBEDDING_API_KEY = vectorDraft.EMBEDDING_API_KEY;
+      const r = await fetch('/api/vector/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || '失败');
+      toast.success(`保存了 ${j.updated} 项配置`);
+      setVectorEditing(false);
+      await refreshVector();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setVectorBusy(null);
+    }
+  }
+
+  async function testEmbedding() {
+    setVectorBusy('embed-test');
+    setEmbedTestResult('');
+    try {
+      const r = await fetch('/api/vector/embed-test', { method: 'POST' });
+      const j = await r.json();
+      if (!j.ok) {
+        setEmbedTestResult('❌ ' + (j.error || '失败'));
+        toast.error('embedding 测试失败');
+      } else {
+        setEmbedTestResult(`✓ 通 · 维度 ${j.dimension}`);
+        toast.success(`embedding 测试通过：${j.dimension} 维`);
+      }
+    } catch (e) {
+      setEmbedTestResult('❌ ' + (e as Error).message);
+      toast.error((e as Error).message);
+    } finally {
+      setVectorBusy(null);
+    }
+  }
+
+  async function backfillVector() {
+    if (!confirm('开始把 AIOutput + Asset 全量索引到 Zilliz？\n会消耗 LLM key embedding 额度（每条约 0.0001 USD）。')) return;
+    setVectorBusy('backfill');
+    try {
+      const r = await fetch('/api/vector/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'all', batch: 50 }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || '失败');
+      toast.success(`回填完成：history ${j.history.ok}/${j.history.processed}，assets ${j.assets.ok}/${j.assets.processed}`);
+      await refreshVector();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setVectorBusy(null);
+    }
+  }
 
   // v0.14-z41: pool 变化时自动加载每条 active KEY 的余额（5min cached）
   useEffect(() => {
@@ -904,6 +1023,8 @@ export default function SettingsClient({
 
       {/* 新增 / 编辑抽屉 */}
       {drawerOpen && (
+
+      
         <KeyDrawer
           draft={draft}
           editMode={draftEditMode}
@@ -913,6 +1034,188 @@ export default function SettingsClient({
           onSave={saveDraft}
         />
       )}
+
+      {/* v0.14-z63: Zilliz 向量数据库配置 + 状态 */}
+      <section className="card-elevated p-4 sm:p-5">
+        <header className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+          <div>
+            <h2 className="text-sm sm:text-base font-semibold text-slate-800 dark:text-slate-100 inline-flex items-center gap-2">
+              <span>🧠</span>
+              <span>向量数据库 (Zilliz)</span>
+              {vectorStatus?.enabled ? (
+                <span className="badge badge-green text-[10px]">已启用</span>
+              ) : (
+                <span className="badge badge-gray text-[10px]">未启用</span>
+              )}
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              语义检索 / 图片搜索 / 历史召回。配置 Zilliz Cloud 端点 + embedding 调用 key。
+            </p>
+          </div>
+          {!vectorEditing && (
+            <button
+              type="button"
+              onClick={() => {
+                setVectorDraft({
+                  VECTOR_ENABLED: vectorConfig?.VECTOR_ENABLED || '0',
+                  VECTOR_ZILLIZ_ENDPOINT: vectorConfig?.VECTOR_ZILLIZ_ENDPOINT || '',
+                  VECTOR_ZILLIZ_TOKEN: '',
+                  EMBEDDING_BASE_URL: vectorConfig?.EMBEDDING_BASE_URL || '',
+                  EMBEDDING_API_KEY: '',
+                  EMBEDDING_MODEL: vectorConfig?.EMBEDDING_MODEL || '',
+                });
+                setVectorEditing(true);
+              }}
+              className="text-xs font-medium text-brand-700 hover:underline dark:text-brand-300"
+            >
+              编辑 →
+            </button>
+          )}
+        </header>
+
+        {vectorStatus && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3 text-xs">
+            <div className="border border-slate-200 dark:border-slate-700 rounded-md p-2">
+              <div className="text-slate-500 dark:text-slate-400">Endpoint</div>
+              <div className="font-mono text-[10px] truncate text-slate-800 dark:text-slate-200" title={vectorStatus.endpoint}>
+                {vectorStatus.endpoint || '(未配置)'}
+              </div>
+            </div>
+            <div className="border border-slate-200 dark:border-slate-700 rounded-md p-2">
+              <div className="text-slate-500 dark:text-slate-400">dao_history</div>
+              <div className={vectorStatus.history.exists ? 'text-emerald-600 dark:text-emerald-400 font-mono' : 'text-slate-400 font-mono'}>
+                {vectorStatus.history.exists ? `${vectorStatus.history.rows} 条` : '(不存在)'}
+              </div>
+            </div>
+            <div className="border border-slate-200 dark:border-slate-700 rounded-md p-2">
+              <div className="text-slate-500 dark:text-slate-400">dao_assets</div>
+              <div className={vectorStatus.assets.exists ? 'text-emerald-600 dark:text-emerald-400 font-mono' : 'text-slate-400 font-mono'}>
+                {vectorStatus.assets.exists ? `${vectorStatus.assets.rows} 条` : '(不存在)'}
+              </div>
+            </div>
+          </div>
+        )}
+        {vectorStatus?.error && (
+          <div className="text-xs text-red-500 mb-3 break-all">{vectorStatus.error}</div>
+        )}
+
+        {vectorEditing && (
+          <div className="space-y-3 p-3 mb-3 rounded-lg bg-slate-50 dark:bg-slate-800/30 border border-slate-200 dark:border-slate-700">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-slate-500 dark:text-slate-400">启用</label>
+                <select
+                  className="input mt-1"
+                  value={vectorDraft.VECTOR_ENABLED}
+                  onChange={(e) => setVectorDraft({ ...vectorDraft, VECTOR_ENABLED: e.target.value })}
+                >
+                  <option value="1">启用</option>
+                  <option value="0">停用</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 dark:text-slate-400">Embedding Model</label>
+                <input
+                  className="input mt-1"
+                  value={vectorDraft.EMBEDDING_MODEL}
+                  onChange={(e) => setVectorDraft({ ...vectorDraft, EMBEDDING_MODEL: e.target.value })}
+                  placeholder="text-embedding-3-small (1536 dim)"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Zilliz Endpoint</label>
+              <input
+                className="input mt-1 font-mono text-xs"
+                value={vectorDraft.VECTOR_ZILLIZ_ENDPOINT}
+                onChange={(e) => setVectorDraft({ ...vectorDraft, VECTOR_ZILLIZ_ENDPOINT: e.target.value })}
+                placeholder="https://in01-xxxx.aws-xxx.vectordb.zillizcloud.com:19540"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 dark:text-slate-400">
+                Zilliz Token{vectorConfig?.VECTOR_ZILLIZ_TOKEN.isSet ? ` (已设置 · ${vectorConfig.VECTOR_ZILLIZ_TOKEN.preview} · 留空保留)` : ''}
+              </label>
+              <input
+                type="password"
+                className="input mt-1 font-mono text-xs"
+                value={vectorDraft.VECTOR_ZILLIZ_TOKEN}
+                onChange={(e) => setVectorDraft({ ...vectorDraft, VECTOR_ZILLIZ_TOKEN: e.target.value })}
+                placeholder={vectorConfig?.VECTOR_ZILLIZ_TOKEN.isSet ? '留空保留原值' : 'API Key from zilliz cloud'}
+              />
+            </div>
+            <hr className="border-slate-200 dark:border-slate-700" />
+            <div className="text-xs text-slate-500 dark:text-slate-400">
+              💡 Embedding 单独 key（可选）。不填 fallback 到 LLM key 池。<br />
+              推荐：SiliconFlow（国内免费 BAAI/bge-m3） / OpenAI / 充值 cometapi。
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Embedding Base URL</label>
+              <input
+                className="input mt-1 font-mono text-xs"
+                value={vectorDraft.EMBEDDING_BASE_URL}
+                onChange={(e) => setVectorDraft({ ...vectorDraft, EMBEDDING_BASE_URL: e.target.value })}
+                placeholder="例：https://api.siliconflow.cn/v1（可选 · 留空 fallback）"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 dark:text-slate-400">
+                Embedding API Key{vectorConfig?.EMBEDDING_API_KEY.isSet ? ` (已设置 · ${vectorConfig.EMBEDDING_API_KEY.preview} · 留空保留)` : ''}
+              </label>
+              <input
+                type="password"
+                className="input mt-1 font-mono text-xs"
+                value={vectorDraft.EMBEDDING_API_KEY}
+                onChange={(e) => setVectorDraft({ ...vectorDraft, EMBEDDING_API_KEY: e.target.value })}
+                placeholder={vectorConfig?.EMBEDDING_API_KEY.isSet ? '留空保留原值' : 'sk-...（可选）'}
+              />
+            </div>
+            <div className="flex gap-2 justify-end pt-2 border-t border-slate-200 dark:border-slate-700">
+              <button
+                type="button"
+                onClick={() => setVectorEditing(false)}
+                className="btn-secondary text-xs"
+                disabled={vectorBusy === 'save'}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={saveVector}
+                className="btn-primary text-xs"
+                disabled={vectorBusy === 'save'}
+              >
+                {vectorBusy === 'save' ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2 items-center text-xs">
+          <button
+            type="button"
+            onClick={testEmbedding}
+            disabled={vectorBusy === 'embed-test' || !vectorStatus?.enabled}
+            className="btn-secondary text-xs disabled:opacity-50"
+          >
+            {vectorBusy === 'embed-test' ? '测试中…' : '🧪 测试 embedding'}
+          </button>
+          <button
+            type="button"
+            onClick={backfillVector}
+            disabled={vectorBusy === 'backfill' || !vectorStatus?.enabled}
+            className="btn-secondary text-xs disabled:opacity-50"
+          >
+            {vectorBusy === 'backfill' ? '回填中…1-3 分钟' : '🔄 全量回填到 Zilliz'}
+          </button>
+          {embedTestResult && (
+            <span className={embedTestResult.startsWith('✓') ? 'text-emerald-600' : 'text-red-500'}>
+              {embedTestResult}
+            </span>
+          )}
+        </div>
+      </section>
+      
 
       {/* ① 默认图片 adapter（关键链路开关）*/}
       <div className="card border-brand-200 dark:border-brand-800">
