@@ -18,6 +18,7 @@ export async function POST(req: NextRequest) {
     const type = (form.get('type') as string) || '封面图';
     const platform = (form.get('platform') as string) || null;
     const category = (form.get('category') as string) || null;
+    const prompt = (form.get('prompt') as string) || null; // v0.14-z83: 让上传支持 prompt（用于 vector 索引）
     const asset = await prisma.asset.create({
       data: {
         type,
@@ -26,6 +27,7 @@ export async function POST(req: NextRequest) {
         category,
         url: saved.url,
         fileName: saved.fileName,
+        ...(prompt ? { prompt } : {}),
       },
     });
     return NextResponse.json({
