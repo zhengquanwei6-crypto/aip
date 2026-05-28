@@ -1,41 +1,33 @@
 /**
- * v0.12 B4.3 · 果冻的AI 公共首页（替换原来的 redirect→/dashboard）。
+ * v0.15 · 果冻的AI 公共介绍页
  *
- * 这是一个 server component · 拉一次 /api/health 真实数据 + 一次 prisma count。
- * 不带 sidebar （AdminShell 在 (admin)/layout.tsx，不进 src/app/page.tsx），
- * 也不带 admin 顶栏，整页极简。
+ * 用户原话：优化网站介绍页。
  *
- * 设计原则（用户原话「简约、高端、流畅、有差异化、不千篇一律」）：
- *
- * v0.12 B5.4 · accent color 回归用户原话「果冻紫」（替换 b4.3 的「果冻紫」）
- *   - 配色：纯黑 #0a0a0a + 米白 #faf7f2 + 跳色 jelly purple #b08be8（不用默认 indigo）
- *   - 字体：衬线（serif · 中文标题）+ 等宽（mono · 数据/slug）混排
- *   - 布局：左对齐 + 不规则间距，不用 grid-cols-3 默认套
- *   - 数据真实：从 prisma + health 读，不假造「服务 10000+」
- *   - 差异化：流程图用纯 SVG 手绘，不是模板化的 mermaid 风
- *   - 0 carousel / 0 video bg / 0 客户 logo wall / 0「立即注册」框
- *
- * 导航策略：访客访问「/」看 landing；右上 CTA「进入工作台 →」走 /dashboard。
- * 已登录用户也看 landing（项目无登录态），需要工作台自己点 CTA。
+ * 改动：
+ *   - 文案对齐 v0.15 实际能力（三平台运营 + AI 工具 5 个 + 8 智能体 + 简约对话）
+ *   - 去掉过期段落（"4 个最常被调用的智能体" Hero 后改成"三平台运营驱动"）
+ *   - 真实 KPI 加 todayPending
+ *   - 颜色锚点 jelly purple 保持，hover/focus 加阴影
+ *   - 加"最近更新"段落（v0.15 整改要点）
  */
 import Link from 'next/link';
 import { headers } from 'next/headers';
 import { prisma } from '@/lib/db';
 import { AGENTS } from '@/lib/agent-types';
 
-// 不缓存（landing 显示真实数据）
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export const metadata = {
   title: '果冻的AI · 智能体集合平台',
   description:
-    '从「设计接单」起步，演进为多垂直智能体的本地化工作台。当前 8 个内置智能体，本地 SQLite 持久化，自定义 systemPrompt。',
+    '从平面设计接单工作室起步、为多垂直智能体演化的本地化 AI 工作台。三平台运营 + 5 个 AI 工具 + 8 个内置智能体 + 自定义 systemPrompt。',
 };
 
 interface LandingData {
   agentCount: number;
   taskCount: number;
+  pendingTaskCount: number;
   aiOutputCount: number;
   assetCount: number;
   apiKeyCount: number;
@@ -45,19 +37,25 @@ interface LandingData {
 }
 
 async function loadLandingData(): Promise<LandingData> {
-  const [taskCount, aiOutputCount, assetCount, apiKeyCount, customPromptCount] =
-    await Promise.all([
-      prisma.task.count().catch(() => 0),
-      prisma.aIOutput.count().catch(() => 0),
-      prisma.asset.count().catch(() => 0),
-      prisma.apiKey.count().catch(() => 0),
-      prisma.setting
-        .count({ where: { key: { startsWith: 'prompt:' } } })
-        .catch(() => 0),
-    ]);
+  const [
+    taskCount,
+    pendingTaskCount,
+    aiOutputCount,
+    assetCount,
+    apiKeyCount,
+    customPromptCount,
+  ] = await Promise.all([
+    prisma.task.count().catch(() => 0),
+    prisma.task.count({ where: { status: 'pending' } }).catch(() => 0),
+    prisma.aIOutput.count().catch(() => 0),
+    prisma.asset.count().catch(() => 0),
+    prisma.apiKey.count().catch(() => 0),
+    prisma.setting
+      .count({ where: { key: { startsWith: 'prompt:' } } })
+      .catch(() => 0),
+  ]);
 
-  // health 通过自身 fetch 拿（landing 不依赖 health 也能渲染）
-  let version = 'v0.12';
+  let version = 'v0.15';
   let serverUptimeHours = 0;
   try {
     const h = await fetch('http://127.0.0.1:3000/api/health', {
@@ -71,12 +69,13 @@ async function loadLandingData(): Promise<LandingData> {
       }
     }
   } catch {
-    /* ignore — 离线状态也能渲染 */
+    /* offline 渲染兜底 */
   }
 
   return {
     agentCount: AGENTS.length,
     taskCount,
+    pendingTaskCount,
     aiOutputCount,
     assetCount,
     apiKeyCount,
@@ -86,19 +85,14 @@ async function loadLandingData(): Promise<LandingData> {
   };
 }
 
-/**
- * 选 4 个最有代表性的 agent 上首页（不全列 8 个，避免视觉拥挤）。
- * 用户实际跑得最多的：publish-director / copy-writer / api-doctor / photo-director。
- */
 const FEATURED_AGENT_SLUGS = [
   'publish-director',
+  'photo-director',
   'copy-writer',
   'api-doctor',
-  'photo-director',
 ];
 
 export default async function PublicLandingPage() {
-  // headers() 强制 dynamic（避免被静态化 · Next 14.2 优化）
   headers();
   const data = await loadLandingData();
   const featured = FEATURED_AGENT_SLUGS.map((s) =>
@@ -109,18 +103,22 @@ export default async function PublicLandingPage() {
     <div
       className="min-h-screen text-[#0a0a0a]"
       style={{ background: '#faf7f2' }}
-      data-v012-b4-landing
+      data-v015-landing
     >
       <TopBar version={data.version} />
 
       <main className="mx-auto max-w-[1080px] px-6 lg:px-10">
         <Hero data={data} />
         <SectionDivider />
+        <PlatformAgents />
+        <SectionDivider />
+        <AiTools />
+        <SectionDivider />
         <FeaturedAgents agents={featured} totalAgents={data.agentCount} />
         <SectionDivider />
-        <FlowDiagram />
-        <SectionDivider />
         <Numbers data={data} />
+        <SectionDivider />
+        <Changelog />
         <SectionDivider />
         <CallToAction />
       </main>
@@ -130,15 +128,9 @@ export default async function PublicLandingPage() {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// 顶栏 · 极简：左品牌 + 右 CTA
-// ──────────────────────────────────────────────────────────────────────
 function TopBar({ version }: { version: string }) {
   return (
-    <header
-      className="border-b border-[#0a0a0a]/10"
-      data-v012-b4-landing-topbar
-    >
+    <header className="border-b border-[#0a0a0a]/10 sticky top-0 z-30 backdrop-blur bg-[#faf7f2]/85">
       <div className="mx-auto max-w-[1080px] px-6 lg:px-10 h-16 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2.5">
           <BrandMark className="h-7 w-7" />
@@ -167,8 +159,7 @@ function TopBar({ version }: { version: string }) {
           </span>
           <Link
             href="/dashboard"
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-[#0a0a0a] text-[#faf7f2] hover:bg-[#b08be8] transition-colors rounded-sm"
-            data-v012-b4-cta-enter
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-[#0a0a0a] text-[#faf7f2] hover:bg-[#b08be8] hover:shadow-md transition-all rounded-sm"
           >
             进入工作台
             <span aria-hidden>→</span>
@@ -179,12 +170,9 @@ function TopBar({ version }: { version: string }) {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// Hero · 1 行大字 + 副标 + 一段说明
-// ──────────────────────────────────────────────────────────────────────
 function Hero({ data }: { data: LandingData }) {
   return (
-    <section className="pt-20 pb-16 lg:pt-28 lg:pb-24" data-v012-b4-hero>
+    <section className="pt-20 pb-16 lg:pt-28 lg:pb-24">
       <div
         className="text-[10px] tracking-[0.32em] uppercase text-[#b08be8] font-mono mb-5"
         aria-hidden
@@ -195,22 +183,22 @@ function Hero({ data }: { data: LandingData }) {
         className="text-[40px] sm:text-[56px] lg:text-[72px] leading-[1.05] font-serif tracking-tight"
         style={{ fontFamily: '"Source Serif Pro", "Noto Serif SC", Georgia, serif' }}
       >
-        让多个 AI 智能体
+        三个平台的运营，
         <br />
-        <span className="text-[#b08be8]">为同一个工作流</span>
+        <span className="text-[#b08be8]">由一组智能体</span>
         <br />
-        协作。
+        协同搞定。
       </h1>
       <p className="mt-8 text-[15px] sm:text-[17px] leading-relaxed text-[#0a0a0a]/70 max-w-[640px]">
-        果冻的AI 是一个本地化的智能体集合工作台。从「设计接单」起步，
-        正在演进为覆盖学习 / 代码 / 文档 / 数据等多个垂直场景的 agent
-        平台。每个 agent 都跑在你自己的 SQLite 上，systemPrompt 完全可改，
-        token 走你自己的 API key 池。
+        果冻的AI 是一个本地化的智能体集合工作台。从平面设计接单工作室起步，覆盖
+        小红书 / 闲鱼 / 千牛 三个平台的内容产出，配合 5 个 AI 工具 + 8 个内置智能体，
+        所有数据都在你自己的 SQLite 上，systemPrompt 完全可改，token 走你自己的
+        API key 池。
       </p>
       <div className="mt-10 flex flex-wrap gap-3 items-center">
         <Link
           href="/dashboard"
-          className="inline-flex items-center gap-2 px-5 py-3 text-sm font-medium bg-[#0a0a0a] text-[#faf7f2] hover:bg-[#b08be8] transition-colors rounded-sm"
+          className="inline-flex items-center gap-2 px-5 py-3 text-sm font-medium bg-[#0a0a0a] text-[#faf7f2] hover:bg-[#b08be8] hover:shadow-md transition-all rounded-sm"
         >
           进入工作台
           <span aria-hidden>→</span>
@@ -231,14 +219,103 @@ function Hero({ data }: { data: LandingData }) {
         <span>{data.apiKeyCount} api keys pooled</span>
         <span>·</span>
         <span>{data.aiOutputCount} ai outputs persisted</span>
+        <span>·</span>
+        <span>{data.pendingTaskCount} tasks pending</span>
       </div>
     </section>
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// Featured Agents · 4 个 · 不规则 stagger 布局（非 grid-cols-3）
-// ──────────────────────────────────────────────────────────────────────
+function PlatformAgents() {
+  const items = [
+    {
+      emoji: '📕',
+      name: '小红书运营',
+      slug: 'xiaohongshu-operator',
+      desc: '一键产 5 张同源笔记图（封面 → 痛点 → 思路 → 结果 → 转化）+ 标题 5 选 + 正文 + 标签 + 评论引导',
+    },
+    {
+      emoji: '🐟',
+      name: '闲鱼运营',
+      slug: 'xianyu-operator',
+      desc: '主图 + 细节 + 场景 + 规格 + 诚信 5 张同源图，含商品标题 / 卖点 / 议价话术',
+    },
+    {
+      emoji: '🐂',
+      name: '千牛 / 淘宝运营',
+      slug: 'qianniu-operator',
+      desc: '主图 + 卖点 + 规格 + 场景 + 信任 5 张同源图，电商主图标准比例',
+    },
+  ];
+  return (
+    <section className="py-16 lg:py-20">
+      <SectionLabel left="platform agents" right="3 verticals" />
+      <h2
+        className="mt-4 text-[28px] sm:text-[36px] leading-[1.1] font-serif"
+        style={{ fontFamily: '"Source Serif Pro", "Noto Serif SC", Georgia, serif' }}
+      >
+        三个平台运营智能体
+      </h2>
+      <p className="mt-3 text-[14px] text-[#0a0a0a]/60 max-w-[560px]">
+        统一工作流：输入主题 → AI 润色 → 关键问题问答 → 一次产出 5 张同源图 + 完整文案。
+        第 1 张走 t2i 出封面，后 4 张走 i2i 同源，保证 5 张视觉统一。
+      </p>
+      <div className="mt-10 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {items.map((it) => (
+          <div
+            key={it.slug}
+            className="border border-[#0a0a0a]/15 rounded-sm p-5 hover:border-[#0a0a0a]/40 hover:shadow-sm transition-all"
+          >
+            <div className="text-3xl mb-2" aria-hidden>
+              {it.emoji}
+            </div>
+            <div className="text-[15px] font-semibold">{it.name}</div>
+            <div className="mt-1 text-[11px] font-mono text-[#0a0a0a]/40">/{it.slug}</div>
+            <p className="mt-3 text-[13px] leading-relaxed text-[#0a0a0a]/70">
+              {it.desc}
+            </p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AiTools() {
+  const tools = [
+    { label: '无缝纹理', desc: '瓷砖 / 布料 / 大理石平铺版' },
+    { label: '无损放大', desc: '低清放大到 2K / 4K' },
+    { label: '一键消除', desc: '去水印 / 去路人 / 去杂物' },
+    { label: '一键变色', desc: '保形保材质，仅换色' },
+    { label: '产品精修', desc: '电商级灯光 / 阴影 / 高光' },
+  ];
+  return (
+    <section className="py-16 lg:py-20">
+      <SectionLabel left="ai tools" right="ready to use" />
+      <h2
+        className="mt-4 text-[28px] sm:text-[36px] leading-[1.1] font-serif"
+        style={{ fontFamily: '"Source Serif Pro", "Noto Serif SC", Georgia, serif' }}
+      >
+        5 个 AI 图像工具
+      </h2>
+      <p className="mt-3 text-[14px] text-[#0a0a0a]/60 max-w-[560px]">
+        共用同一组 image API key 池，处理结果直接落 Asset 库可被任务页复用。
+      </p>
+      <ul className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        {tools.map((t) => (
+          <li
+            key={t.label}
+            className="border border-[#0a0a0a]/15 rounded-sm p-3 hover:border-[#b08be8] transition-all"
+          >
+            <div className="text-[13px] font-medium">{t.label}</div>
+            <div className="mt-1 text-[11px] text-[#0a0a0a]/55">{t.desc}</div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function FeaturedAgents({
   agents,
   totalAgents,
@@ -247,20 +324,19 @@ function FeaturedAgents({
   totalAgents: number;
 }) {
   return (
-    <section className="py-16 lg:py-20" data-v012-b4-agents>
+    <section className="py-16 lg:py-20">
       <SectionLabel left="agents · 当前阵容" right={`${totalAgents} active`} />
       <h2
         className="mt-4 text-[28px] sm:text-[36px] leading-[1.1] font-serif"
         style={{ fontFamily: '"Source Serif Pro", "Noto Serif SC", Georgia, serif' }}
       >
-        4 个最常被调用的智能体
+        最常被调用的 4 个智能体
       </h2>
       <p className="mt-3 text-[14px] text-[#0a0a0a]/60 max-w-[560px]">
-        每个 agent 有自己的 scope（限定哪些路由能调），systemPrompt
-        可在 /presets?tab=agent 改写，token 走全局 LLM key 池。
+        每个 agent 有自己的 scope（限定哪些路由能调），systemPrompt 可在
+        /presets?tab=agent 改写，token 走全局 LLM key 池。
       </p>
 
-      {/* 不规则 stagger：第 1/3 偏左，第 2/4 偏右，错开缩进 */}
       <div className="mt-10 space-y-6">
         {agents.map((a, i) => (
           <AgentRow agent={a} index={i} key={a.slug} />
@@ -268,8 +344,8 @@ function FeaturedAgents({
       </div>
 
       <div className="mt-10 text-[12px] font-mono text-[#0a0a0a]/45">
-        还有 {totalAgents - agents.length} 个智能体（price-quoter / day-coach
-        / client-coach / prompt-coach）— 进工作台 /presets?tab=agent 看完整名单。
+        还有 {Math.max(0, totalAgents - agents.length)} 个智能体（price-quoter
+        / day-coach / client-coach / prompt-coach）— 进 /presets?tab=agent 看完整名单。
       </div>
     </section>
   );
@@ -288,7 +364,6 @@ function AgentRow({
       className={`flex flex-col sm:flex-row gap-4 sm:gap-8 items-start ${
         odd ? 'sm:pl-[15%]' : 'sm:pr-[15%]'
       }`}
-      data-v012-b4-agent-row
     >
       <div className="text-3xl shrink-0 leading-none mt-1" aria-hidden>
         {agent.icon}
@@ -317,328 +392,17 @@ function AgentRow({
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// Flow diagram · 极简流程图（用户 → agent → SQLite + LLM key pool）
-// ──────────────────────────────────────────────────────────────────────
-function FlowDiagram() {
-  return (
-    <section className="py-16 lg:py-20" data-v012-b4-flow>
-      <SectionLabel left="how it works" right="local-first · single-tenant" />
-      <h2
-        className="mt-4 text-[28px] sm:text-[36px] leading-[1.1] font-serif"
-        style={{ fontFamily: '"Source Serif Pro", "Noto Serif SC", Georgia, serif' }}
-      >
-        每个请求的实际路径
-      </h2>
-      <p className="mt-3 text-[14px] text-[#0a0a0a]/60 max-w-[560px]">
-        不是黑盒 SaaS。所有数据都在你自己的 SQLite，所有 prompt 都能看 + 改，
-        所有 token 走你自己的 key 池（支持多 key 自动 fallback）。
-      </p>
-
-      <div className="mt-10 overflow-x-auto">
-        <svg
-          viewBox="0 0 720 280"
-          width="100%"
-          className="block max-w-[720px]"
-          role="img"
-          aria-label="果冻的AI 请求流程图：用户 → 智能体 → 系统服务（SQLite + LLM key 池）"
-        >
-          <defs>
-            <marker
-              id="arrow"
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto"
-            >
-              <path d="M0,0 L10,5 L0,10 Z" fill="#0a0a0a" />
-            </marker>
-            <marker
-              id="arrow-amber"
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto"
-            >
-              <path d="M0,0 L10,5 L0,10 Z" fill="#b08be8" />
-            </marker>
-          </defs>
-
-          {/* 用户 */}
-          <g>
-            <rect
-              x="20"
-              y="115"
-              width="120"
-              height="50"
-              fill="none"
-              stroke="#0a0a0a"
-              strokeWidth="1.5"
-              rx="2"
-            />
-            <text
-              x="80"
-              y="138"
-              textAnchor="middle"
-              fontSize="13"
-              fontFamily="ui-sans-serif,system-ui,sans-serif"
-              fill="#0a0a0a"
-            >
-              用户
-            </text>
-            <text
-              x="80"
-              y="153"
-              textAnchor="middle"
-              fontSize="9"
-              fontFamily="ui-monospace,monospace"
-              fill="#0a0a0a"
-              opacity="0.45"
-            >
-              /dashboard
-            </text>
-          </g>
-
-          {/* 用户 → agent */}
-          <line
-            x1="142"
-            y1="140"
-            x2="218"
-            y2="140"
-            stroke="#0a0a0a"
-            strokeWidth="1.5"
-            markerEnd="url(#arrow)"
-          />
-
-          {/* agent registry */}
-          <g>
-            <rect
-              x="220"
-              y="80"
-              width="180"
-              height="120"
-              fill="#0a0a0a"
-              rx="2"
-            />
-            <text
-              x="310"
-              y="105"
-              textAnchor="middle"
-              fontSize="11"
-              fontFamily="ui-monospace,monospace"
-              fill="#b08be8"
-              opacity="0.85"
-            >
-              agent registry
-            </text>
-            <text
-              x="310"
-              y="125"
-              textAnchor="middle"
-              fontSize="14"
-              fontFamily="ui-sans-serif,system-ui,sans-serif"
-              fontWeight="600"
-              fill="#faf7f2"
-            >
-              智能体调度
-            </text>
-            <text
-              x="310"
-              y="148"
-              textAnchor="middle"
-              fontSize="11"
-              fontFamily="ui-monospace,monospace"
-              fill="#faf7f2"
-              opacity="0.75"
-            >
-              find by slug
-            </text>
-            <text
-              x="310"
-              y="166"
-              textAnchor="middle"
-              fontSize="11"
-              fontFamily="ui-monospace,monospace"
-              fill="#faf7f2"
-              opacity="0.75"
-            >
-              + scope check
-            </text>
-            <text
-              x="310"
-              y="184"
-              textAnchor="middle"
-              fontSize="11"
-              fontFamily="ui-monospace,monospace"
-              fill="#faf7f2"
-              opacity="0.75"
-            >
-              + system prompt
-            </text>
-          </g>
-
-          {/* agent → SQLite */}
-          <path
-            d="M 400 110 C 460 110, 480 60, 540 60"
-            fill="none"
-            stroke="#0a0a0a"
-            strokeWidth="1.5"
-            markerEnd="url(#arrow)"
-          />
-          <text
-            x="470"
-            y="80"
-            fontSize="9"
-            fontFamily="ui-monospace,monospace"
-            fill="#0a0a0a"
-            opacity="0.5"
-          >
-            persist
-          </text>
-
-          {/* agent → LLM */}
-          <path
-            d="M 400 170 C 460 170, 480 220, 540 220"
-            fill="none"
-            stroke="#b08be8"
-            strokeWidth="1.5"
-            markerEnd="url(#arrow-amber)"
-          />
-          <text
-            x="470"
-            y="215"
-            fontSize="9"
-            fontFamily="ui-monospace,monospace"
-            fill="#b08be8"
-            opacity="0.7"
-          >
-            invoke
-          </text>
-
-          {/* SQLite */}
-          <g>
-            <rect
-              x="540"
-              y="35"
-              width="160"
-              height="50"
-              fill="none"
-              stroke="#0a0a0a"
-              strokeWidth="1.5"
-              rx="2"
-            />
-            <text
-              x="620"
-              y="58"
-              textAnchor="middle"
-              fontSize="13"
-              fontFamily="ui-sans-serif,system-ui,sans-serif"
-              fill="#0a0a0a"
-            >
-              SQLite
-            </text>
-            <text
-              x="620"
-              y="74"
-              textAnchor="middle"
-              fontSize="9"
-              fontFamily="ui-monospace,monospace"
-              fill="#0a0a0a"
-              opacity="0.45"
-            >
-              /data/dev.db
-            </text>
-          </g>
-
-          {/* LLM key pool */}
-          <g>
-            <rect
-              x="540"
-              y="195"
-              width="160"
-              height="50"
-              fill="none"
-              stroke="#b08be8"
-              strokeWidth="1.5"
-              rx="2"
-            />
-            <text
-              x="620"
-              y="218"
-              textAnchor="middle"
-              fontSize="13"
-              fontFamily="ui-sans-serif,system-ui,sans-serif"
-              fill="#0a0a0a"
-            >
-              LLM key 池
-            </text>
-            <text
-              x="620"
-              y="234"
-              textAnchor="middle"
-              fontSize="9"
-              fontFamily="ui-monospace,monospace"
-              fill="#b08be8"
-              opacity="0.7"
-            >
-              priority + fallback
-            </text>
-          </g>
-        </svg>
-      </div>
-
-      <ul className="mt-8 grid sm:grid-cols-2 gap-x-10 gap-y-3 text-[13px] text-[#0a0a0a]/70">
-        <li className="flex gap-2">
-          <span aria-hidden className="text-[#b08be8]">·</span>
-          <span>
-            agent registry 在 <code className="font-mono text-[12px]">src/lib/agent-types.ts</code>，每个 agent 一个 slug + scope + systemPrompt。
-          </span>
-        </li>
-        <li className="flex gap-2">
-          <span aria-hidden className="text-[#b08be8]">·</span>
-          <span>
-            所有输出落 <code className="font-mono text-[12px]">AIOutput</code> 表，可以重新打开看 prompt + 结果，可以重放。
-          </span>
-        </li>
-        <li className="flex gap-2">
-          <span aria-hidden className="text-[#b08be8]">·</span>
-          <span>
-            LLM key 池支持多 key，priority asc 取，连续 3 次失败自动 disable，下次请求走备用。
-          </span>
-        </li>
-        <li className="flex gap-2">
-          <span aria-hidden className="text-[#b08be8]">·</span>
-          <span>
-            systemPrompt 可在 <code className="font-mono text-[12px]">/presets?tab=agent</code> 直接改，立即生效，不用重启。
-          </span>
-        </li>
-      </ul>
-    </section>
-  );
-}
-
-// ──────────────────────────────────────────────────────────────────────
-// Numbers · 真实数字（mono · 大字号）
-// ──────────────────────────────────────────────────────────────────────
 function Numbers({ data }: { data: LandingData }) {
   const items: { value: string | number; label: string; sub?: string }[] = [
     { value: data.agentCount, label: '内置智能体', sub: 'agents' },
-    { value: data.aiOutputCount, label: 'AI 输出累计', sub: 'persisted to sqlite' },
+    { value: data.aiOutputCount, label: 'AI 输出累计', sub: 'persisted' },
     { value: data.taskCount, label: '任务卡', sub: 'tasks' },
     { value: data.assetCount, label: '生成 / 上传图片', sub: 'assets' },
     { value: data.apiKeyCount, label: 'API key 池条数', sub: 'priority pool' },
-    {
-      value: data.customPromptCount,
-      label: '自定义 prompt 模板',
-      sub: 'overrides',
-    },
+    { value: data.customPromptCount, label: '自定义 prompt', sub: 'overrides' },
   ];
   return (
-    <section className="py-16 lg:py-20" data-v012-b4-numbers>
+    <section className="py-16 lg:py-20">
       <SectionLabel left="real numbers" right="this instance" />
       <h2
         className="mt-4 text-[28px] sm:text-[36px] leading-[1.1] font-serif"
@@ -660,7 +424,8 @@ function Numbers({ data }: { data: LandingData }) {
             <dd
               className="mt-2 text-[40px] sm:text-[48px] font-serif tabular-nums leading-none"
               style={{
-                fontFamily: '"Source Serif Pro", "Noto Serif SC", Georgia, serif',
+                fontFamily:
+                  '"Source Serif Pro", "Noto Serif SC", Georgia, serif',
               }}
             >
               {it.value}
@@ -678,12 +443,42 @@ function Numbers({ data }: { data: LandingData }) {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// CTA 末尾
-// ──────────────────────────────────────────────────────────────────────
+function Changelog() {
+  return (
+    <section className="py-16 lg:py-20">
+      <SectionLabel left="recent changes" right="v0.15" />
+      <h2
+        className="mt-4 text-[28px] sm:text-[36px] leading-[1.1] font-serif"
+        style={{ fontFamily: '"Source Serif Pro", "Noto Serif SC", Georgia, serif' }}
+      >
+        最近一次升级
+      </h2>
+      <ul className="mt-8 space-y-3 text-[14px] leading-relaxed text-[#0a0a0a]/75">
+        <Item>首页看板 / 今日任务 / 历史记录三个高频页 UI 推倒重做，去掉冗余卡片，留有用数据。</Item>
+        <Item>三个运营智能体（小红书 / 闲鱼 / 千牛）走统一工作流：润色 → 关键问答 → 5 张同源图。</Item>
+        <Item>AI 工具集合扩展到 5 个：无缝纹理、无损放大、一键消除、一键变色、产品精修。</Item>
+        <Item>AI 对话页改简约下划线 segment，三 tab（LLM / 图片 / Agent）保留全部参数。</Item>
+        <Item>API 适配器文档抓取增强：多重候选 URL + Jina Reader 兜底。</Item>
+        <Item>清理无用入口：发布日历、关键词库、客户管理、私信话术从导航移除。</Item>
+      </ul>
+    </section>
+  );
+}
+
+function Item({ children }: { children: React.ReactNode }) {
+  return (
+    <li className="flex gap-2">
+      <span className="text-[#b08be8] shrink-0" aria-hidden>
+        ·
+      </span>
+      <span>{children}</span>
+    </li>
+  );
+}
+
 function CallToAction() {
   return (
-    <section className="py-20 lg:py-28" data-v012-b4-cta>
+    <section className="py-20 lg:py-28">
       <div className="border-t border-[#0a0a0a]/15 pt-16">
         <div
           className="text-[10px] tracking-[0.32em] uppercase text-[#b08be8] font-mono mb-5"
@@ -693,9 +488,7 @@ function CallToAction() {
         </div>
         <h2
           className="text-[32px] sm:text-[44px] leading-[1.1] font-serif"
-          style={{
-            fontFamily: '"Source Serif Pro", "Noto Serif SC", Georgia, serif',
-          }}
+          style={{ fontFamily: '"Source Serif Pro", "Noto Serif SC", Georgia, serif' }}
         >
           直接进工作台。
           <br />
@@ -708,7 +501,7 @@ function CallToAction() {
         <div className="mt-10 flex flex-wrap gap-3">
           <Link
             href="/dashboard"
-            className="inline-flex items-center gap-2 px-6 py-3 text-sm font-medium bg-[#0a0a0a] text-[#faf7f2] hover:bg-[#b08be8] transition-colors rounded-sm"
+            className="inline-flex items-center gap-2 px-6 py-3 text-sm font-medium bg-[#0a0a0a] text-[#faf7f2] hover:bg-[#b08be8] hover:shadow-md transition-all rounded-sm"
           >
             进入工作台
             <span aria-hidden>→</span>
@@ -717,7 +510,7 @@ function CallToAction() {
             href="/docs"
             className="inline-flex items-center gap-2 px-6 py-3 text-sm font-medium border border-[#0a0a0a]/20 hover:border-[#0a0a0a]/60 transition-colors rounded-sm"
           >
-            看使用手册（11 篇）
+            看使用手册
           </Link>
           <Link
             href="/playground"
@@ -731,19 +524,11 @@ function CallToAction() {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// Footer
-// ──────────────────────────────────────────────────────────────────────
 function SiteFooter({ version }: { version: string }) {
   return (
-    <footer
-      className="border-t border-[#0a0a0a]/10 mt-10"
-      data-v012-b4-landing-footer
-    >
+    <footer className="border-t border-[#0a0a0a]/10 mt-10">
       <div className="mx-auto max-w-[1080px] px-6 lg:px-10 py-8 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between text-[11px] font-mono text-[#0a0a0a]/45">
-        <div>
-          果冻的AI · build {version} · single-tenant local workstation
-        </div>
+        <div>果冻的AI · build {version} · single-tenant local workstation</div>
         <div className="flex gap-4">
           <Link href="/docs" className="hover:text-[#0a0a0a]">
             docs
@@ -760,13 +545,8 @@ function SiteFooter({ version }: { version: string }) {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// 装饰组件
-// ──────────────────────────────────────────────────────────────────────
 function SectionDivider() {
-  return (
-    <div className="h-px bg-[#0a0a0a]/8" aria-hidden role="presentation" />
-  );
+  return <div className="h-px bg-[#0a0a0a]/8" aria-hidden role="presentation" />;
 }
 
 function SectionLabel({ left, right }: { left: string; right?: string }) {

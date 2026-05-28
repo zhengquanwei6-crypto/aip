@@ -29,10 +29,13 @@ export default function DocsIndexPage() {
   // 不应发生：DEFAULT_DOC_SLUG 一定在 DOCS_ENTRIES 里。但仍兜底。
   if (!found) {
     return (
+    <>
+      <header className="page-hero"><h1>使用手册</h1><p>11 篇内置文档：快速上手 / 模块 / 工作流 / 故障排查。</p></header>
       <div className="text-slate-500 dark:text-slate-400">
         使用手册暂未生成。请联系管理员或重试。
       </div>
-    );
+    </>
+  );
   }
   const html = renderMarkdown(found.content);
   return <DocsLayout entries={DOCS_ENTRIES} active={found.entry} html={html} />;

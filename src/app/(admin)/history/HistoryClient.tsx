@@ -1,9 +1,25 @@
+/**
+ * v0.15 · 历史记录 · UI 重做
+ *
+ * 用户原话：信息杂乱无章，重点信息不突出，UI 以及逻辑推到重建。
+ *
+ * 新结构：
+ *   - 顶部汇总条（按类型分布的 chip 筛选 + 总数）
+ *   - 左列紧凑列表（一行一条 · 类型徽标 + 时间 + 输出预览）
+ *   - 右列详情面板（type / model / createdAt / 输入 / 输出 + 操作按钮）
+ *   - 移动端单栏：列表 → 点击进入详情视图
+ */
 'use client';
 
-import { useState } from 'react';
-import Link from 'next/link';
-import { Copy, Trash2, RefreshCw, ChevronDown, ChevronUp, Target } from 'lucide-react';
-import ListShell, { bulkSerial } from '@/components/ListShell';
+import { useState, useMemo } from 'react';
+import {
+  Copy,
+  Trash2,
+  RefreshCw,
+  X,
+  Search,
+  ChevronLeft,
+} from 'lucide-react';
 import { copyAll } from '@/lib/clipboard';
 import { toast } from '@/lib/toast';
 
@@ -22,6 +38,7 @@ const TYPE_LABEL: Record<string, string> = {
   image_prompt: '图片提示词',
   suggestion: '运营建议',
   'platform-build': '平台产出',
+  'platform-build-5img': '平台产出·5图',
   'ai-search': 'AI 搜',
   'ai-analysis': 'AI 分析',
 };
@@ -32,359 +49,325 @@ const TYPE_BADGE: Record<string, string> = {
   image_prompt: 'badge-purple',
   suggestion: 'badge-green',
   'platform-build': 'badge-pink',
+  'platform-build-5img': 'badge-pink',
   'ai-search': 'badge-cyan',
   'ai-analysis': 'badge-orange',
 };
 
-const TYPE_FILTER_OPTIONS = [
-  { value: '', label: '全部类型' },
-  // v0.12 任务6：4 大分类
-  { value: '__chat__', label: '💬 AI 对话（chat-*）' },
-  { value: 'platform-build', label: '🎨 平台产出（小红书/闲鱼/千牛）' },
-  { value: 'ai-search', label: '🔍 AI 搜' },
-  { value: 'ai-analysis', label: '📊 AI 分析' },
-  // 旧分类保留
-  { value: 'text', label: '文案' },
-  { value: 'image', label: '图片' },
-  { value: 'image_prompt', label: '图片提示词' },
-  { value: 'suggestion', label: '运营建议' },
-  { value: '__publish_director__', label: '🎯 发布导演' },
-];
-
-/** v0.9 b3：检测是否来自 publish-director（看 input JSON 是否含 via:"publish-director"） */
 function isPublishDirector(row: HistoryRow): boolean {
   if (!row.input) return false;
   return row.input.includes('"via":"publish-director"');
 }
 
-/** v0.12 任务6：判断是否是 chat agent 产出（type=chat-{slug}）*/
 function isChatType(row: HistoryRow): boolean {
   return typeof row.type === 'string' && row.type.startsWith('chat-');
 }
 
 function fmtDate(iso: string): string {
   try {
-    const d = new Date(iso);
-    return d.toLocaleString('zh-CN', { hour12: false });
+    return new Date(iso).toLocaleString('zh-CN', { hour12: false });
   } catch {
     return iso;
   }
 }
 
-function preview(text: string, max = 120): string {
+function shortPreview(text: string, max = 90): string {
   if (!text) return '';
-  return text.length > max ? text.slice(0, max) + '…' : text;
+  let t = text.replace(/\s+/g, ' ').trim();
+  // 尝试解析 JSON 取关键字段做摘要
+  if (t.startsWith('{') && t.length < 4000) {
+    try {
+      const obj = JSON.parse(t);
+      if (typeof obj?.summary === 'string') t = obj.summary;
+      else if (typeof obj?.title === 'string') t = obj.title;
+      else if (typeof obj?.body === 'string') t = obj.body;
+      else if (typeof obj?.coverText === 'string') t = obj.coverText;
+      else if (Array.isArray(obj?.titles) && obj.titles[0]) t = obj.titles[0];
+      else if (typeof obj?.prompt === 'string') t = obj.prompt;
+    } catch {
+      /* keep original */
+    }
+  }
+  return t.length > max ? t.slice(0, max) + '…' : t;
 }
 
-export default function HistoryClient({
-  initial,
-}: {
-  initial: HistoryRow[];
-}) {
+export default function HistoryClient({ initial }: { initial: HistoryRow[] }) {
   const [rows, setRows] = useState<HistoryRow[]>(initial);
-  const [expandedInput, setExpandedInput] = useState<Set<string>>(new Set());
-  const [expandedOutput, setExpandedOutput] = useState<Set<string>>(new Set());
+  const [activeId, setActiveId] = useState<string | null>(initial[0]?.id ?? null);
+  const [filterType, setFilterType] = useState<string>('');
+  const [query, setQuery] = useState<string>('');
+  const [mobileDetail, setMobileDetail] = useState<boolean>(false);
 
-  function toggleInput(id: string) {
-    setExpandedInput((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  // 类型分布 → chip
+  const typeCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    rows.forEach((r) => {
+      const k = isChatType(r) ? '__chat__' : isPublishDirector(r) ? '__pub__' : r.type;
+      m[k] = (m[k] ?? 0) + 1;
     });
-  }
-  function toggleOutput(id: string) {
-    setExpandedOutput((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
+    return m;
+  }, [rows]);
 
-  async function copyOne(text: string, label: string) {
-    const ok = await copyAll(text);
-    if (ok) toast.success(`已复制${label}`);
-    else toast.error('复制失败');
-  }
+  const chipDefs = useMemo(() => {
+    const arr: { value: string; label: string; count: number }[] = [
+      { value: '', label: '全部', count: rows.length },
+    ];
+    Object.entries(typeCounts).forEach(([k, c]) => {
+      let label = TYPE_LABEL[k] ?? k;
+      if (k === '__chat__') label = '💬 AI 对话';
+      else if (k === '__pub__') label = '🎯 发布导演';
+      arr.push({ value: k, label, count: c });
+    });
+    return arr;
+  }, [typeCounts, rows.length]);
+
+  const filtered = useMemo(() => {
+    return rows.filter((r) => {
+      if (filterType) {
+        if (filterType === '__chat__' && !isChatType(r)) return false;
+        else if (filterType === '__pub__' && !isPublishDirector(r)) return false;
+        else if (
+          filterType !== '__chat__' &&
+          filterType !== '__pub__' &&
+          r.type !== filterType
+        )
+          return false;
+      }
+      if (query) {
+        const q = query.toLowerCase();
+        return (
+          r.input.toLowerCase().includes(q) ||
+          r.output.toLowerCase().includes(q) ||
+          (r.model ?? '').toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [rows, filterType, query]);
+
+  const active = useMemo(
+    () => rows.find((r) => r.id === activeId) ?? null,
+    [rows, activeId],
+  );
 
   async function deleteOne(id: string) {
-    if (!window.confirm('确认删除这条历史记录？')) return;
+    if (!confirm('删除这条历史？')) return;
     try {
       const res = await fetch(`/api/history/${id}`, { method: 'DELETE' });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || '删除失败');
-      setRows((arr) => arr.filter((x) => x.id !== id));
+      setRows((arr) => arr.filter((r) => r.id !== id));
+      if (activeId === id) {
+        const next = rows.find((r) => r.id !== id);
+        setActiveId(next?.id ?? null);
+      }
       toast.success('已删除');
     } catch (e) {
       toast.error((e as Error).message);
     }
   }
 
+  async function copyText(text: string, label: string) {
+    const ok = await copyAll(text);
+    if (ok) toast.success(`已复制${label}`);
+    else toast.error('复制失败');
+  }
+
   return (
     <div className="space-y-4">
-      <div className="card">
-        <div className="card-body">
-          <h2 className="font-semibold text-slate-800 dark:text-slate-100 mb-1">
-            AI 输出历史
-          </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-            按类型筛选，最多展示最近 500 条。可以复制 output、批量删除、跳到「文案生成」重新出一版。
-          </p>
+      {/* 顶部汇总条 */}
+      <header className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3">
+        <div className="flex items-baseline justify-between flex-wrap gap-2">
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-400 font-mono">
+              history
+            </div>
+            <div className="text-base sm:text-lg font-semibold text-slate-800 dark:text-slate-100 mt-0.5">
+              共 {rows.length} 条 AI 输出
+            </div>
+          </div>
+          <div className="relative">
+            <Search
+              size={14}
+              className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400"
+              aria-hidden="true"
+            />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索 input / output / model"
+              className="text-sm pl-7 pr-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-transparent w-60"
+            />
+          </div>
         </div>
-      </div>
+        <div className="flex flex-wrap gap-2">
+          {chipDefs.map((c) => {
+            const active = c.value === filterType;
+            return (
+              <button
+                key={c.value}
+                type="button"
+                onClick={() => setFilterType(c.value)}
+                className={
+                  'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors ' +
+                  (active
+                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700')
+                }
+              >
+                {c.label}
+                <span className="font-mono tabular-nums opacity-70">{c.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      </header>
 
-      <ListShell<HistoryRow>
-        items={rows}
-        getId={(r) => r.id}
-        storageKey="list:history"
-        searchPlaceholder="搜索 input / output / model"
-        searchKeys={['input', 'output', 'model']}
-        filters={[
-          {
-            key: 'type',
-            label: '类型',
-            options: TYPE_FILTER_OPTIONS,
-            predicate: (r, v) => {
-              if (v === '__publish_director__') return isPublishDirector(r);
-              if (v === '__chat__') return isChatType(r);
-              return r.type === v;
-            },
-          },
-        ]}
-        viewModes={['card']}
-        pageSize={50}
-        emptyState="暂无历史记录。生成文案或图片后会自动记录。"
-        emptyAfterFilterState="按当前筛选没有匹配的历史记录"
-        onToastSuccess={(m) => toast.success(m)}
-        onToastError={(m) => toast.error(m)}
-        cardGridClassName="space-y-3"
-        bulk={[
-          {
-            key: 'copy-output',
-            label: '复制 output',
-            icon: <Copy size={14} />,
-            run: async (ids, items) => {
-              const text = items
-                .map((it) => {
-                  const head = `--- ${TYPE_LABEL[it.type] ?? it.type} · ${fmtDate(it.createdAt)} ---`;
-                  return `${head}\n${it.output}`;
-                })
-                .join('\n\n');
-              const ok = await copyAll(text);
-              return ok
-                ? { ok: true, message: `已复制 ${ids.length} 条 output` }
-                : { ok: false, message: '复制到剪贴板失败' };
-            },
-            clearOnDone: false,
-          },
-          {
-            key: 'delete',
-            label: '批量删除',
-            icon: <Trash2 size={14} />,
-            destructive: true,
-            run: async (ids) => {
-              const r = await bulkSerial(ids, async (id) => {
-                const res = await fetch(`/api/history/${id}`, {
-                  method: 'DELETE',
-                });
-                const j = await res.json();
-                if (!res.ok || !j.ok) throw new Error(j.error || '删除失败');
-              });
-              setRows((arr) =>
-                arr.filter((x) => !(ids.includes(x.id) && !r.failed.find((f) => f.id === x.id))),
-              );
-              if (r.failed.length === 0) {
-                return { ok: true, message: `已删除 ${r.ok} 条` };
-              }
-              return {
-                ok: false,
-                message: `部分失败：成功 ${r.ok} / 失败 ${r.failed.length}`,
-              };
-            },
-          },
-        ]}
-        renderCard={(it) => {
-          const inputOpen = expandedInput.has(it.id);
-          const outputOpen = expandedOutput.has(it.id);
-          const fromPublishDirector = isPublishDirector(it);
-          // v0.9 b3：解析 publish-director 的 stylePrompt 输出展示
-          let pubDirStyleSummary: string | null = null;
-          let pubDirImageOptions: any = null;
-          let pubDirSeriesPlan: string | null = null;
-          if (fromPublishDirector) {
-            try {
-              const inp = JSON.parse(it.input);
-              if (inp?.imageOptions) pubDirImageOptions = inp.imageOptions;
-            } catch {
-              /* ignore */
-            }
-            if (it.type === 'image_prompt') {
-              try {
-                const out = JSON.parse(it.output);
-                if (typeof out?.styleSummary === 'string') pubDirStyleSummary = out.styleSummary;
-                if (typeof out?.seriesPlan === 'string') pubDirSeriesPlan = out.seriesPlan;
-              } catch {
-                /* ignore */
-              }
-            }
+      {/* 双栏 */}
+      <div className="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)] gap-4">
+        {/* 左列：紧凑列表 */}
+        <aside
+          className={
+            'rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden lg:max-h-[calc(100vh-200px)] lg:overflow-y-auto ' +
+            (mobileDetail ? 'hidden lg:block' : '')
           }
-          return (
-            <div className="card">
-              <div className="card-body space-y-3 pl-8">
-                {/* 顶部 meta */}
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className={TYPE_BADGE[it.type] ?? 'badge-gray'}>
-                    {TYPE_LABEL[it.type] ?? it.type}
-                  </span>
-                  {fromPublishDirector && (
-                    <span className="badge-yellow inline-flex items-center gap-1">
-                      <Target size={10} />
-                      publish-director
-                    </span>
-                  )}
-                  {it.model && (
-                    <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-                      {it.model}
-                    </span>
-                  )}
-                  <span className="text-xs text-slate-400 ml-auto">
-                    {fmtDate(it.createdAt)}
-                  </span>
-                </div>
+          aria-label="历史记录列表"
+        >
+          {filtered.length === 0 ? (
+            <div className="p-8 text-center text-sm text-slate-400">
+              没有匹配的记录
+            </div>
+          ) : (
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+              {filtered.map((r) => {
+                const active = r.id === activeId;
+                const fromPub = isPublishDirector(r);
+                return (
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveId(r.id);
+                        setMobileDetail(true);
+                      }}
+                      className={
+                        'block w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 ' +
+                        (active
+                          ? 'bg-brand-50/60 dark:bg-brand-900/20 border-l-2 border-brand-600'
+                          : 'border-l-2 border-transparent')
+                      }
+                    >
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <span className={(TYPE_BADGE[r.type] ?? 'badge-gray') + ' text-[10px]'}>
+                          {TYPE_LABEL[r.type] ?? r.type}
+                        </span>
+                        {fromPub && <span className="badge-yellow text-[10px]">🎯</span>}
+                        <span className="ml-auto text-slate-400 tabular-nums">
+                          {fmtDate(r.createdAt).slice(5, 16)}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 text-xs text-slate-700 dark:text-slate-200 line-clamp-2 leading-snug">
+                        {shortPreview(r.output, 110)}
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </aside>
 
-                {/* v0.9 b3：publish-director 摘要（styleSummary + 图片选项 + seriesPlan） */}
-                {fromPublishDirector && (pubDirStyleSummary || pubDirImageOptions || pubDirSeriesPlan) && (
-                  <div className="text-xs bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded p-2 space-y-1">
-                    {pubDirStyleSummary && (
-                      <div>
-                        <span className="text-amber-700 dark:text-amber-300 font-medium">风格说明：</span>
-                        <span className="text-slate-700 dark:text-slate-200">{pubDirStyleSummary}</span>
-                      </div>
-                    )}
-                    {pubDirSeriesPlan && (
-                      <div>
-                        <span className="text-amber-700 dark:text-amber-300 font-medium">系列编排：</span>
-                        <span className="text-slate-700 dark:text-slate-200 whitespace-pre-wrap">{pubDirSeriesPlan}</span>
-                      </div>
-                    )}
-                    {pubDirImageOptions && (
-                      <div className="text-slate-600 dark:text-slate-400 font-mono">
-                        opts: n={pubDirImageOptions.n ?? 1}
-                        {pubDirImageOptions.asSeries ? ' · series' : ''}
-                        {pubDirImageOptions.primaryColor ? ` · primary=${pubDirImageOptions.primaryColor}` : ''}
-                        {pubDirImageOptions.accentColor ? ` · accent=${pubDirImageOptions.accentColor}` : ''}
-                        {pubDirImageOptions.textLanguage ? ` · text=${pubDirImageOptions.textLanguage}` : ''}
-                      </div>
-                    )}
-                  </div>
+        {/* 右列：详情 */}
+        <section
+          className={
+            'rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 ' +
+            (mobileDetail ? '' : 'hidden lg:block')
+          }
+          aria-label="历史记录详情"
+        >
+          {active ? (
+            <div className="flex flex-col h-full">
+              <div className="px-4 sm:px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setMobileDetail(false)}
+                  className="lg:hidden inline-flex items-center gap-1 text-xs text-slate-500"
+                >
+                  <ChevronLeft size={14} /> 列表
+                </button>
+                <span className={(TYPE_BADGE[active.type] ?? 'badge-gray') + ' text-[10px]'}>
+                  {TYPE_LABEL[active.type] ?? active.type}
+                </span>
+                {active.model && (
+                  <span className="text-[11px] font-mono text-slate-500">{active.model}</span>
                 )}
-
-                {/* input */}
-                <div>
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                      输入
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => copyOne(it.input, '输入')}
-                        className="text-xs text-brand-600 hover:underline inline-flex items-center gap-1"
-                      >
-                        <Copy size={12} />
-                        复制 input
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleInput(it.id)}
-                        className="text-xs text-slate-500 hover:underline inline-flex items-center gap-1"
-                      >
-                        {inputOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                        {inputOpen ? '折叠' : '展开'}
-                      </button>
-                    </div>
+                <span className="text-[11px] text-slate-400 tabular-nums ml-auto">
+                  {fmtDate(active.createdAt)}
+                </span>
+              </div>
+              <div className="px-4 sm:px-5 py-4 overflow-y-auto space-y-4">
+                <Section title="输入">
+                  <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words bg-slate-50 dark:bg-slate-800/50 rounded-md p-3 max-h-72 overflow-y-auto font-mono">
+                    {active.input}
+                  </pre>
+                  <div className="mt-1.5 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => copyText(active.input, '输入')}
+                      className="text-[11px] text-brand-600 hover:underline inline-flex items-center gap-1"
+                    >
+                      <Copy size={11} /> 复制 input
+                    </button>
                   </div>
-                  <div
-                    className={
-                      'text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 rounded p-2 whitespace-pre-wrap break-words font-mono ' +
-                      (inputOpen ? '' : 'line-clamp-4')
-                    }
-                  >
-                    {inputOpen ? it.input : preview(it.input, 400)}
+                </Section>
+                <Section title="输出">
+                  <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words bg-slate-50 dark:bg-slate-800/50 rounded-md p-3 max-h-[480px] overflow-y-auto font-mono">
+                    {active.output}
+                  </pre>
+                  <div className="mt-2 flex flex-wrap gap-2 justify-end text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => copyText(active.output, '输出')}
+                      className="text-brand-600 hover:underline inline-flex items-center gap-1"
+                    >
+                      <Copy size={11} /> 复制 output
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteOne(active.id)}
+                      className="text-red-600 hover:underline inline-flex items-center gap-1"
+                    >
+                      <Trash2 size={11} /> 删除
+                    </button>
                   </div>
-                </div>
-
-                {/* output */}
-                <div>
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                      输出
-                    </span>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => copyOne(it.output, '输出')}
-                        className="text-xs text-brand-600 hover:underline inline-flex items-center gap-1"
-                      >
-                        <Copy size={12} />
-                        复制 output
-                      </button>
-                      {isChatType(it) && (() => {
-                        // model 字段格式："deepseek-v4-pro|conv:xxxx"，从中解析 convId
-                        const m = it.model.match(/\|conv:([a-z0-9]+)/);
-                        const convId = m?.[1];
-                        if (!convId) return null;
-                        return (
-                          <Link
-                            href={`/agents/conversation/${convId}`}
-                            className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
-                            title="打开对话恢复页继续聊"
-                          >
-                            💬 继续对话
-                          </Link>
-                        );
-                      })()}
-                      <Link
-                        href={`/content?prefill=${it.id}`}
-                        className="text-xs text-emerald-600 hover:underline inline-flex items-center gap-1"
-                        title="带这条历史跳到文案生成页"
-                      >
-                        <RefreshCw size={12} />
-                        重新生成
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => deleteOne(it.id)}
-                        className="text-xs text-red-600 hover:underline inline-flex items-center gap-1"
-                      >
-                        <Trash2 size={12} />
-                        删除
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleOutput(it.id)}
-                        className="text-xs text-slate-500 hover:underline inline-flex items-center gap-1"
-                      >
-                        {outputOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                        {outputOpen ? '折叠' : '展开'}
-                      </button>
-                    </div>
-                  </div>
-                  <div
-                    className={
-                      'text-xs text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 rounded p-2 whitespace-pre-wrap break-words font-mono ' +
-                      (outputOpen ? '' : 'line-clamp-6')
-                    }
-                  >
-                    {outputOpen ? it.output : preview(it.output, 600)}
-                  </div>
-                </div>
+                </Section>
               </div>
             </div>
-          );
-        }}
-      />
+          ) : (
+            <div className="p-10 text-center text-sm text-slate-400">
+              在左侧选一条记录查看详情
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-slate-400 font-mono mb-1.5">
+        {title}
+      </div>
+      {children}
     </div>
   );
 }

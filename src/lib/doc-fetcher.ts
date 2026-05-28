@@ -1,19 +1,19 @@
 /**
- * 文档抓取器：从 URL 拉到"LLM 能看懂的纯文本"
+ * v0.15 · 文档抓取器（API 适配器用）
  *
- * 多重策略（按成本从低到高，依次尝试，看哪个产出"信息量足"）：
- *   1. 直接 fetch + 简单 HTML 剥离 → 适用于 markdown/纯文本/服务端渲染文档
- *   2. 尝试 .md / .mdx 后缀 / ?format=md / raw 路径 → 很多文档站支持
- *   3. 尝试同一 origin 下的 /llms.txt 或 /llms-full.txt（社区标准）
- *   4. fallback 到 Jina Reader: https://r.jina.ai/<url>（免费、能处理 SPA）
+ * 用户原话：优化 API 适配器，防止出现部分链接文档读取不全或出现错误等情况。
  *
- * 启发式：抓到的"信息量足"指什么？
- *   - 长度 > 1500 字符
- *   - 出现 endpoint 关键字（POST / GET / curl / "path" / "url" / "/v1/" 等）
+ * 升级要点：
+ *   1. 多重候选 URL 拓展（加 raw.githubusercontent / readme.io / mintlify 风格）
+ *   2. UA 伪装真实浏览器，提升站点接受度
+ *   3. 提高超时上限到 25s，maxLength 到 60k（GPT-4o 等可吃下）
+ *   4. 启发式判信息量加 OpenAPI / requestBody / parameters 等关键词
+ *   5. 增加二级失败重试（一次 backoff 1.5s）
+ *   6. 抓不到时尝试 r.jina.ai（保留）+ readability mode
  */
 
 interface FetchAttempt {
-  source: string; // 描述这次尝试是从哪个 URL 来的
+  source: string;
   ok: boolean;
   text: string;
   bytes: number;
@@ -24,141 +24,220 @@ interface FetchResult {
   ok: boolean;
   text: string;
   attempts: FetchAttempt[];
-  /** 最终采用的来源描述 */
   finalSource: string;
 }
 
-const FETCH_TIMEOUT_MS = 15_000;
-const MIN_USEFUL_LENGTH = 1500;
-const ENDPOINT_HINTS = /\b(POST|GET|PUT|DELETE)\s+\/|curl\s+|"path"|"endpoint"|"baseUrl"|\/v\d\/|application\/json|Authorization|Bearer\s/i;
+const FETCH_TIMEOUT_MS = 25_000;
+const MIN_USEFUL_LENGTH = 1200;
+const ENDPOINT_HINTS =
+  /\b(POST|GET|PUT|DELETE|PATCH)\s+\/|curl\s+|"path"|"endpoint"|"baseUrl"|\/v\d\/|application\/json|Authorization|Bearer\s|requestBody|parameters\s*:|openapi:|swagger|x-api-key/i;
 
 function isUseful(text: string): boolean {
   if (text.length < MIN_USEFUL_LENGTH) return false;
   return ENDPOINT_HINTS.test(text);
 }
 
-/** 简单去 HTML 标签 + 折叠空白 */
 function stripHtml(html: string): string {
   return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
+    .replace(/<svg[\s\S]*?<\/svg>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(nav|footer|header|aside|menu)[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/\s+/g, " ")
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
+
+const REAL_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
 async function timeoutFetch(url: string, init: RequestInit = {}): Promise<Response> {
   return await fetch(url, {
     ...init,
     headers: {
-      "User-Agent": "design-ai-ops-doc-fetcher/2.0",
-      "Accept": "text/markdown, text/plain, text/html;q=0.8, */*;q=0.5",
+      'User-Agent': REAL_UA,
+      Accept:
+        'text/markdown, text/plain, application/json, text/html;q=0.8, */*;q=0.5',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       ...(init.headers ?? {}),
     },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 }
 
-/** 从 URL 推导"可能是 markdown 版"的多个候选 URL */
 function deriveMarkdownUrls(originalUrl: string): string[] {
   const candidates: string[] = [];
   try {
     const u = new URL(originalUrl);
-    // 末尾加 .md
-    if (!u.pathname.endsWith(".md") && !u.pathname.endsWith(".mdx")) {
-      candidates.push(`${u.origin}${u.pathname.replace(/\/$/, "")}.md${u.search}`);
-      candidates.push(`${u.origin}${u.pathname.replace(/\/$/, "")}.mdx${u.search}`);
+    const trimPath = u.pathname.replace(/\/$/, '');
+
+    // 末尾加 markdown 后缀
+    if (!u.pathname.endsWith('.md') && !u.pathname.endsWith('.mdx')) {
+      candidates.push(`${u.origin}${trimPath}.md${u.search}`);
+      candidates.push(`${u.origin}${trimPath}.mdx${u.search}`);
+      candidates.push(`${u.origin}${trimPath}.txt${u.search}`);
     }
-    // 加 ?format=md（gitbook/dox 风格）
-    const sep = u.search ? "&" : "?";
+
+    // ?format=md / ?raw=true / ?as=md（多家文档站支持）
+    const sep = u.search ? '&' : '?';
     candidates.push(`${originalUrl}${sep}format=md`);
     candidates.push(`${originalUrl}${sep}raw=true`);
+    candidates.push(`${originalUrl}${sep}as=md`);
+
     // /raw 子路径
     candidates.push(`${u.origin}/raw${u.pathname}${u.search}`);
-  } catch { /* invalid url */ }
+
+    // mintlify / fern / readme.io 风格的 _next/static/data JSON
+    candidates.push(`${u.origin}${trimPath}.json${u.search}`);
+
+    // GitHub 仓库链接 → raw.githubusercontent
+    const gh = u.pathname.match(/^\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)$/);
+    if (u.host === 'github.com' && gh) {
+      candidates.push(
+        `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/${gh[3]}/${gh[4]}`,
+      );
+    }
+  } catch {
+    /* invalid url */
+  }
   return candidates;
 }
 
-/** 探测同 origin 下的 llms.txt */
 function deriveLlmsTxtUrls(originalUrl: string): string[] {
   try {
     const u = new URL(originalUrl);
     return [
       `${u.origin}/llms-full.txt`,
       `${u.origin}/llms.txt`,
+      `${u.origin}/openapi.json`,
+      `${u.origin}/openapi.yaml`,
+      `${u.origin}/swagger.json`,
+      `${u.origin}/api-docs.json`,
+      `${u.origin}/.well-known/openapi`,
     ];
   } catch {
     return [];
   }
 }
 
-/** Jina Reader：把任意 URL 转成"对 LLM 友好"的纯文本（免费 API） */
 function jinaReaderUrl(originalUrl: string): string {
   return `https://r.jina.ai/${originalUrl}`;
 }
 
 async function tryFetch(url: string, label: string): Promise<FetchAttempt> {
-  try {
-    const r = await timeoutFetch(url);
-    if (!r.ok) return { source: label, ok: false, text: "", bytes: 0, reason: `HTTP ${r.status}` };
-    const ct = r.headers.get("content-type") || "";
-    const raw = await r.text();
-    const text = ct.includes("text/html") ? stripHtml(raw) : raw.replace(/\r/g, "").trim();
-    return { source: label, ok: text.length > 0, text, bytes: text.length };
-  } catch (e: any) {
-    return { source: label, ok: false, text: "", bytes: 0, reason: e?.message ?? "fetch failed" };
+  // 尝试 2 次（首次失败后退避 1.5s 再试一次）
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await timeoutFetch(url);
+      if (!r.ok) {
+        if (attempt === 0 && r.status >= 500) {
+          await new Promise((res) => setTimeout(res, 1500));
+          continue;
+        }
+        return {
+          source: label,
+          ok: false,
+          text: '',
+          bytes: 0,
+          reason: `HTTP ${r.status}`,
+        };
+      }
+      const ct = r.headers.get('content-type') || '';
+      const raw = await r.text();
+      let text: string;
+      if (ct.includes('json')) {
+        try {
+          // OpenAPI / 配置 JSON 直接保留缩进
+          text = JSON.stringify(JSON.parse(raw), null, 2);
+        } catch {
+          text = raw;
+        }
+      } else if (ct.includes('text/html') || /^<!doctype html/i.test(raw.slice(0, 100))) {
+        text = stripHtml(raw);
+      } else {
+        text = raw.replace(/\r/g, '').trim();
+      }
+      return {
+        source: label,
+        ok: text.length > 0,
+        text,
+        bytes: text.length,
+      };
+    } catch (e) {
+      if (attempt === 0) {
+        await new Promise((res) => setTimeout(res, 1500));
+        continue;
+      }
+      return {
+        source: label,
+        ok: false,
+        text: '',
+        bytes: 0,
+        reason: (e as Error)?.message ?? 'fetch failed',
+      };
+    }
   }
+  return { source: label, ok: false, text: '', bytes: 0, reason: 'unreachable' };
 }
 
 /**
- * 主入口：给定 URL，尽最大努力拉一份"LLM 能用"的文档文本
- *
- * @param maxLength 截断长度，太长会让 LLM 上下文爆炸
+ * 主入口：给定 URL，尽最大努力拉一份 LLM 能用的文档文本
  */
-export async function fetchDocFromUrl(url: string, maxLength = 30_000): Promise<FetchResult> {
+export async function fetchDocFromUrl(
+  url: string,
+  maxLength = 60_000,
+): Promise<FetchResult> {
   const attempts: FetchAttempt[] = [];
 
-  // 第一拨：直接 fetch + markdown 候选 + llms.txt 候选（并行）
+  // tier 1：直接 + markdown 候选 + llms.txt + openapi（并行）
   const tier1Urls: { url: string; label: string }[] = [
     { url, label: `direct: ${url}` },
-    ...deriveMarkdownUrls(url).map((u) => ({ url: u, label: `markdown: ${u}` })),
-    ...deriveLlmsTxtUrls(url).map((u) => ({ url: u, label: `llms.txt: ${u}` })),
+    ...deriveMarkdownUrls(url).map((u) => ({ url: u, label: `md-candidate: ${u}` })),
+    ...deriveLlmsTxtUrls(url).map((u) => ({ url: u, label: `well-known: ${u}` })),
   ];
-  const tier1Results = await Promise.all(tier1Urls.map((t) => tryFetch(t.url, t.label)));
+  const tier1Results = await Promise.all(
+    tier1Urls.map((t) => tryFetch(t.url, t.label)),
+  );
   attempts.push(...tier1Results);
 
-  // 选第一拨里"最有信息量的"
   let best = pickBest(tier1Results);
   if (best && isUseful(best.text)) {
     return finalize(best, attempts, maxLength);
   }
 
-  // 第二拨：Jina Reader（处理 SPA 文档站）
-  const jinaResult = await tryFetch(jinaReaderUrl(url), `jina-reader: ${jinaReaderUrl(url)}`);
+  // tier 2：Jina Reader 兜底
+  const jinaResult = await tryFetch(
+    jinaReaderUrl(url),
+    `jina-reader: ${jinaReaderUrl(url)}`,
+  );
   attempts.push(jinaResult);
   if (isUseful(jinaResult.text)) {
     return finalize(jinaResult, attempts, maxLength);
   }
 
-  // 全部尝试都没拿到"有信息量"的版本，挑一个最长的凑合
+  // 全部尝试都没拿到 useful，挑一个最长的凑合
   const all = [...attempts].filter((a) => a.ok && a.text.length > 0);
   best = pickBest(all);
   if (best) return finalize(best, attempts, maxLength);
 
-  return { ok: false, text: "", attempts, finalSource: "(all failed)" };
+  return { ok: false, text: '', attempts, finalSource: '(all failed)' };
 }
 
 function pickBest(arr: FetchAttempt[]): FetchAttempt | undefined {
   const candidates = arr.filter((a) => a.ok && a.text.length > 0);
   if (candidates.length === 0) return undefined;
-  // 先选 isUseful 的；否则选最长的
   const useful = candidates.filter((a) => isUseful(a.text));
   if (useful.length > 0) {
     return useful.sort((a, b) => b.bytes - a.bytes)[0];
@@ -166,10 +245,14 @@ function pickBest(arr: FetchAttempt[]): FetchAttempt | undefined {
   return candidates.sort((a, b) => b.bytes - a.bytes)[0];
 }
 
-function finalize(best: FetchAttempt, attempts: FetchAttempt[], maxLength: number): FetchResult {
+function finalize(
+  best: FetchAttempt,
+  attempts: FetchAttempt[],
+  maxLength: number,
+): FetchResult {
   let text = best.text;
   if (text.length > maxLength) {
-    text = text.slice(0, maxLength) + "\n...[truncated]";
+    text = text.slice(0, maxLength) + '\n...[truncated]';
   }
   return { ok: true, text, attempts, finalSource: best.source };
 }

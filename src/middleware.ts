@@ -63,6 +63,9 @@ const LEGACY_REDIRECTS: Record<string, string> = {
   // v0.12 B3.3
   '/content': '/create?tab=content',
   '/image': '/create?tab=image',
+  // v0.13 B5: 用户明示删除关键词库 + 发布日历，旧链接 307 到 /workspace
+  '/keywords': '/workspace',
+  '/calendar': '/workspace',
 };
 
 /**

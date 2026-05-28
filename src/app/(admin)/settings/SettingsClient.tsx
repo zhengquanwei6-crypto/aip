@@ -239,6 +239,46 @@ export default function SettingsClient({
       setKeyBusy(null);
     }
   }
+
+  // v0.16: 查询某条 key 的余额 / 额度
+  async function quotaKey(id: string, label: string) {
+    setKeyBusy(id);
+    try {
+      const res = await fetch(`/api/settings/keys/${id}/quota`, { method: 'POST' });
+      const j = await res.json();
+      if (!j.ok) {
+        toast.error(j.error || '额度查询失败');
+        return;
+      }
+      const q = j.quota || {};
+      const fmt = (n: number | undefined | null) =>
+        typeof n === 'number' ? '$' + n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '') : '—';
+      const lines: string[] = [];
+      lines.push(`Key: ${label}`);
+      if (q.plan) lines.push(`计划: ${q.plan}`);
+      lines.push(`总额度: ${fmt(q.totalUsd)}`);
+      lines.push(`已使用: ${fmt(q.usedUsd)}`);
+      lines.push(`剩余: ${fmt(q.remainingUsd)}`);
+      if (q.expired) lines.push('⚠️ 已过期');
+      lines.push(`端点: ${q.endpoint}`);
+      if (j.lastError) lines.push(`\n最近上游错误: ${j.lastError}`);
+      const msg = lines.join('\n');
+      // 同时弹 toast（短摘要）+ 控制台日志（完整 raw）
+      const short =
+        q.remainingUsd != null
+          ? `剩余 ${fmt(q.remainingUsd)}` + (q.totalUsd ? ` / 总 ${fmt(q.totalUsd)}` : '')
+          : (q.plan || '已查到');
+      toast.success(`「${label}」额度: ${short}`);
+      // eslint-disable-next-line no-console
+      console.log('[quota]', label, q);
+      // 浏览器原生确认框承载完整信息（不依赖额外 modal 组件）
+      if (typeof window !== 'undefined') window.alert(msg);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setKeyBusy(null);
+    }
+  }
   async function promoteKey(id: string) {
     setKeyBusy(id);
     try {
@@ -484,6 +524,14 @@ export default function SettingsClient({
                     className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
                   >
                     测试
+                  </button>
+                  <button
+                    disabled={keyBusy === r.id}
+                    onClick={() => quotaKey(r.id, r.label)}
+                    className="text-xs text-emerald-600 hover:underline disabled:opacity-40 mr-2"
+                    title="查询上游中转站余额"
+                  >
+                    额度
                   </button>
                   <button
                     disabled={keyBusy === r.id}

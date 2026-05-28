@@ -1,17 +1,34 @@
+/**
+ * v0.15 · 今日任务页 · UI 整体推倒重做
+ *
+ * 用户原话：让整体保持合理化，现在的页面看起来过于杂乱，UI 布局也非常不合理。
+ *
+ * 新结构：
+ *   1. 顶部进度条：待办 / 已生成 / 已发布 三段式可视化进度
+ *   2. 状态分组：按 pending / generated / published / recapped 横向 segment 切换
+ *   3. 卡片：左 96px 缩略图 + 右文字 + 顶部状态条 + 底部一行操作
+ *   4. 一致的 spacing / shadow / border / radius
+ */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Send, Inbox, CheckSquare } from 'lucide-react';
+import {
+  Send,
+  Inbox,
+  CheckSquare,
+  Sparkles,
+  Image as ImageIcon,
+  Loader2,
+  ArrowRight,
+  Target,
+  ChevronRight,
+} from 'lucide-react';
 import { PLATFORM_LABEL, TASK_STATUSES } from '@/lib/constants';
 import { toast } from '@/lib/toast';
-import ProgressBar from '@/components/ProgressBar';
 import ImageLightbox from '@/components/ImageLightbox';
-import ListShell, { bulkSerial } from '@/components/ListShell';
 import { PublishDirectorDrawer } from '@/components/agents/PublishDirectorDrawer';
-// v0.11 B7: TaskActionGroup 从内嵌组件抽到独立文件 src/components/admin/TaskActionGroup.tsx
-import TaskActionGroup from '@/components/admin/TaskActionGroup';
 
 interface TaskRow {
   id: string;
@@ -26,15 +43,11 @@ interface TaskRow {
   status: string;
 }
 
-const STATUS_FILTER_OPTIONS = [
-  { value: '', label: '全部状态' },
-  ...TASK_STATUSES.map((s) => ({ value: s.value, label: s.label })),
-];
-
-const PLATFORM_FILTER_OPTIONS = [
-  { value: '', label: '全部平台' },
-  { value: 'xiaohongshu', label: '小红书' },
-  { value: 'xianyu', label: '闲鱼' },
+const STATUSES: { value: string; label: string; tone: string }[] = [
+  { value: 'pending', label: '待办', tone: 'amber' },
+  { value: 'generated', label: '已生成', tone: 'blue' },
+  { value: 'published', label: '已发布', tone: 'green' },
+  { value: 'recapped', label: '已复盘', tone: 'purple' },
 ];
 
 export default function TodayTasksClient({
@@ -42,53 +55,41 @@ export default function TodayTasksClient({
 }: {
   initialTasks: TaskRow[];
 }) {
-  const [tasks, setTasks] = useState(initialTasks);
-  const [loadingId, setLoadingId] = useState<string | null>(null);
-  const [loadingAction, setLoadingAction] = useState<string>('');
-  const [elapsed, setElapsed] = useState(0);
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  // v0.9 b3：publish-director 抽屉（绑定到某条 task）
-  const [pubDrawer, setPubDrawer] = useState<{ taskId: string; row: TaskRow } | null>(null);
-  // v0.11 B5：每张卡的「更多动作」下拉是否展开
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const router = useRouter();
+  const [tasks, setTasks] = useState<TaskRow[]>(initialTasks);
+  const [activeStatus, setActiveStatus] = useState<string>('pending');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [busyKind, setBusyKind] = useState<'content' | 'image' | 'status' | ''>(
+    '',
+  );
+  const [lightbox, setLightbox] = useState<number | null>(null);
+  const [pubDrawer, setPubDrawer] = useState<{ taskId: string; row: TaskRow } | null>(
+    null,
+  );
 
-  /** 触发 publish-director 抽屉，预填 task 上下文 */
-  function openPubDirectorForTask(t: TaskRow) {
-    setPubDrawer({ taskId: t.id, row: t });
-    setOpenMenuId(null);
-  }
+  // 进度条数据
+  const counts = useMemo(() => {
+    const m: Record<string, number> = {
+      pending: 0,
+      generated: 0,
+      published: 0,
+      recapped: 0,
+    };
+    tasks.forEach((t) => {
+      m[t.status] = (m[t.status] ?? 0) + 1;
+    });
+    return m;
+  }, [tasks]);
 
-  /** publish-director 反写 task 后刷新页面 RSC payload */
-  function handlePubDirectorTaskUpdated(taskId: string) {
-    // 乐观把当前任务标 generated（service 已经写库，下次 router.refresh 会同步真实数据）
-    setTasks((arr) =>
-      arr.map((x) => (x.id === taskId ? { ...x, status: 'generated' } : x)),
-    );
-    router.refresh();
-  }
+  const total = tasks.length || 1;
+  const filtered = useMemo(
+    () => tasks.filter((t) => t.status === activeStatus),
+    [tasks, activeStatus],
+  );
 
-  useEffect(() => {
-    if (!loadingId) {
-      setElapsed(0);
-      return;
-    }
-    const t = window.setInterval(() => setElapsed((s) => s + 1), 1000);
-    return () => window.clearInterval(t);
-  }, [loadingId]);
-
-  // v0.11 B5: 点卡片外面关闭下拉菜单
-  useEffect(() => {
-    if (!openMenuId) return;
-    function onDocClick(e: MouseEvent) {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest('[data-task-menu]')) return;
-      setOpenMenuId(null);
-    }
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, [openMenuId]);
+  // Lightbox 序列：当前筛选下有图的任务
+  const lightboxTasks = filtered.filter((t) => t.imageUrl);
+  const lightboxImages = lightboxTasks.map((t) => ({ url: t.imageUrl, alt: t.title }));
 
   async function patchTask(id: string, data: Partial<TaskRow>) {
     const res = await fetch(`/api/tasks/${id}`, {
@@ -103,256 +104,151 @@ export default function TodayTasksClient({
 
   async function setStatus(id: string, status: string) {
     try {
-      setLoadingId(id);
-      setLoadingAction('status');
+      setBusyId(id);
+      setBusyKind('status');
       const t = await patchTask(id, { status });
       setTasks((arr) => arr.map((x) => (x.id === id ? { ...x, ...t } : x)));
+      toast.success('已更新状态');
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
-      setLoadingId(null);
-      setLoadingAction('');
+      setBusyId(null);
+      setBusyKind('');
     }
   }
 
-  async function generateContent(id: string) {
+  async function gen(kind: 'content' | 'image', id: string) {
     try {
-      setLoadingId(id);
-      setLoadingAction('content');
-      setOpenMenuId(null);
-      const res = await fetch(`/api/tasks/${id}/generate-content`, {
-        method: 'POST',
-      });
+      setBusyId(id);
+      setBusyKind(kind);
+      const url = `/api/tasks/${id}/${kind === 'content' ? 'generate-content' : 'generate-image'}`;
+      const res = await fetch(url, { method: 'POST' });
       const json = await res.json();
       if (!res.ok || !json.ok) throw new Error(json.error || '生成失败');
       setTasks((arr) => arr.map((x) => (x.id === id ? { ...x, ...json.task } : x)));
-      toast.success('已生成文案');
+      toast.success(kind === 'content' ? '已生成文案' : '已生成图片');
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
-      setLoadingId(null);
-      setLoadingAction('');
+      setBusyId(null);
+      setBusyKind('');
     }
   }
 
-  async function generateImage(id: string) {
-    try {
-      setLoadingId(id);
-      setLoadingAction('image');
-      setOpenMenuId(null);
-      const res = await fetch(`/api/tasks/${id}/generate-image`, {
-        method: 'POST',
-      });
-      const json = await res.json();
-      if (!res.ok || !json.ok) throw new Error(json.error || '图片生成失败');
-      setTasks((arr) => arr.map((x) => (x.id === id ? { ...x, ...json.task } : x)));
-      toast.success('已生成图片');
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setLoadingId(null);
-      setLoadingAction('');
-    }
-  }
-
-  // Lightbox 用：所有任务里有图的，按当前 tasks 顺序
-  const imageTasks = tasks.filter((t) => t.imageUrl);
-  const lightboxImages = imageTasks.map((t) => ({
-    url: t.imageUrl,
-    alt: t.title,
-  }));
-
-  function openLightbox(taskId: string) {
-    const idx = imageTasks.findIndex((t) => t.id === taskId);
-    if (idx >= 0) setLightboxIndex(idx);
-  }
-
-  /* ---------------- 批量动作 ---------------- */
-
-  function makeBulkStatusAction(
-    targetStatus: string,
-    label: string,
-    icon: React.ReactNode,
-  ) {
-    return {
-      key: `status:${targetStatus}`,
-      label,
-      icon,
-      run: async (ids: string[]) => {
-        const r = await bulkSerial(ids, async (id) => {
-          const t = await patchTask(id, { status: targetStatus });
-          setTasks((arr) => arr.map((x) => (x.id === id ? { ...x, ...t } : x)));
-        });
-        if (r.failed.length === 0) {
-          return { ok: true, message: `已批量改为「${label}」（${r.ok} 项）` };
-        }
-        return {
-          ok: false,
-          message: `部分失败：成功 ${r.ok} / 失败 ${r.failed.length}`,
-        };
-      },
-    };
+  function openLightbox(id: string) {
+    const idx = lightboxTasks.findIndex((t) => t.id === id);
+    if (idx >= 0) setLightbox(idx);
   }
 
   return (
-    <>
-      <ListShell<TaskRow>
-        items={tasks}
-        getId={(t) => t.id}
-        storageKey="list:today"
-        searchPlaceholder="搜索标题、正文或封面字"
-        searchKeys={['title', 'body', 'coverText']}
-        filters={[
-          {
-            key: 'status',
-            label: '状态',
-            options: STATUS_FILTER_OPTIONS,
-            predicate: (t, v) => t.status === v,
-          },
-          {
-            key: 'platform',
-            label: '平台',
-            options: PLATFORM_FILTER_OPTIONS,
-            predicate: (t, v) => t.platform === v,
-          },
-        ]}
-        viewModes={['card']}
-        pageSize={50}
-        emptyState={
-          <div className="space-y-3">
-            <div>今日暂无任务，可在 /calendar 添加或在 /content 直接生成。</div>
-            <div className="flex items-center justify-center gap-2 flex-wrap">
-              <Link href="/calendar" className="btn-secondary text-xs px-3 py-1.5">
-                打开发布日历
-              </Link>
-              <Link href="/content" className="btn-primary text-xs px-3 py-1.5">
-                直接生成文案
-              </Link>
+    <div className="space-y-5">
+      {/* 顶部进度条 */}
+      <header className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3">
+        <div className="flex items-baseline justify-between flex-wrap gap-2">
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-400 font-mono">
+              today
+            </div>
+            <div className="text-base sm:text-lg font-semibold text-slate-800 dark:text-slate-100 mt-0.5">
+              共 {tasks.length} 条任务
             </div>
           </div>
-        }
-        onToastSuccess={(m) => toast.success(m)}
-        onToastError={(m) => toast.error(m)}
-        bulk={[
-          makeBulkStatusAction('generated', '批量改为已生成', <CheckSquare size={14} />),
-          makeBulkStatusAction('published', '批量改为已发布', <Send size={14} />),
-          makeBulkStatusAction('recapped', '批量改为已复盘', <Inbox size={14} />),
-        ]}
-        cardGridClassName="space-y-3"
-        renderCard={(t) => {
-          const isLoading = loadingId === t.id;
-          const isThisGenerating =
-            isLoading && (loadingAction === 'content' || loadingAction === 'image');
-          const menuOpen = openMenuId === t.id;
-          return (
-            <div className="animate-fade-in card">
-              <div className="card-body">
-                <div className="flex items-start justify-between flex-wrap gap-3 pl-8">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-sm text-slate-500">
-                      {t.publishTime}
-                    </span>
-                    <span
-                      className={
-                        t.platform === 'xiaohongshu' ? 'badge-red' : 'badge-yellow'
-                      }
-                    >
-                      {PLATFORM_LABEL[t.platform]}
-                    </span>
-                    <span className="badge-gray">{t.category}</span>
-                    <span className="badge-gray">{t.contentType}</span>
-                    <StatusBadge status={t.status} />
-                  </div>
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <span>
+              小红书 {tasks.filter((t) => t.platform === 'xiaohongshu').length}
+            </span>
+            <span>·</span>
+            <span>闲鱼 {tasks.filter((t) => t.platform === 'xianyu').length}</span>
+          </div>
+        </div>
 
-                  {/* v0.11 B5：「主动作 + 下拉」整合
-                      v0.11 B7：抽到 src/components/admin/TaskActionGroup.tsx 独立文件 */}
-                  <TaskActionGroup
-                    task={t}
-                    isLoading={isLoading}
-                    loadingAction={loadingAction}
-                    menuOpen={menuOpen}
-                    onToggleMenu={() => setOpenMenuId(menuOpen ? null : t.id)}
-                    onPubDirector={() => openPubDirectorForTask(t)}
-                    onGenerateContent={() => generateContent(t.id)}
-                    onGenerateImage={() => generateImage(t.id)}
-                    onSetStatus={(v) => setStatus(t.id, v)}
-                  />
-                </div>
+        {/* 三段式进度条 */}
+        <div className="flex h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+          <span
+            className="bg-amber-400 transition-all"
+            style={{ width: `${(counts.pending / total) * 100}%` }}
+            title={`待办 ${counts.pending}`}
+          />
+          <span
+            className="bg-blue-400 transition-all"
+            style={{ width: `${(counts.generated / total) * 100}%` }}
+            title={`已生成 ${counts.generated}`}
+          />
+          <span
+            className="bg-emerald-500 transition-all"
+            style={{ width: `${(counts.published / total) * 100}%` }}
+            title={`已发布 ${counts.published}`}
+          />
+          <span
+            className="bg-purple-400 transition-all"
+            style={{ width: `${(counts.recapped / total) * 100}%` }}
+            title={`已复盘 ${counts.recapped}`}
+          />
+        </div>
 
-                {isThisGenerating && (
-                  <div className="mt-3">
-                    <ProgressBar
-                      mode="indeterminate"
-                      label={
-                        loadingAction === 'image' ? '正在生成图片…' : '正在生成文案…'
-                      }
-                      elapsed={elapsed}
-                    />
-                  </div>
-                )}
+        {/* 状态分段 */}
+        <div className="flex flex-wrap gap-2">
+          {STATUSES.map((s) => {
+            const active = s.value === activeStatus;
+            return (
+              <button
+                key={s.value}
+                type="button"
+                onClick={() => setActiveStatus(s.value)}
+                aria-pressed={active}
+                className={
+                  'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors ' +
+                  (active
+                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700')
+                }
+              >
+                <StatusBullet status={s.value} />
+                {s.label}
+                <span className="font-mono tabular-nums opacity-70">
+                  {counts[s.value] ?? 0}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </header>
 
-                <div className="mt-3 grid grid-cols-[80px_1fr] sm:grid-cols-[1fr_160px] gap-3 sm:gap-4">
-                  <div className="order-2 sm:order-1 min-w-0 col-span-2 sm:col-span-1">
-                    <div className="text-base font-medium text-slate-800 dark:text-slate-100">
-                      {t.title}
-                    </div>
-                    {t.coverText && (
-                      <div className="mt-1 text-xs text-slate-500">
-                        封面大字：{t.coverText}
-                      </div>
-                    )}
-                    {t.body && (
-                      <div className="mt-2 text-sm text-slate-600 dark:text-slate-300 whitespace-pre-wrap line-clamp-6">
-                        {t.body}
-                      </div>
-                    )}
-                    {!t.body && (
-                      <div className="mt-2 text-xs text-slate-400">
-                        尚未生成文案。点击「生成文案」自动生成。
-                      </div>
-                    )}
-                  </div>
-                  <div className="order-1 sm:order-2">
-                    {t.imageUrl ? (
-                      <button
-                        type="button"
-                        onClick={() => openLightbox(t.id)}
-                        className="block w-full"
-                        aria-label="查看大图"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={t.imageUrl}
-                          alt={t.title}
-                          className="w-full aspect-square object-cover rounded border border-slate-200 dark:border-slate-700 hover:opacity-90 cursor-zoom-in transition-opacity"
-                        />
-                      </button>
-                    ) : (
-                      <div className="w-full aspect-square rounded border border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center text-[10px] sm:text-xs text-slate-400">
-                        暂无图片
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        }}
-      />
+      {/* 任务卡片 */}
+      {filtered.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-sm text-slate-500">
+          这个状态下没有任务。
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {filtered.map((t) => (
+            <TaskCard
+              key={t.id}
+              task={t}
+              busy={busyId === t.id}
+              busyKind={busyKind}
+              onPubDirector={() => setPubDrawer({ taskId: t.id, row: t })}
+              onGenContent={() => gen('content', t.id)}
+              onGenImage={() => gen('image', t.id)}
+              onSetStatus={(s) => setStatus(t.id, s)}
+              onOpenImage={() => openLightbox(t.id)}
+            />
+          ))}
+        </div>
+      )}
 
-      {lightboxIndex !== null && lightboxImages.length > 0 && (
+      {lightbox !== null && lightboxImages.length > 0 && (
         <ImageLightbox
           images={lightboxImages}
-          index={lightboxIndex}
-          onClose={() => setLightboxIndex(null)}
-          onIndexChange={(i) => setLightboxIndex(i)}
+          index={lightbox}
+          onClose={() => setLightbox(null)}
+          onIndexChange={(i) => setLightbox(i)}
         />
       )}
 
-      {/* v0.9 b3：publish-director 抽屉，绑定到当前 task */}
       {pubDrawer && (
         <PublishDirectorDrawer
-          open={true}
+          open
           onClose={() => setPubDrawer(null)}
           taskId={pubDrawer.taskId}
           initialForm={{
@@ -361,14 +257,201 @@ export default function TodayTasksClient({
             contentType: pubDrawer.row.contentType,
             topic: pubDrawer.row.title,
           }}
-          onTaskUpdated={() => handlePubDirectorTaskUpdated(pubDrawer.taskId)}
+          onTaskUpdated={() => {
+            setTasks((arr) =>
+              arr.map((x) =>
+                x.id === pubDrawer.taskId ? { ...x, status: 'generated' } : x,
+              ),
+            );
+            router.refresh();
+          }}
         />
       )}
-    </>
+    </div>
+  );
+}
+
+function TaskCard({
+  task,
+  busy,
+  busyKind,
+  onPubDirector,
+  onGenContent,
+  onGenImage,
+  onSetStatus,
+  onOpenImage,
+}: {
+  task: TaskRow;
+  busy: boolean;
+  busyKind: string;
+  onPubDirector: () => void;
+  onGenContent: () => void;
+  onGenImage: () => void;
+  onSetStatus: (s: string) => void;
+  onOpenImage: () => void;
+}) {
+  return (
+    <article className="group rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700 transition-all">
+      {/* 顶部状态条 */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60 text-[11px]">
+        <span className="font-mono tabular-nums text-slate-500">
+          {task.publishTime}
+        </span>
+        <span
+          className={
+            'badge text-[10px] ' +
+            (task.platform === 'xiaohongshu' ? 'badge-red' : 'badge-yellow')
+          }
+        >
+          {PLATFORM_LABEL[task.platform] ?? task.platform}
+        </span>
+        <span className="badge-gray text-[10px]">{task.category}</span>
+        <span className="badge-gray text-[10px]">{task.contentType}</span>
+        <span className="ml-auto">
+          <StatusBadge status={task.status} />
+        </span>
+      </div>
+
+      {/* 主体 */}
+      <div className="p-4 flex gap-3">
+        {/* 缩略图 */}
+        <div className="shrink-0">
+          {task.imageUrl ? (
+            <button
+              type="button"
+              onClick={onOpenImage}
+              className="block w-24 h-24 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 hover:opacity-90"
+              aria-label="查看大图"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={task.imageUrl}
+                alt={task.title}
+                className="w-full h-full object-cover"
+              />
+            </button>
+          ) : (
+            <div className="w-24 h-24 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-400">
+              <ImageIcon size={20} aria-hidden="true" />
+            </div>
+          )}
+        </div>
+
+        {/* 文字 */}
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm sm:text-base font-medium text-slate-800 dark:text-slate-100 leading-snug line-clamp-2">
+            {task.title}
+          </h3>
+          {task.coverText && (
+            <p className="mt-1 text-[11px] text-slate-500">封面：{task.coverText}</p>
+          )}
+          {task.body ? (
+            <p className="mt-2 text-xs text-slate-600 dark:text-slate-400 line-clamp-2 leading-relaxed">
+              {task.body}
+            </p>
+          ) : (
+            <p className="mt-2 text-xs text-slate-400">尚未生成文案</p>
+          )}
+        </div>
+      </div>
+
+      {/* 底部操作 */}
+      <div className="px-4 py-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60 flex items-center gap-2 flex-wrap text-xs">
+        <button
+          type="button"
+          onClick={onPubDirector}
+          disabled={busy}
+          className="inline-flex items-center gap-1 rounded-md bg-slate-900 hover:bg-slate-700 disabled:opacity-50 text-white px-2.5 py-1 text-xs"
+        >
+          <Target size={12} aria-hidden="true" />
+          全流程
+        </button>
+        {!task.body && (
+          <button
+            type="button"
+            onClick={onGenContent}
+            disabled={busy}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 px-2.5 py-1"
+          >
+            {busy && busyKind === 'content' ? (
+              <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Sparkles size={12} aria-hidden="true" />
+            )}
+            生成文案
+          </button>
+        )}
+        {!task.imageUrl && (
+          <button
+            type="button"
+            onClick={onGenImage}
+            disabled={busy}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 px-2.5 py-1"
+          >
+            {busy && busyKind === 'image' ? (
+              <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <ImageIcon size={12} aria-hidden="true" />
+            )}
+            生成图片
+          </button>
+        )}
+        <span className="ml-auto inline-flex items-center gap-1">
+          <StatusSelect value={task.status} onChange={onSetStatus} disabled={busy} />
+        </span>
+      </div>
+    </article>
   );
 }
 
 function StatusBadge({ status }: { status: string }) {
   const item = TASK_STATUSES.find((s) => s.value === status);
-  return <span className={item?.badge ?? 'badge-gray'}>{item?.label ?? status}</span>;
+  return (
+    <span className={(item?.badge ?? 'badge-gray') + ' text-[10px]'}>
+      {item?.label ?? status}
+    </span>
+  );
+}
+
+function StatusBullet({ status }: { status: string }) {
+  const colors: Record<string, string> = {
+    pending: 'bg-amber-400',
+    generated: 'bg-blue-400',
+    published: 'bg-emerald-500',
+    recapped: 'bg-purple-400',
+  };
+  return (
+    <span
+      aria-hidden
+      className={'inline-block w-1.5 h-1.5 rounded-full ' + (colors[status] ?? 'bg-slate-400')}
+    />
+  );
+}
+
+function StatusSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <label className="inline-flex items-center gap-1 text-[11px] text-slate-500">
+      改为
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        className="rounded border border-slate-300 dark:border-slate-700 bg-transparent text-xs px-1.5 py-0.5"
+      >
+        {TASK_STATUSES.map((s) => (
+          <option key={s.value} value={s.value}>
+            {s.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }

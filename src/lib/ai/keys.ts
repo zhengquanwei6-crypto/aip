@@ -164,3 +164,12 @@ export async function summarizePool(provider: ApiKeyProvider): Promise<{
     return { total: 0, active: 0, lastError: null };
   }
 }
+
+/**
+ * v0.13 兼容 shim：image-runner 历史代码 import 了 getImageKeyOrOverride。
+ * 当前暂不支持「按 keyId 强制选某条」功能，行为等价于 getActiveImageKey。
+ * 之后真要做 override，再扩这一层。
+ */
+export async function getImageKeyOrOverride(_keyId?: string | null): Promise<ActiveKey | null> {
+  return getActiveImageKey();
+}

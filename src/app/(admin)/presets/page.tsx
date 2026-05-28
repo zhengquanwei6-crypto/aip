@@ -77,11 +77,14 @@ export default async function PresetsPage({
   const agentNode = <AgentSystemSection initial={agentRows} />;
 
   return (
-    <PresetsTabsShell
+    <>
+      <header className="page-hero"><h1>模板</h1><p>图片 / 文案 / Agent 三类模板，统一管理与编辑。</p></header>
+      <PresetsTabsShell
       active={tab}
       image={imageNode}
       content={contentNode}
       agent={agentNode}
     />
+    </>
   );
 }

@@ -361,10 +361,10 @@ function NavGroup({
                 href={it.href}
                 aria-current={active ? 'page' : undefined}
                 className={clsx(
-                  'flex items-center gap-2 px-5 py-2 text-sm border-l-2',
+                  'flex items-center gap-2 px-5 py-2 text-sm border-l-4 transition-colors',
                   active
-                    ? 'bg-brand-50 text-brand-700 border-brand-600 font-medium dark:bg-brand-900/30 dark:text-brand-300'
-                    : 'text-slate-600 dark:text-slate-300 border-transparent hover:bg-slate-50 dark:hover:bg-slate-800',
+                    ? 'bg-gradient-to-r from-brand-50 to-transparent text-brand-700 border-brand-600 font-semibold dark:from-brand-900/40 dark:to-transparent dark:text-brand-300'
+                    : 'text-slate-600 dark:text-slate-300 border-transparent hover:bg-slate-50 hover:text-brand-700 dark:hover:bg-slate-800 dark:hover:text-brand-300',
                 )}
               >
                 <Icon size={14} aria-hidden="true" className="shrink-0" />
@@ -409,10 +409,10 @@ function NavGroup({
                 href={it.href}
                 aria-current={active ? 'page' : undefined}
                 className={clsx(
-                  'flex items-center gap-2 px-5 py-2 text-sm border-l-2',
+                  'flex items-center gap-2 px-5 py-2 text-sm border-l-4 transition-colors',
                   active
-                    ? 'bg-brand-50 text-brand-700 border-brand-600 font-medium dark:bg-brand-900/30 dark:text-brand-300'
-                    : 'text-slate-600 dark:text-slate-300 border-transparent hover:bg-slate-50 dark:hover:bg-slate-800',
+                    ? 'bg-gradient-to-r from-brand-50 to-transparent text-brand-700 border-brand-600 font-semibold dark:from-brand-900/40 dark:to-transparent dark:text-brand-300'
+                    : 'text-slate-600 dark:text-slate-300 border-transparent hover:bg-slate-50 hover:text-brand-700 dark:hover:bg-slate-800 dark:hover:text-brand-300',
                 )}
               >
                 <Icon size={14} aria-hidden="true" className="shrink-0" />

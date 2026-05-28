@@ -51,7 +51,8 @@ export default function KpiCard({
   hint,
 }: KpiCardProps) {
   const inner = (
-    <div className="rounded-lg border border-slate-200 bg-white p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-900 hover:border-brand-300 dark:hover:border-brand-700 transition-colors">
+    <div className="relative overflow-hidden rounded-xl border border-slate-200 bg-white p-4 sm:p-5 pt-5 sm:pt-6 dark:border-slate-800 dark:bg-slate-900 hover:border-brand-300 hover:shadow-md dark:hover:border-brand-700 transition-all">
+      <div className={`kpi-bar-${tone}`} aria-hidden />
       <div className="flex items-center gap-2">
         <div
           className={clsx(

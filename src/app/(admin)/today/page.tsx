@@ -1,7 +1,12 @@
+/**
+ * v0.15 · 今日任务页 · 服务器组件
+ *
+ * 简化：去掉旧顶栏「今日主推 + 全流程发布按钮 + 浮动 day-coach」，
+ * 进度 / 状态分组 / 操作完全交给 TodayTasksClient 渲染。
+ */
 import { prisma } from '@/lib/db';
-import { todayDayOfWeek, formatDateCN } from '@/lib/date';
+import { todayDayOfWeek } from '@/lib/date';
 import TodayTasksClient from './TodayTasksClient';
-import { AgentLauncher } from '@/components/agents/AgentDrawer';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,37 +19,7 @@ export default async function TodayPage() {
   });
   const tasks = schedule?.tasks ?? [];
 
-  return (
-    <div className="space-y-4">
-      <div className="card">
-        <div className="card-body flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <div className="text-sm text-slate-500">{formatDateCN(today)}</div>
-            <div className="text-lg font-semibold text-slate-800 mt-0.5">
-              今日主推：{schedule?.theme ?? '未配置'}
-            </div>
-          </div>
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="text-sm text-slate-500">
-              共 {tasks.length} 条 · 小红书{' '}
-              {tasks.filter((t) => t.platform === 'xiaohongshu').length} · 闲鱼{' '}
-              {tasks.filter((t) => t.platform === 'xianyu').length}
-            </div>
-            {/* 🎯 v0.9 b1：发布导演入口（inline 内嵌按钮） */}
-            <AgentLauncher
-              slug="publish-director"
-              variant="inline"
-              label="🎯 全流程发布"
-            />
-          </div>
-        </div>
-      </div>
-
-      <TodayTasksClient initialTasks={tasks.map(serialize)} />
-      {/* 浮动的「今日合规」agent 保留 */}
-      <AgentLauncher slug="day-coach" />
-    </div>
-  );
+  return <TodayTasksClient initialTasks={tasks.map(serialize)} />;
 }
 
 function serialize(t: any) {

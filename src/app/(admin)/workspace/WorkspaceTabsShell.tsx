@@ -41,6 +41,11 @@ export default function WorkspaceTabsShell({
 
   return (
     <div className="space-y-3">
+      <header className="page-hero">
+        <h1>工作区</h1>
+        <p>AI 输出历史 + 上传素材，统一管理。</p>
+      </header>
+
       <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-800 -mt-1">
         {TABS.map((t) => {
           const Icon = t.icon;

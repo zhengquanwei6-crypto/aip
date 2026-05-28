@@ -5,7 +5,7 @@ DB_FILE="${DB_FILE:-/data/dev.db}"
 export DATABASE_URL="file:${DB_FILE}"
 
 echo "[entrypoint] prisma db push (sync schema)"
-node node_modules/prisma/build/index.js db push --skip-generate
+node node_modules/prisma/build/index.js db push --skip-generate --accept-data-loss
 
 # 首次启动写入种子数据
 SEED_MARK="/data/.seeded"

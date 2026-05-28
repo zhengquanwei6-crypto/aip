@@ -351,3 +351,47 @@ body {
     }
   }
 }
+
+/* ── v0.14 ui-1 视觉刷新 ── */
+@layer components {
+  /* 主信息卡（比 .card 更突出） */
+  .card-elevated {
+    @apply rounded-xl bg-white border border-slate-200 shadow-md hover:shadow-lg transition-shadow dark:bg-slate-900 dark:border-slate-800;
+  }
+
+  /* Hero 区：顶部品牌渐变带 */
+  .hero-bar {
+    background: linear-gradient(135deg, hsl(269 65% 65% / 0.08) 0%, hsl(330 80% 60% / 0.06) 100%);
+    @apply rounded-2xl border border-brand-300 dark:border-brand-700;
+  }
+
+  /* 数据高亮数字（dashboard 大数字） */
+  .hero-num {
+    @apply text-4xl sm:text-5xl font-extrabold tabular-nums text-slate-900 dark:text-slate-50 leading-none;
+  }
+  .hero-num-accent {
+    background: linear-gradient(135deg, hsl(269 65% 55%) 0%, hsl(330 80% 55%) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* KPI 顶部色条 */
+  .kpi-bar-amber  { @apply absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-amber-400 to-amber-600 rounded-t-lg; }
+  .kpi-bar-blue   { @apply absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-t-lg; }
+  .kpi-bar-green  { @apply absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-emerald-400 to-emerald-600 rounded-t-lg; }
+  .kpi-bar-purple { @apply absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-purple-400 to-purple-600 rounded-t-lg; }
+  .kpi-bar-pink   { @apply absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-pink-400 to-pink-600 rounded-t-lg; }
+  .kpi-bar-slate  { @apply absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-slate-300 to-slate-400 rounded-t-lg; }
+
+  /* 页面 H1 hero（次于 dashboard 的页面用） */
+  .page-hero {
+    @apply mb-6 sm:mb-8;
+  }
+  .page-hero h1 {
+    @apply text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-50 tracking-tight;
+  }
+  .page-hero p {
+    @apply mt-1.5 text-sm sm:text-base text-slate-600 dark:text-slate-400 max-w-2xl;
+  }
+}

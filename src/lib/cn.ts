@@ -1,0 +1,6 @@
+/** classNames helper · shadcn 风格 */
+import clsx, { type ClassValue } from "clsx";
+export function cn(...inputs: ClassValue[]): string {
+  return clsx(inputs);
+}
+export default cn;

@@ -24,15 +24,12 @@ async function loadAdapters(): Promise<AdapterConfig[]> {
 export default async function AdaptersPage() {
   const adapters = await loadAdapters();
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl sm:text-2xl font-semibold">API 适配器</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          粘贴中转站文档 → LLM 自动生成可执行配置 → 干跑验证 → 保存使用。
-        </p>
-      </div>
+    <>
+      <header className="page-hero"><h1>API 适配器</h1><p>上游 LLM / 图像服务 endpoint 的配置与切换。</p></header>
+      <div className="space-y-4">
       <AdaptersClient initialAdapters={adapters} />
       <AgentLauncher slug="api-doctor" />
     </div>
+    </>
   );
 }

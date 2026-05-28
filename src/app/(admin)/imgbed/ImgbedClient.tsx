@@ -199,6 +199,11 @@ export default function ImgbedClient(props: Props) {
 
   return (
     <div className="space-y-4 px-4 sm:px-6 py-3 sm:py-4 max-w-7xl mx-auto">
+      <header className="page-hero">
+        <h1>图床</h1>
+        <p>上传图片或保存生成结果，每张图都有专属直链。</p>
+      </header>
+
       <div className="flex items-center gap-2">
         <ImageIcon size={20} className="text-brand-600 dark:text-brand-400" aria-hidden="true" />
         <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-50">

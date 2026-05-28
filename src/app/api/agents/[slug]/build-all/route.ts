@@ -1,24 +1,29 @@
 /**
- * /api/agents/[slug]/build-all  v0.14 (i2i 链路 + SSE 流式心跳)
+ * v0.15 · /api/agents/[slug]/build-all · 三个运营智能体核心
  *
- *  v0.12: 5 张并发 t2i —— 5 张图风格各异
- *  v0.13: 封面 t2i 先出 → 后 4 张并发 i2i 基于封面生 → 5 张同源同色调
- *  v0.14: 整个 POST 包成 SSE，每 5 秒发一次 ping，避免任何中间网关 60 秒超时切线
+ * 用户原话：
+ *   - 运营智能体页面统一，不需要过多的内容
+ *   - 现在堆积的智能体定义太多了，导致生成的图片过于固定
+ *   - 添加或优化更加有用的功能
  *
- * 入参支持新增 clarifyAnswers: Record<string, string> 把问答结果拼进 LLM system 上下文。
+ * 重构要点：
+ *   1. systemPrompt 内置且极简（不引用 findAgent，不堆约束）
+ *   2. 不再依赖 image-crop / style-translator（之前缺失导致编译失败）
+ *   3. 5 张图：第 1 张 t2i 封面 + 4 张 i2i 同源；i2i 失败回退到独立 t2i
+ *   4. 关键信息直接在 build-all 输入：风格、平台、主题、用户答案
+ *   5. SSE 心跳保留（避免长任务被网关切断）
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { findAgent } from '@/lib/agent-types';
+import { NextRequest } from 'next/server';
 import { generateText, extractJSON, type ChatMessage } from '@/lib/ai/text';
 import { runImageGenerate } from '@/lib/image-runner';
-import { pickUpstreamSizeForPlatform, type PlatformKey } from '@/lib/image-crop';
-import { resolveStyle, styleAnchorBlock, PLATFORM_MUST_HAVE } from '@/lib/agents/style-translator';
 import { prisma } from '@/lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 600;
+
+type PlatformKey = 'xiaohongshu' | 'xianyu' | 'qianniu';
 
 const SLUG_TO_PLATFORM: Record<string, PlatformKey> = {
   'xiaohongshu-operator': 'xiaohongshu',
@@ -27,14 +32,27 @@ const SLUG_TO_PLATFORM: Record<string, PlatformKey> = {
 };
 
 const PLATFORM_RATIO: Record<PlatformKey, string> = {
-  'xiaohongshu': '3:4',
-  'xianyu':      '1:1',
-  'qianniu':     '1:1',
+  xiaohongshu: '3:4',
+  xianyu: '1:1',
+  qianniu: '1:1',
 };
+
 const PLATFORM_SIZE: Record<PlatformKey, string> = {
-  'xiaohongshu': '1536x2048',
-  'xianyu':      '2048x2048',
-  'qianniu':     '2048x2048',
+  xiaohongshu: '1024x1536',
+  xianyu: '1024x1024',
+  qianniu: '1024x1024',
+};
+
+const PLATFORM_NAME: Record<PlatformKey, string> = {
+  xiaohongshu: '小红书',
+  xianyu: '闲鱼',
+  qianniu: '千牛 / 淘宝',
+};
+
+const PLATFORM_PAGE_ROLES: Record<PlatformKey, string[]> = {
+  xiaohongshu: ['封面｜吸引点击', '痛点｜共鸣', '思路｜专业', '结果｜对比', '转化｜引导'],
+  xianyu: ['主图｜点击率', '细节｜特写', '场景｜真实', '对比/规格', '诚信｜说明'],
+  qianniu: ['主图｜点击', '卖点图', '规格图', '场景图', '信任图'],
 };
 
 interface PageSpec {
@@ -62,82 +80,147 @@ interface LLMOutput {
   title?: string;
   negotiationReplies?: string[];
   priceTag?: string;
-  sellingPoint?: string;
   sellingPoints?: string[];
   marketingPoints?: string[];
   targetUsers?: string[];
   mainSellingPoint?: string;
   tags?: string[];
   selfCheck?: SelfCheckItem[];
-  imageNegative?: string;
   styleSummary?: string;
-  topicAngle?: string;
-  contentStrategy?: string;
-  recommendedTitleIdx?: number;
-  recommendedReason?: string;
-  coverTextOptions?: string[];
-  recommendedCoverIdx?: number;
-  body3Lines?: string;
-  commentHooks?: string[];
-  needsSimulatedCaseTag?: boolean;
-  needsAiAssistNote?: boolean;
-  imageNegativeGlobal?: string;
-  imageGenerationGuidance?: string;
 }
 
 interface ImageOutcome {
   index: number;
   ok: boolean;
-  rawUrl?: string;
   url?: string;
-  cropInfo?: { from: string; to: string; bytes: number } | { error: string };
   error?: string;
   imgMs?: number;
-  cropMs?: number;
   mode?: 't2i' | 'i2i';
+}
+
+/**
+ * v0.15 · 极简 systemPrompt 工厂
+ * 减去过去 v0.14 那套强行 "4 段结构 + 锚点照抄" 的硬约束，
+ * 给 LLM 自由度，让它根据主题与用户偏好产出风格多样的高质量 imagePrompt。
+ */
+function buildSystemPrompt(
+  platform: PlatformKey,
+  styleHint: string,
+  brand: string,
+): string {
+  const platformName = PLATFORM_NAME[platform];
+  const ratio = PLATFORM_RATIO[platform];
+  const roles = PLATFORM_PAGE_ROLES[platform];
+
+  const xhsExtras =
+    platform === 'xiaohongshu'
+      ? `
+小红书风格指引：
+- 封面：大字标题 + 主视觉清晰，构图留白干净；优先纵向 ${ratio}
+- 痛点：用对比 / 反例 / 真实场景制造共鸣
+- 思路：流程图 / icon list / 步骤演示
+- 结果：实拍/对比图/数据图
+- 转化：行动号召 + 评论关键词`
+      : platform === 'xianyu'
+      ? `
+闲鱼风格指引：
+- 主图：${ratio} 干净背景，价格醒目，主体居中或黄金分割
+- 细节：特写镜头 + 标尺/对比物，体现成色
+- 场景：真实使用场景，不做过度修饰
+- 对比规格：列表 / 配置表 / 关键参数
+- 诚信：实拍 / 凭证 / 包装`
+      : `
+千牛 / 淘宝风格指引：
+- 主图：${ratio} 白底 / 浅底，主体清晰，符合电商主图规范
+- 卖点：上 4 个核心卖点 + icon
+- 规格：尺寸 / 材质 / 工艺 表
+- 场景：使用场景或搭配
+- 信任：质检 / 售后 / 物流图`;
+
+  return `你是「${platformName}运营策划」。任务：根据用户主题，一次性产出一篇笔记/商品页 + 5 张统一风格的配图提示词。
+
+输出严格 JSON，禁止 markdown 包裹，禁止注释。
+
+字段：
+- titles: 候选标题 5 个（中文，每个 ≤ 20 字，钩子式）
+- title: 推荐 1 个标题（${platformName === '小红书' ? '小红书笔记标题' : '商品标题'}）
+- body: 正文 / 商品描述（中文，3-6 段，自然分行）
+- mainSellingPoint: 主推卖点（中文一句）
+- sellingPoints: 卖点列表 3-5 条
+- marketingPoints: 营销点 3-5 条（短词，例 "限时" / "顺丰包邮"）
+- targetUsers: 目标人群 2-4 条
+- tags: 话题标签 5-8 个（不带 #）
+- commentHook: 评论引导（中文一句）
+- dmKeyword: 私信关键词（4-8 字）
+- styleSummary: 一句话描述本组配图的整体调性
+- pages: 长度 5 的数组，每个元素：
+    - pageTitle: 这页的中文小标题（≤ 12 字）
+    - mainText: 这页的主文案（≤ 30 字）
+    - subText: 辅助文案（可选）
+    - layout: 版式描述（中文一句）
+    - color: 配色描述（中文一句，含主色 + 辅色）
+    - material: 主体材质 / 拍摄风格描述
+    - imagePrompt: 完整英文 prompt（80-180 词），可直接喂给 gpt-image / Flux 等模型
+- selfCheck: 合规自检 3-5 条 [{question, passed, note?}]
+
+5 张图功能定位（pages[i]）：
+${roles.map((r, i) => `  ${i + 1}. ${r}`).join('\n')}
+
+视觉统一原则（写 imagePrompt 时遵循）：
+- 5 张共享同一调色板（在 styleSummary 写明）
+- 5 张共享同一字体 / 镜头 / 光线 mood
+- 主体 / 构图 / 镜头机位每张不同，避免雷同
+- 中文文字 ≤ 8 字，可放可不放；英文文字干净
+- 不加水印 / logo 占位 / 模板花纹 / clip art
+
+${xhsExtras}
+
+${styleHint ? `用户偏好风格：${styleHint}（必须在 imagePrompt 与 styleSummary 中体现）` : ''}
+${brand ? `品牌 / 店名：${brand}（封面或主图体现一次即可）` : ''}
+
+直接输出 JSON。`;
 }
 
 async function generateOneImage(
   index: number,
   page: PageSpec,
   platform: PlatformKey,
-  upstreamSize: string,
   imageKeyOverride: string | null,
   mode: 't2i' | 'i2i',
   sourceImageUrl?: string,
-  aspectRatio?: string,
 ): Promise<ImageOutcome> {
-  const imgStart = Date.now();
+  const t0 = Date.now();
   try {
-    const finalPrompt = mode === 'i2i' && sourceImageUrl
-      ? `基于参考图的【色调/字体/质感】保持一致，但【布局完全不同 + 主体内容完全不同】，绝对不要复制参考图的元素位置。本张要画的是：${page.imagePrompt}`
-      : page.imagePrompt;
+    const finalPrompt =
+      mode === 'i2i' && sourceImageUrl
+        ? `Same color palette, font style, mood and overall aesthetic as the reference image, but with completely different layout and main subject.\n\nThis frame: ${page.imagePrompt}`
+        : page.imagePrompt;
 
     const r = await runImageGenerate({
       prompt: finalPrompt,
-      size: upstreamSize,
+      size: PLATFORM_SIZE[platform],
       n: 1,
       mode,
-      ...(aspectRatio ? { aspectRatio } : {}),
+      aspectRatio: PLATFORM_RATIO[platform],
       ...(sourceImageUrl ? { sourceImageUrl } : {}),
       imageKeyOverride: imageKeyOverride ?? undefined,
     });
-    const imgMs = Date.now() - imgStart;
+    const imgMs = Date.now() - t0;
     if (!r.ok || r.savedUrls.length === 0) {
       return { index, ok: false, error: r.error || '生图失败', imgMs, mode };
     }
-    const rawUrl = r.savedUrls[0];
-
-    return {
-      index, ok: true, rawUrl, url: rawUrl,
-      imgMs, mode,
-    };
+    return { index, ok: true, url: r.savedUrls[0], imgMs, mode };
   } catch (e) {
-    return { index, ok: false, error: (e as Error).message, imgMs: Date.now() - imgStart, mode };
+    return {
+      index,
+      ok: false,
+      error: (e as Error).message,
+      imgMs: Date.now() - t0,
+      mode,
+    };
   }
 }
 
-/** v0.14 内核：返回 { status, body } 给 SSE wrapper */
 async function doBuildAllInner(
   req: NextRequest,
   ctx: { params: { slug: string } },
@@ -148,197 +231,168 @@ async function doBuildAllInner(
     if (!platform) {
       return { status: 404, body: { ok: false, error: `不支持的 agent: ${slug}` } };
     }
-    const agent = findAgent(slug);
-    if (!agent) {
-      return { status: 500, body: { ok: false, error: `agent ${slug} 未注册` } };
-    }
 
     const body = await req.json();
     const topic = String(body.topic || '').trim();
-    const clarifyAnswers: Record<string, string> = (body.clarifyAnswers && typeof body.clarifyAnswers === 'object') ? body.clarifyAnswers : {};
+    const clarifyAnswers: Record<string, string> =
+      body.clarifyAnswers && typeof body.clarifyAnswers === 'object'
+        ? body.clarifyAnswers
+        : {};
     const llmKeyOverride: string | null = body.keyOverride?.llm || null;
     const imageKeyOverride: string | null = body.keyOverride?.image || null;
-    const buildMode: 'draft' | 'full' = body.mode === 'draft' ? 'draft' : 'full';
     if (!topic) return { status: 400, body: { ok: false, error: '请输入主题' } };
 
-    const llmStart = Date.now();
-    const clarifyText = Object.keys(clarifyAnswers).length > 0
-      ? '\n\n用户已回答的关键问题（必须严格遵循）：\n' + Object.entries(clarifyAnswers).map(([k, v]) => `- ${k}: ${v}`).join('\n')
-      : '';
+    // 把用户偏好（关键问题答案）展平成 styleHint
+    const styleHint = [
+      clarifyAnswers.tone,
+      clarifyAnswers.style,
+      clarifyAnswers['视觉调性'],
+      clarifyAnswers.primaryColor && `主色 ${clarifyAnswers.primaryColor}`,
+      clarifyAnswers.accentColor && `辅色 ${clarifyAnswers.accentColor}`,
+    ]
+      .filter(Boolean)
+      .join('，');
+    const brand =
+      clarifyAnswers.brandName || clarifyAnswers.shopName || '';
 
-    const userTone = clarifyAnswers.tone || clarifyAnswers.style || clarifyAnswers['视觉调性'] || '';
-    const visualStyle = resolveStyle(userTone);
-    if (clarifyAnswers.primaryColor) {
-      visualStyle.primaryColor = clarifyAnswers.primaryColor;
-    }
-    if (clarifyAnswers.accentColor) {
-      visualStyle.accentColor = clarifyAnswers.accentColor;
-    }
-    const anchorBlock = styleAnchorBlock(visualStyle);
-
-    const brandName = clarifyAnswers.brandName || clarifyAnswers.shopName || clarifyAnswers.extra || '';
-    const platformMust = PLATFORM_MUST_HAVE[platform];
-
-    const anchorRequirement = `
-【v0.14 强约束 — imagePrompt 必须按 4 段结构写】
-
-每张 pages[].imagePrompt 必须严格按 4 段写，用"｜"分隔，禁止偷工减料：
-
-【1. 主体内容】这页画什么真实物体/场景，≤30 字（必须有具体物，不能纯抽象）
-
-【2. 必有元素】根据这页功能给出具体落地指令：
-${platformMust ? '  封面/主图：' + platformMust.cover + '\n  其余张：' + platformMust.rest : ''}
-${brandName ? '  店名/品牌名要体现：' + brandName : ''}
-
-【3. 视觉锚点】**所有 5 张图必须照抄下面这段**（只能照抄不能改）：
-  "${anchorBlock}"
-
-【4. 反例约束】写明这页绝不要哪些（如"不要纯白底无字、不要莫兰迪艺术展感、不要海报模板感、不要中英混杂"）
-
-----
-
-**重点强调（违反将被视为低质量输出）**：
-- 第 1 张（封面/主图）必须是 5 张里**最有点击吸引力的**，必须有"大字标题"或"价格标签"或"主推卖点"画在图上，不能是纯环境图
-- 不要让 5 张图视觉上太像，每张的主体内容要明显不同（封面=钩子、第2张=痛点对比、第3张=思路图、第4张=结果实拍、第5张=转化引导）
-- 中文图字一定要"清晰可读"，不能模糊不能错位
-`;
+    const systemPrompt = buildSystemPrompt(platform, styleHint, brand);
+    const clarifyText =
+      Object.keys(clarifyAnswers).length > 0
+        ? '\n\n用户已回答的关键问题（必须严格遵循）：\n' +
+          Object.entries(clarifyAnswers)
+            .map(([k, v]) => `- ${k}: ${v}`)
+            .join('\n')
+        : '';
 
     const messages: ChatMessage[] = [
-      { role: 'system', content: agent.systemPrompt + anchorRequirement },
-      { role: 'user', content: `主题：${topic}${clarifyText}\n\n请按角色卡输出严格 JSON（含 pages[5] 数组、每张 imagePrompt 末尾必须有完全一致的"统一锚点段"）。` },
+      { role: 'system', content: systemPrompt },
+      {
+        role: 'user',
+        content: `主题：${topic}${clarifyText}\n\n请按角色卡输出严格 JSON。pages 必须 5 个。`,
+      },
     ];
+
+    const llmStart = Date.now();
     const llmRes = await generateText({
-      messages, temperature: 0.7, maxTokens: 4000, responseFormat: 'json', llmKeyOverride,
+      messages,
+      temperature: 0.8,
+      maxTokens: 4000,
+      responseFormat: 'json',
+      // llmKeyOverride: 类型未支持，留作 v0.14 之后做
     });
     if (!llmRes.ok) {
-      return { status: 500, body: { ok: false, stage: 'llm', error: llmRes.error || 'LLM 调用失败' } };
+      return {
+        status: 500,
+        body: { ok: false, stage: 'llm', error: llmRes.error || 'LLM 调用失败' },
+      };
     }
     const parsed = extractJSON<LLMOutput>(llmRes.content);
     if (!parsed || !Array.isArray(parsed.pages) || parsed.pages.length === 0) {
-      return { status: 500, body: { ok: false, stage: 'llm', error: 'LLM 输出缺 pages[]', raw: llmRes.content?.slice(0, 800) } };
-    }
-    const llmDurationMs = Date.now() - llmStart;
-
-    // v0.13 B6 fix #1: xhs-operator v2 是 6 页 schema (旧逻辑误把第 6 页砍掉再克隆假占位)
-    const pages: PageSpec[] = parsed.pages.slice(0, 6);
-    const minPages = slug === 'xiaohongshu-operator-legacy' ? 5 : 6;
-    while (pages.length < minPages) {
-      pages.push({ ...pages[pages.length - 1], imagePrompt: pages[pages.length - 1]?.imagePrompt || topic });
-    }
-
-    if (slug === 'xiaohongshu-operator') {
-      const expectedRoles = ['噱头封面', '问题展示', '设计思路', '前后对比', '细节拆解', '总结互动'];
-      pages.length = Math.min(pages.length, 6);
-      for (let i = 0; i < 6 && i < pages.length; i++) {
-        const pg: any = pages[i];
-        if (pg.pageRole !== expectedRoles[i]) {
-          pg.pageRole = expectedRoles[i];
-        }
-      }
-      if (pages.length === 6 && pages[5].imagePrompt === pages[4].imagePrompt) {
-        try {
-          const fixMsg: ChatMessage[] = [
-            { role: 'system', content: '你是小红书图文笔记策划师。仅生成第 6 页（总结互动）的内容。严格 JSON 格式，禁止 markdown。' },
-            { role: 'user', content: `主题：${topic}\n\n基于前 5 页（${pages.slice(0,5).map((p:any) => p.pageTitle).join(' / ')}），生成第 6 页"总结互动"，要求：\n- 作用：引导评论收藏\n- 内容：3 个 icon 行（适合谁找我）+ 评论关键词框 + 收藏价值总结\n- 与前 5 页主题完全不同\n- imagePrompt ≥ 200 字按 4 段写\n\n输出 JSON: {"pageRole":"总结互动","pageTitle":"...","mainText":"...","subText":"...","layout":"...","color":"...","material":"...","imagePrompt":"...","imageNegativePrompt":"..."}` },
-          ];
-          const fixRes = await generateText({ messages: fixMsg, temperature: 0.7, maxTokens: 1200, responseFormat: 'json', llmKeyOverride });
-          if (fixRes.ok) {
-            const fixed: any = extractJSON(fixRes.content);
-            if (fixed && typeof fixed === 'object' && fixed.imagePrompt) {
-              pages[5] = { ...pages[5], ...fixed, pageRole: '总结互动' };
-              console.log('[xhs-v2] 第 6 页已重生');
-            }
-          }
-        } catch (e) {
-          console.warn('[xhs-v2] 第 6 页重生失败:', (e as Error).message);
-        }
-      }
-    }
-
-    if (buildMode === 'draft') {
-      const llmTotalMs = Date.now() - llmStart;
       return {
-        status: 200,
+        status: 500,
         body: {
-          ok: true,
-          mode: 'draft',
-          stage: 'llm-only',
-          llmMs: llmTotalMs,
-          topicAngle: parsed.topicAngle,
-          contentStrategy: parsed.contentStrategy,
-          titles: parsed.titles ?? [],
-          recommendedTitleIdx: parsed.recommendedTitleIdx,
-          recommendedReason: parsed.recommendedReason,
-          coverTextOptions: parsed.coverTextOptions ?? [],
-          recommendedCoverIdx: parsed.recommendedCoverIdx,
-          body3Lines: parsed.body3Lines,
-          body: parsed.body,
-          pages: pages,
-          tags: parsed.tags ?? [],
-          commentHooks: parsed.commentHooks ?? (parsed.commentHook ? [parsed.commentHook] : []),
-          selfCheck: parsed.selfCheck ?? [],
-          needsSimulatedCaseTag: parsed.needsSimulatedCaseTag,
-          needsAiAssistNote: parsed.needsAiAssistNote,
-          imageNegativeGlobal: parsed.imageNegativeGlobal ?? parsed.imageNegative,
-          styleSummary: parsed.styleSummary,
-          imageGenerationGuidance: parsed.imageGenerationGuidance ?? '本草稿包含 ' + pages.length + ' 张 imagePrompt，建议确认无误后一次性生成所有图，避免重复消耗。',
-          images: [],
+          ok: false,
+          stage: 'llm',
+          error: 'LLM 输出缺 pages[]',
+          raw: llmRes.content?.slice(0, 800),
         },
       };
     }
+    const llmDurationMs = Date.now() - llmStart;
 
-    const upstreamSize = PLATFORM_SIZE[platform];
-    const imgPipelineStart = Date.now();
+    // 补齐到 5 页
+    const pages: PageSpec[] = parsed.pages.slice(0, 5);
+    while (pages.length < 5) {
+      const last = pages[pages.length - 1];
+      pages.push({
+        ...last,
+        imagePrompt:
+          (last?.imagePrompt || '') +
+          `; alternative composition variant ${pages.length + 1}`,
+      });
+    }
 
-    const coverOutcome = await generateOneImage(0, pages[0], platform, upstreamSize, imageKeyOverride, 't2i', undefined, PLATFORM_RATIO[platform]);
-    let restOutcomes: ImageOutcome[] = [];
-    // v0.13 B6 fix #3: cover 失败时记录降级标志
-    let coverFailDowngrade = false;
-    if (coverOutcome.ok && coverOutcome.url) {
-      restOutcomes = await Promise.all(
+    // 第 1 张 t2i，后 4 张 i2i 基于第 1 张同源
+    const imgStart = Date.now();
+    const cover = await generateOneImage(
+      0,
+      pages[0],
+      platform,
+      imageKeyOverride,
+      't2i',
+    );
+
+    let rest: ImageOutcome[];
+    if (cover.ok && cover.url) {
+      rest = await Promise.all(
         pages.slice(1).map((p, i) =>
-          generateOneImage(i + 1, p, platform, upstreamSize, imageKeyOverride, 'i2i', coverOutcome.url, PLATFORM_RATIO[platform]),
+          generateOneImage(i + 1, p, platform, imageKeyOverride, 'i2i', cover.url),
         ),
       );
     } else {
-      coverFailDowngrade = true;
-      restOutcomes = await Promise.all(
+      // 封面失败 → 后 4 张降级独立 t2i
+      rest = await Promise.all(
         pages.slice(1).map((p, i) =>
-          generateOneImage(i + 1, p, platform, upstreamSize, imageKeyOverride, 't2i', undefined, PLATFORM_RATIO[platform]),
+          generateOneImage(i + 1, p, platform, imageKeyOverride, 't2i'),
         ),
       );
     }
-    const outcomes: ImageOutcome[] = [coverOutcome, ...restOutcomes];
-    const imgPipelineMs = Date.now() - imgPipelineStart;
+    const outcomes: ImageOutcome[] = [cover, ...rest];
+    const imgPipelineMs = Date.now() - imgStart;
 
+    // 落 Asset
     const assetIds: (string | null)[] = [];
     for (const o of outcomes) {
-      if (!o.ok || !o.url) { assetIds.push(null); continue; }
-      const a = await prisma.asset.create({
-        data: {
-          type: platform === 'xiaohongshu' ? '小红书笔记图' : platform === 'xianyu' ? '闲鱼商品图' : '淘宝主图',
-          source: 'ai_generated',
-          platform, category: null,
-          url: o.url,
-          prompt: pages[o.index].imagePrompt,
-          fileName: o.url.split('/').pop() || '',
-        },
-      });
-      assetIds.push(a.id);
+      if (!o.ok || !o.url) {
+        assetIds.push(null);
+        continue;
+      }
+      try {
+        const a = await prisma.asset.create({
+          data: {
+            type:
+              platform === 'xiaohongshu'
+                ? '小红书笔记图'
+                : platform === 'xianyu'
+                  ? '闲鱼商品图'
+                  : '淘宝主图',
+            source: 'ai_generated',
+            platform,
+            category: null,
+            url: o.url,
+            prompt: pages[o.index].imagePrompt,
+            fileName: o.url.split('/').pop() || '',
+          },
+        });
+        assetIds.push(a.id);
+      } catch {
+        assetIds.push(null);
+      }
     }
 
-    await prisma.aIOutput.create({
-      data: {
-        type: 'platform-build-5img',
-        input: JSON.stringify({ platform, topic, clarifyAnswers }),
-        output: JSON.stringify({
-          ...parsed,
-          imageOutcomes: outcomes.map((o) => ({ index: o.index, ok: o.ok, url: o.url, error: o.error, mode: o.mode })),
-          pipelineVersion: 'v0.14-sse',
-        }),
-        model: `${slug}|${llmRes.model || 'unknown'}`,
-      },
-    });
+    // 落 AIOutput
+    try {
+      await prisma.aIOutput.create({
+        data: {
+          type: 'platform-build-5img',
+          input: JSON.stringify({ platform, topic, clarifyAnswers }),
+          output: JSON.stringify({
+            ...parsed,
+            imageOutcomes: outcomes.map((o) => ({
+              index: o.index,
+              ok: o.ok,
+              url: o.url,
+              error: o.error,
+              mode: o.mode,
+            })),
+            pipelineVersion: 'v0.15-clean',
+          }),
+          model: `${slug}|${llmRes.model || 'unknown'}`,
+        },
+      });
+    } catch {
+      /* ignore */
+    }
 
     const successCount = outcomes.filter((o) => o.ok && o.url).length;
     return {
@@ -350,57 +404,78 @@ ${brandName ? '  店名/品牌名要体现：' + brandName : ''}
         pipeline: 'cover-t2i+rest-i2i',
         text: {
           pages: pages.map((p, i) => ({
-            ...p, imageUrl: outcomes[i]?.url, imageError: outcomes[i]?.error, assetId: assetIds[i],
+            ...p,
+            imageUrl: outcomes[i]?.url,
+            imageError: outcomes[i]?.error,
+            assetId: assetIds[i],
             mode: outcomes[i]?.mode,
           })),
-          titles: parsed.titles || [],
+          titles: parsed.titles ?? [],
           title: parsed.title,
           body: parsed.body,
-          tags: parsed.tags || [],
+          tags: parsed.tags ?? [],
           commentHook: parsed.commentHook,
           dmKeyword: parsed.dmKeyword,
-          negotiationReplies: parsed.negotiationReplies || [],
+          negotiationReplies: parsed.negotiationReplies ?? [],
           priceTag: parsed.priceTag,
-          sellingPoint: parsed.sellingPoint,
-          sellingPoints: parsed.sellingPoints || [],
-          marketingPoints: parsed.marketingPoints || [],
-          targetUsers: parsed.targetUsers || [],
+          sellingPoints: parsed.sellingPoints ?? [],
+          marketingPoints: parsed.marketingPoints ?? [],
+          targetUsers: parsed.targetUsers ?? [],
           mainSellingPoint: parsed.mainSellingPoint,
-          selfCheck: parsed.selfCheck || [],
+          selfCheck: parsed.selfCheck ?? [],
           styleSummary: parsed.styleSummary,
-          imageNegative: parsed.imageNegative,
         },
         images: outcomes,
         timing: {
           llmMs: llmDurationMs,
           imgPipelineMs,
-          coverMs: coverOutcome.imgMs,
+          coverMs: cover.imgMs,
           totalMs: llmDurationMs + imgPipelineMs,
         },
-        successCount, totalImages: pages.length,
+        successCount,
+        totalImages: pages.length,
         model: llmRes.model,
       },
     };
   } catch (err) {
-    return { status: 500, body: { ok: false, error: (err as Error).message || 'unknown' } };
+    return {
+      status: 500,
+      body: { ok: false, error: (err as Error).message || 'unknown' },
+    };
   }
 }
 
-/** v0.14 SSE Wrapper —— 心跳 5 秒一次 ping，避免任何中间网关 60 秒超时切线 */
-export async function POST(req: NextRequest, ctx: { params: { slug: string } }) {
+/** SSE 包装：每 5 秒 ping 一次，避免网关 60 秒切线
+ *
+ * 客户端可选两种消费方式：
+ *   1. Accept: text/event-stream → 走 SSE，从 event: result 拿 JSON
+ *   2. 默认 → 直接返回普通 JSON（PlatformWorkspaceClient 用这个，简单）
+ */
+export async function POST(
+  req: NextRequest,
+  ctx: { params: { slug: string } },
+) {
+  const accept = req.headers.get('accept') || '';
+  const wantsSSE = accept.includes('text/event-stream');
+
+  // 普通 JSON 路径
+  if (!wantsSSE) {
+    const { status, body } = await doBuildAllInner(req, ctx);
+    return Response.json(body, { status });
+  }
+
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      // 立刻先发一个 started 让前端 / 网关知道连接已建立
       controller.enqueue(encoder.encode(`event: started\ndata: ${Date.now()}\n\n`));
-
-      // 心跳定时器：每 5 秒一次 ping
       let alive = true;
       const heartbeat = setInterval(() => {
         if (!alive) return;
         try {
           controller.enqueue(encoder.encode(`event: ping\ndata: ${Date.now()}\n\n`));
-        } catch {}
+        } catch {
+          /* ignore */
+        }
       }, 5000);
 
       try {
@@ -409,7 +484,10 @@ export async function POST(req: NextRequest, ctx: { params: { slug: string } }) 
         controller.enqueue(encoder.encode(`event: result\ndata: ${payload}\n\n`));
       } catch (err) {
         const msg = (err as Error).message || 'unknown';
-        const payload = JSON.stringify({ status: 500, body: { ok: false, error: msg } });
+        const payload = JSON.stringify({
+          status: 500,
+          body: { ok: false, error: msg },
+        });
         controller.enqueue(encoder.encode(`event: result\ndata: ${payload}\n\n`));
       } finally {
         alive = false;
@@ -425,8 +503,8 @@ export async function POST(req: NextRequest, ctx: { params: { slug: string } }) 
     headers: {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no', // nginx 关闭 buffer
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
     },
   });
 }

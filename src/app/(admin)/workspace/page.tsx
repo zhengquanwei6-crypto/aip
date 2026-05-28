@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
-import HistoryClient from '../history/HistoryClient';
-import AssetsClient from '../assets/AssetsClient';
+import HistoryClient from './HistoryClient';
+import AssetsClient from './AssetsClient';
 import WorkspaceTabsShell, { type WorkspaceTab } from './WorkspaceTabsShell';
 
 export const dynamic = 'force-dynamic';

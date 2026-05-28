@@ -1,26 +1,21 @@
-// v0.13 mobile m3: dashboard responsive
 /**
- * v0.11 B3 · Dashboard 客户端组件
- * v0.11 B10 · 加入第 5 区：市场趋势卡（MarketTrendsCard）
- * v0.11 B15.7 · 加 DiskWarningCard（顶部条件渲染 · BUG-L12 闭环）
+ * v0.15 · 首页看板 · 推倒重做
  *
- * v0.12 B3.1 体验重构：
- *   - 整体布局加段落标题（h2）+ 视觉密度收紧（spacing 4 → 6）
- *   - KPI 6 → 6（保持）但加 group heading + 分两行：
- *     · 任务进度（待办/已生成/已发布）3 卡
- *     · 内容沉淀（AI 输出/图片/客户）3 卡
- *   - QuickActions 4 卡 → 「新建任务 + 创作 + 全流程发布 + 查看素材」（去掉重复的写文案/出图，
- *     合并到一个「→ 创作」入口；publish 入口直跳 /create?tab=publish 自动开抽屉）
- *   - 4-A / 4-B 区给 section heading
+ * 用户原话：去掉多余无用的内容，仅保留有用的数据展示以及快捷入口。
  *
- * 5 区 + 第 6 区布局（max-w-[1400px] 由 B2 容器控制，本组件用 grid）：
- *   0)   B15.7 磁盘警告（仅 rootPercent ≥ 85% 时渲染 · 否则不占位）
- *   1) 顶部欢迎条（今日日期 / 周X / 待办数量）
- *   2) 6 KPI 小卡：待办 / 已生成 / 已发布 / AIOutput / 图片 / 客户
- *   3) 4 快速操作：新建任务 / 创作 / 全流程发布 / 看素材
- *   4-A) 左下：今日待办前 5 + 最近 5 条 AIOutput
- *   4-B) 右下：系统健康 + 最近失败
- *   5)   市场趋势（B10）：小红书 / 闲鱼 / 千牛 三 Tab + KPI + 编辑数据
+ * 留下：
+ *   - 顶部 AI 搜（最高频入口）
+ *   - 一行 4 个核心 KPI（待办 / 已生成 / 已发布 / AI 输出）
+ *   - 4 个真正用得到的快捷入口（小红书 / 闲鱼 / 千牛 / 今日任务）
+ *   - 今日任务前 5 条（预览，跳转 /today 处理）
+ *
+ * 删除：
+ *   - 磁盘警告卡（移到 /settings）
+ *   - 市场趋势卡
+ *   - 系统健康 + 最近失败双卡
+ *   - 最近 AI 输出卡（已在 /history 展示）
+ *   - KPI section heading + 内容沉淀分组
+ *   - 创作 / 看素材 等重复入口
  */
 'use client';
 
@@ -30,67 +25,63 @@ import {
   CheckCircle2,
   Send,
   Sparkles,
-  Image as ImageIcon,
-  Users,
-  PlusCircle,
-  Wand2,
-  Layers,
+  ArrowRight,
 } from 'lucide-react';
+import Link from 'next/link';
 import KpiCard from './components/KpiCard';
-import QuickAction from './components/QuickAction';
-import TodayTasksList from './components/TodayTasksList';
-import RecentAIOutputs from './components/RecentAIOutputs';
-import {
-  SystemHealthCard,
-  RecentFailuresCard,
-} from './components/SystemHealthCard';
-import MarketTrendsCard from './components/MarketTrendsCard';
-import DiskWarningCard from './components/DiskWarningCard';
 import type { DashboardSummary } from '@/app/api/dashboard/summary/aggregate';
-import { PLATFORM_SLUGS } from '@/lib/market/types';
 
 export interface DashboardClientProps {
   data: DashboardSummary;
 }
 
 export default function DashboardClient({ data }: DashboardClientProps) {
-  const { today, kpi, todayTasks, recentAIOutputs, system, marketTrends, diskUsage } =
-    data;
+  const { today, kpi, todayTasks } = data;
 
   return (
-    <div      className="space-y-6 sm:space-y-8" data-v012-b3-dashboard>
-      {/* v0.12 任务5：AI 搜索头部 */}
-      <div className="card border-blue-200 dark:border-blue-900 bg-gradient-to-br from-blue-50 to-white dark:from-blue-950/40 dark:to-slate-900">
-        <div className="card-body">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const fd = new FormData(e.currentTarget);
-              const q = String(fd.get('q') || '').trim();
-              if (q) window.location.href = `/search?q=${encodeURIComponent(q)}`;
-            }}
-            className="flex items-center gap-2"
-          >
-            <span className="text-2xl">🔍</span>
-            <div className="flex-1">
-              <div className="text-xs text-slate-500 mb-1">AI 搜 · 联网查实时信息（小红书爆款 / 行业趋势 / 任何问题）</div>
-              <input
-                name="q"
-                className="input w-full"
-                placeholder="例如：小红书今日平面设计类目最火的主题是什么"
-              />
+    <div className="space-y-6" data-v015-dashboard>
+      {/* v0.14 ui-1 hero - OLD 字段版 */}
+      <section className="hero-bar p-5 sm:p-7 mb-6 sm:mb-8" aria-label="今日概览">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-xs sm:text-sm font-medium text-brand-700 dark:text-brand-300 tracking-wide uppercase">
+              {today.date} · {today.weekday}
             </div>
-            <button type="submit" className="btn-primary">搜索</button>
-          </form>
+            <h1 className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-50 tracking-tight">
+              你好，今天有 <span className="hero-num-accent">{today.pendingTasksCount}</span> 个待办
+            </h1>
+            <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400 max-w-xl">
+              已生成 <span className="font-semibold text-slate-700 dark:text-slate-300 tabular-nums">{kpi.generatedTasks}</span> 条 ·
+              已发布 <span className="font-semibold text-slate-700 dark:text-slate-300 tabular-nums">{kpi.publishedTasks}</span> 条 ·
+              累计 AI 输出 <span className="font-semibold text-slate-700 dark:text-slate-300 tabular-nums">{kpi.aioutputs}</span> 次
+            </p>
+          </div>
         </div>
-      </div>
+      </section>
 
+      {/* AI 搜 · 最高频入口 */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const fd = new FormData(e.currentTarget);
+          const q = String(fd.get('q') || '').trim();
+          if (q) window.location.href = `/search?q=${encodeURIComponent(q)}`;
+        }}
+        className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 flex items-center gap-3"
+      >
+        <span className="text-2xl shrink-0" aria-hidden>🔍</span>
+        <input
+          name="q"
+          className="flex-1 bg-transparent outline-none text-sm sm:text-base placeholder:text-slate-400 dark:placeholder:text-slate-500"
+          placeholder="问点什么 · 例如「小红书今日平面设计类目最火的主题」"
+        />
+        <button type="submit" className="btn-primary text-sm shrink-0">
+          搜索
+        </button>
+      </form>
 
-      {/* 0) v0.11 B15.7 磁盘警告（≥ 85% 才渲染） */}
-      <DiskWarningCard diskUsage={diskUsage} />
-
-      {/* 1) 顶部欢迎条 */}
-      <header className="rounded-lg border border-slate-200 bg-white p-4 sm:p-5 dark:border-slate-800 dark:bg-slate-900">
+      {/* 顶部欢迎条：日期 + 待办数量 */}
+      <header className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center gap-3">
           <div
             className="inline-flex h-10 w-10 items-center justify-center rounded-md bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300 shrink-0"
@@ -98,7 +89,7 @@ export default function DashboardClient({ data }: DashboardClientProps) {
           >
             <CalendarCheck className="h-5 w-5" />
           </div>
-          <div className="min-w-0">
+          <div className="flex-1 min-w-0">
             <h1 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-slate-100">
               今天 {today.date} · {today.weekday}
             </h1>
@@ -110,151 +101,168 @@ export default function DashboardClient({ data }: DashboardClientProps) {
               个待办任务
             </p>
           </div>
+          <Link
+            href="/today"
+            className="text-xs sm:text-sm text-brand-600 hover:text-brand-700 inline-flex items-center gap-1 shrink-0"
+          >
+            查看今日 <ArrowRight size={14} aria-hidden="true" />
+          </Link>
         </div>
       </header>
 
-      {/* 2) KPI 区 · v0.12 B3.1 加 section heading + 两行分组 */}
-      <section aria-labelledby="kpi-heading" className="space-y-3" data-v012-b3-section="kpi">
-        <h2
-          id="kpi-heading"
-          className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 px-1"
-        >
-          关键指标
-        </h2>
-        {/* 任务进度 3 卡 */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          <KpiCard
-            label="待办"
-            value={kpi.pendingTasks}
-            icon={<CheckSquare className="h-4 w-4" />}
-            tone="amber"
-            href="/today"
-          />
-          <KpiCard
-            label="已生成"
-            value={kpi.generatedTasks}
-            icon={<CheckCircle2 className="h-4 w-4" />}
-            tone="blue"
-            href="/today"
-          />
-          <KpiCard
-            label="已发布"
-            value={kpi.publishedTasks}
-            icon={<Send className="h-4 w-4" />}
-            tone="green"
-            href="/today"
-          />
-        </div>
-        {/* 内容沉淀 2 卡 · v0.12 B4.1：客户 KPI 隐藏 */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <KpiCard
-            label="AI 输出"
-            value={kpi.aioutputs}
-            icon={<Sparkles className="h-4 w-4" />}
-            tone="purple"
-            href="/workspace"
-          />
-          <KpiCard
-            label="图片"
-            value={kpi.assets}
-            icon={<ImageIcon className="h-4 w-4" />}
-            tone="pink"
-            href="/workspace?tab=assets"
-          />
-          {/* v0.12 B4.1 V012_B4_HIDDEN_CLIENT_KPI · 客户 KPI 隐藏（Client=0 真实零数据） */}
-        </div>
+      {/* 4 个核心 KPI · 一排 */}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <KpiCard
+          label="待办"
+          value={kpi.pendingTasks}
+          icon={<CheckSquare className="h-4 w-4" />}
+          tone="amber"
+          href="/today"
+        />
+        <KpiCard
+          label="已生成"
+          value={kpi.generatedTasks}
+          icon={<CheckCircle2 className="h-4 w-4" />}
+          tone="blue"
+          href="/today"
+        />
+        <KpiCard
+          label="已发布"
+          value={kpi.publishedTasks}
+          icon={<Send className="h-4 w-4" />}
+          tone="green"
+          href="/today"
+        />
+        <KpiCard
+          label="AI 输出"
+          value={kpi.aioutputs}
+          icon={<Sparkles className="h-4 w-4" />}
+          tone="purple"
+          href="/history"
+        />
       </section>
 
-      {/* 3) 快速操作 · v0.12 B3.1 重构入口：
-            新建任务 → /today
-            创作 → /create（合并 /content + /image · v0.12 B3.3）
-            全流程发布 → /create?tab=publish（直接进抽屉态）
-            看素材 → /workspace?tab=assets */}
-      <section aria-labelledby="quick-heading" className="space-y-3" data-v012-b3-section="quick">
-        <h2
-          id="quick-heading"
-          className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 px-1"
-        >
-          快速操作
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <QuickAction
-            label="新建任务"
-            description="进入今日任务，安排新的发布计划"
-            icon={<PlusCircle className="h-5 w-5" />}
-            href="/today"
-            tone="brand"
-          />
-          <QuickAction
-            label="创作"
-            description="一站打通文案 + 图片"
-            icon={<Wand2 className="h-5 w-5" />}
-            href="/work/xiaohongshu"
-            tone="blue"
-          />
-          <QuickAction
-            label="全流程发布"
-            description="一键调用 publish-director 串完文案+图片"
-            icon={<Send className="h-5 w-5" />}
-            href="/create?tab=publish"
-            tone="green"
-          />
-          <QuickAction
-            label="看素材"
-            description="历史输出 + 素材库（合并工作区）"
-            icon={<Layers className="h-5 w-5" />}
-            href="/workspace?tab=assets"
-            tone="purple"
-          />
-        </div>
+      {/* 4 个快捷入口 · 直击工作场景 */}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <QuickLink
+          href="/work/xiaohongshu"
+          emoji="📕"
+          title="小红书运营"
+          desc="一键产 5 张同源笔记"
+        />
+        <QuickLink
+          href="/work/xianyu"
+          emoji="🐟"
+          title="闲鱼运营"
+          desc="主图 + 卖点详情图"
+        />
+        <QuickLink
+          href="/work/qianniu"
+          emoji="🐂"
+          title="千牛运营"
+          desc="主图 + 详情场景图"
+        />
+        <QuickLink
+          href="/today"
+          emoji="📋"
+          title="今日任务"
+          desc={`${today.pendingTasksCount} 条待办`}
+        />
       </section>
 
-      {/* 4) 活动概览 · 加 section heading */}
-      <section aria-labelledby="activity-heading" className="space-y-3" data-v012-b3-section="activity">
-        <h2
-          id="activity-heading"
-          className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 px-1"
-        >
-          活动概览
-        </h2>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <TodayTasksList
-            items={todayTasks}
-            todayLabel={`${today.date} ${today.weekday}`}
-          />
-          <RecentAIOutputs items={recentAIOutputs} />
-        </div>
-      </section>
-
-      {/* 5) 系统状态 · 加 section heading */}
-      <section aria-labelledby="system-heading" className="space-y-3" data-v012-b3-section="system">
-        <h2
-          id="system-heading"
-          className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 px-1"
-        >
-          系统状态
-        </h2>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <SystemHealthCard system={system} />
-          <RecentFailuresCard
-            publishDirectorStats={system.publishDirectorStats}
-            recentFailures={system.recentFailures}
-          />
-        </div>
-      </section>
-
-      {/* 6) 市场趋势（v0.11 B10）· 加 section heading */}
-      {marketTrends ? (
-        <section aria-labelledby="market-heading" className="space-y-3" data-v012-b3-section="market">
-          <h2
-            id="market-heading"
-            className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 px-1"
-          >
-            市场趋势
-          </h2>
-          <MarketTrendsCard data={marketTrends} order={PLATFORM_SLUGS} />
+      {/* 今日待办预览（前 5 条） */}
+      {todayTasks.length > 0 && (
+        <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+          <div className="px-4 sm:px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+              今日任务预览
+            </h2>
+            <Link
+              href="/today"
+              className="text-xs text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"
+            >
+              全部 {todayTasks.length}+ 条 <ArrowRight size={12} aria-hidden="true" />
+            </Link>
+          </div>
+          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+            {todayTasks.slice(0, 5).map((t) => (
+              <li
+                key={t.id}
+                className="px-4 sm:px-5 py-2.5 flex items-center gap-3 text-sm hover:bg-slate-50 dark:hover:bg-slate-800/40"
+              >
+                <span className="font-mono text-xs text-slate-400 tabular-nums shrink-0 w-12">
+                  {t.publishTime}
+                </span>
+                <span
+                  className={
+                    'badge text-[10px] shrink-0 ' +
+                    (t.platform === 'xiaohongshu' ? 'badge-red' : 'badge-yellow')
+                  }
+                >
+                  {t.platform === 'xiaohongshu' ? '小红书' : '闲鱼'}
+                </span>
+                <span className="flex-1 min-w-0 truncate text-slate-700 dark:text-slate-200">
+                  {t.title}
+                </span>
+                <StatusDot status={t.status} />
+              </li>
+            ))}
+          </ul>
         </section>
-      ) : null}
+      )}
     </div>
+  );
+}
+
+function QuickLink({
+  href,
+  emoji,
+  title,
+  desc,
+}: {
+  href: string;
+  emoji: string;
+  title: string;
+  desc: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 hover:border-brand-300 dark:hover:border-brand-700 hover:shadow-sm transition-all"
+    >
+      <div className="text-2xl mb-2" aria-hidden>
+        {emoji}
+      </div>
+      <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+        {title}
+      </div>
+      <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 inline-flex items-center gap-1">
+        {desc}
+        <ArrowRight
+          size={12}
+          aria-hidden="true"
+          className="opacity-0 group-hover:opacity-100 transition-opacity"
+        />
+      </div>
+    </Link>
+  );
+}
+
+function StatusDot({ status }: { status: string }) {
+  const map: Record<string, { color: string; label: string }> = {
+    pending: { color: 'bg-slate-400', label: '未生成' },
+    generated: { color: 'bg-blue-500', label: '已生成' },
+    published: { color: 'bg-emerald-500', label: '已发布' },
+    recapped: { color: 'bg-purple-500', label: '已复盘' },
+  };
+  const it = map[status] ?? { color: 'bg-slate-300', label: status };
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500 shrink-0"
+      title={it.label}
+    >
+      <span className={'inline-block w-1.5 h-1.5 rounded-full ' + it.color} aria-hidden />
+      {it.label}
+    </span>
   );
 }

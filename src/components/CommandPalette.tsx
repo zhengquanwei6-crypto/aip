@@ -1,136 +1,139 @@
-'use client';
-
 /**
- * v0.13 BUG-M33: CommandPalette 升级版（cmdk + Radix Dialog）
- *  - ⌘K / Ctrl+K 打开
- *  - 模糊搜索全站页面（NAV_ITEMS）
- *  - 键盘导航（↑↓ Enter Esc）
- *  - 毛玻璃 + spring 动画
+ * 零依赖版 CommandPalette · ⌘K / Ctrl+K 打开
+ *  - 模糊搜索 NAV_ITEMS（隐藏项也可搜到）
+ *  - 键盘 ↑↓ Enter Esc
+ *  - 不依赖 cmdk / @radix-ui/react-dialog
  */
+"use client";
 
-import * as React from 'react';
-import { useRouter } from 'next/navigation';
-import { Command } from 'cmdk';
-import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { Search, ArrowRight, Hash, MessageCircle, Image as ImageIcon, BookOpen, Settings, Home, CheckSquare, Sparkles, Wrench, Briefcase, Plug, Users, BarChart3, Tag } from 'lucide-react';
-import { NAV_ITEMS } from '@/lib/constants';
-import { cn } from '@/lib/cn';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useRouter } from "next/navigation";
+import { Search } from "lucide-react";
+import { NAV_ITEMS } from "@/lib/constants";
+import { cn } from "@/lib/cn";
 
-const ICON_MAP: Record<string, React.ElementType> = {
-  '/dashboard': Home,
-  '/today': CheckSquare,
-  '/work/xiaohongshu': MessageCircle,
-  '/work/xianyu': MessageCircle,
-  '/work/qianniu': MessageCircle,
-  '/workspace': Briefcase,
-  '/clients': Users,
-  '/keywords': Tag,
-  '/ai-tools': Wrench,
-  '/playground': Sparkles,
-  '/adapters': Plug,
-  '/presets': BookOpen,
-  '/imgbed': ImageIcon,
-  '/docs': BookOpen,
-  '/settings': Settings,
-  '/search': Search,
-  '/analysis': BarChart3,
-  '/analytics': BarChart3,
-  '/tools': Wrench,
-};
+interface Item {
+  href: string;
+  label: string;
+}
+
+const ALL: Item[] = NAV_ITEMS.map((i) => ({ href: i.href, label: i.label }));
+
+function fuzzy(q: string, items: Item[]): Item[] {
+  const k = q.trim().toLowerCase();
+  if (!k) return items.slice(0, 20);
+  return items
+    .map((it) => {
+      const hay = (it.label + " " + it.href).toLowerCase();
+      const idx = hay.indexOf(k);
+      const score = idx === -1 ? 9999 : idx + (hay.length - k.length) * 0.001;
+      return { it, score };
+    })
+    .filter((x) => x.score < 9999)
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 20)
+    .map((x) => x.it);
+}
 
 export default function CommandPalette() {
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [active, setActive] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
-  React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) {
+  const list = useMemo(() => fuzzy(q, ALL), [q]);
+
+  useEffect(() => {
+    function onKey(e: globalThis.KeyboardEvent) {
+      const isOpen = (e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K");
+      if (isOpen) {
         e.preventDefault();
-        setOpen((o) => !o);
+        setOpen((v) => !v);
+        setQ("");
+        setActive(0);
+      } else if (open && e.key === "Escape") {
+        e.preventDefault();
+        setOpen(false);
       }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
 
-  const items = React.useMemo(
-    () => NAV_ITEMS.map((it) => ({ href: it.href, label: it.label, hidden: it.hidden })),
-    [],
-  );
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
 
-  const handleSelect = (href: string) => {
+  useEffect(() => {
+    setActive(0);
+  }, [q]);
+
+  function go(href: string) {
     setOpen(false);
     router.push(href);
-  };
+  }
 
+  function onInputKey(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive((i) => Math.min(i + 1, Math.max(0, list.length - 1)));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const it = list[active];
+      if (it) go(it.href);
+    }
+  }
+
+  if (!open) return null;
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm data-[state=open]:animate-fade-in" />
-        <DialogPrimitive.Content
-          className={cn(
-            'fixed left-[50%] top-[20%] z-50 w-[90vw] max-w-lg translate-x-[-50%] rounded-2xl shadow-2xl',
-            'bg-popover/95 backdrop-blur-xl border border-border/60',
-            'data-[state=open]:animate-slide-in-up',
+    <div
+      className="fixed inset-0 z-[100] flex items-start justify-center bg-black/50 backdrop-blur-sm pt-24"
+      onClick={() => setOpen(false)}
+    >
+      <div
+        className="w-full max-w-md rounded-xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 dark:border-slate-800">
+          <Search size={16} className="text-slate-400" aria-hidden="true" />
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={onInputKey}
+            placeholder="搜页面、跳转……"
+            className="flex-1 bg-transparent outline-none text-sm text-slate-800 dark:text-slate-100"
+          />
+          <kbd className="text-[10px] text-slate-400 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5">Esc</kbd>
+        </div>
+        <ul className="max-h-80 overflow-y-auto py-1">
+          {list.length === 0 ? (
+            <li className="px-4 py-6 text-center text-sm text-slate-400">没有匹配项</li>
+          ) : (
+            list.map((it, i) => (
+              <li key={it.href}>
+                <button
+                  type="button"
+                  onClick={() => go(it.href)}
+                  className={cn(
+                    "block w-full text-left px-3 py-2 text-sm flex items-center gap-2",
+                    i === active
+                      ? "bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                      : "text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                  )}
+                >
+                  <span className="flex-1">{it.label}</span>
+                  <span className="text-[10px] text-slate-400">{it.href}</span>
+                </button>
+              </li>
+            ))
           )}
-        >
-          <DialogPrimitive.Title className="sr-only">命令面板</DialogPrimitive.Title>
-
-          <Command label="命令面板" className="overflow-hidden rounded-2xl">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-border/60">
-              <Search size={16} className="text-muted-foreground" />
-              <Command.Input
-                autoFocus
-                placeholder="跳转到任意页面…（⌘K / Ctrl+K 切换）"
-                className="flex-1 bg-transparent outline-none text-sm placeholder:text-muted-foreground"
-              />
-              <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-muted-foreground">
-                ESC
-              </kbd>
-            </div>
-
-            <Command.List className="max-h-[60vh] overflow-y-auto p-2">
-              <Command.Empty className="py-8 text-center text-sm text-muted-foreground">
-                没找到匹配的页面…
-              </Command.Empty>
-
-              <Command.Group heading="导航" className="text-xs text-muted-foreground px-2 [&_[cmdk-group-heading]]:px-1 [&_[cmdk-group-heading]]:py-2 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:font-semibold">
-                {items.map((it) => {
-                  const Icon = ICON_MAP[it.href] || Hash;
-                  return (
-                    <Command.Item
-                      key={it.href}
-                      value={`${it.label} ${it.href}`}
-                      onSelect={() => handleSelect(it.href)}
-                      className={cn(
-                        'flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer text-sm transition-colors',
-                        'data-[selected=true]:bg-gradient-to-r data-[selected=true]:from-primary/15 data-[selected=true]:to-accent/15',
-                        'data-[selected=true]:text-foreground',
-                      )}
-                    >
-                      <div className="w-7 h-7 rounded-md bg-muted flex items-center justify-center shrink-0">
-                        <Icon size={13} className="text-muted-foreground" />
-                      </div>
-                      <span className="flex-1 truncate text-foreground">{it.label}</span>
-                      <span className="text-[10px] text-muted-foreground font-mono">{it.href}</span>
-                      <ArrowRight size={13} className="text-muted-foreground opacity-0 group-data-[selected=true]:opacity-100" />
-                    </Command.Item>
-                  );
-                })}
-              </Command.Group>
-            </Command.List>
-
-            <div className="px-4 py-2 border-t border-border/60 flex items-center justify-between text-[10px] text-muted-foreground bg-muted/30">
-              <div className="flex items-center gap-3">
-                <span className="flex items-center gap-1"><kbd className="px-1 rounded bg-muted">↑↓</kbd>选择</span>
-                <span className="flex items-center gap-1"><kbd className="px-1 rounded bg-muted">↵</kbd>跳转</span>
-                <span className="flex items-center gap-1"><kbd className="px-1 rounded bg-muted">Esc</kbd>关闭</span>
-              </div>
-              <span>果冻 AI · 命令面板</span>
-            </div>
-          </Command>
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+        </ul>
+      </div>
+    </div>
   );
 }
