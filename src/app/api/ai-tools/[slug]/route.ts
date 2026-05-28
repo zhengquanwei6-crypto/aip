@@ -47,6 +47,11 @@ export async function POST(
 
   const sourceDataUrl: string = String(body?.sourceDataUrl || '').trim();
   const instruction: string = String(body?.instruction || '').trim();
+  // v0.14-z48: size + quality (透传 runImageGenerate)
+  const size: string | undefined =
+    typeof body?.size === 'string' && body.size.trim() ? body.size.trim() : undefined;
+  const quality: string | undefined =
+    typeof body?.quality === 'string' && body.quality.trim() ? body.quality.trim() : undefined;
   if (!sourceDataUrl || !sourceDataUrl.startsWith('data:image/')) {
     return NextResponse.json(
       { ok: false, error: '需要上传图片' },
@@ -71,7 +76,8 @@ export async function POST(
       prompt,
       mode: 'i2i',
       n: 1,
-      size: '1024x1024',
+      size: size ?? '1024x1024',
+      ...(quality !== undefined ? { quality } : {}),
       sourceImageBase64: base64,
       sourceImageUrl: sourceDataUrl,
     });

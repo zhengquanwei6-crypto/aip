@@ -35,6 +35,9 @@ export default function ImageEditTool({
   const [sourceDataUrl, setSourceDataUrl] = useState<string>('');
   const [sourceFileName, setSourceFileName] = useState<string>('');
   const [instruction, setInstruction] = useState<string>('');
+  // v0.14-z48: size + quality 选择
+  const [size, setSize] = useState<string>('1024x1024');
+  const [quality, setQuality] = useState<string>('high');
   const [loading, setLoading] = useState<boolean>(false);
   const [resultUrl, setResultUrl] = useState<string>('');
   const [error, setError] = useState<string>('');
@@ -77,6 +80,8 @@ export default function ImageEditTool({
         body: JSON.stringify({
           sourceDataUrl,
           instruction: instruction.trim(),
+          size,
+          quality,
         }),
       });
       const j = await res.json();
@@ -95,6 +100,8 @@ export default function ImageEditTool({
     setSourceDataUrl('');
     setSourceFileName('');
     setInstruction('');
+    setSize('1024x1024');
+    setQuality('high');
     setResultUrl('');
     setError('');
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -170,6 +177,42 @@ export default function ImageEditTool({
               className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-transparent text-sm px-2.5 py-1.5"
             />
             <p className="mt-1 text-[11px] text-slate-400">{promptHint}</p>
+          </div>
+
+          {/* v0.14-z48: 分辨率 + 质量 */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] uppercase tracking-wide text-slate-400 font-mono mb-1">
+                分辨率
+              </label>
+              <select
+                value={size}
+                onChange={(e) => setSize(e.target.value)}
+                className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-transparent text-sm px-2.5 py-1.5"
+              >
+                <option value="1024x1024">1024×1024 · 方</option>
+                <option value="1024x1536">1024×1536 · 竖</option>
+                <option value="1536x1024">1536×1024 · 横</option>
+                <option value="2048x2048">2048×2048 · 高清方</option>
+                <option value="2048x3072">2048×3072 · 高清竖</option>
+                <option value="3072x2048">3072×2048 · 高清横</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] uppercase tracking-wide text-slate-400 font-mono mb-1">
+                质量
+              </label>
+              <select
+                value={quality}
+                onChange={(e) => setQuality(e.target.value)}
+                className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-transparent text-sm px-2.5 py-1.5"
+              >
+                <option value="low">低 · 快</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+                <option value="auto">auto · 模型自选</option>
+              </select>
+            </div>
           </div>
 
           <button
