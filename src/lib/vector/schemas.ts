@@ -9,7 +9,7 @@
  * 度量统一 COSINE，索引 HNSW (M=16, efConstruction=64)。
  */
 
-export const EMBED_DIM = 1536;
+export const EMBED_DIM = 1024;
 export const METRIC = "COSINE" as const;
 
 export interface ZillizCollectionSpec {
