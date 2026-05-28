@@ -151,20 +151,36 @@ export default function DashboardClient({ data }: DashboardClientProps) {
           tone="amber"
           href="/today"
         />
-        <KpiCard
-          label="已生成"
-          value={kpi.generatedTasks}
-          icon={<CheckCircle2 className="h-4 w-4" />}
-          tone="blue"
+        {/* v0.14-z59: 已生成+已发布合并为进度条卡 */}
+        <Link
           href="/today"
-        />
-        <KpiCard
-          label="已发布"
-          value={kpi.publishedTasks}
-          icon={<Send className="h-4 w-4" />}
-          tone="green"
-          href="/today"
-        />
+          data-progress-bar-published
+          className="group relative overflow-hidden rounded-xl border border-slate-200 bg-white p-4 sm:p-5 pt-5 sm:pt-6 dark:border-slate-800 dark:bg-slate-900 hover:border-brand-300 hover:shadow-md dark:hover:border-brand-700 transition-all sm:col-span-2"
+        >
+          <div className="absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-blue-400 via-emerald-400 to-emerald-600 rounded-t-xl" aria-hidden />
+          <div className="flex items-center gap-2 mb-2">
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400">
+              <Send className="h-4 w-4" aria-hidden />
+            </div>
+            <div className="text-sm font-medium text-slate-700 dark:text-slate-300">任务进度</div>
+          </div>
+          <div className="flex items-baseline gap-2 tabular-nums">
+            <span className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">{kpi.publishedTasks}</span>
+            <span className="text-sm text-slate-500 dark:text-slate-400">已发布</span>
+            <span className="text-slate-300 dark:text-slate-600">·</span>
+            <span className="text-lg font-semibold text-blue-700 dark:text-blue-400">{kpi.generatedTasks}</span>
+            <span className="text-sm text-slate-500 dark:text-slate-400">已生成</span>
+          </div>
+          {(kpi.generatedTasks + kpi.publishedTasks > 0) && (
+            <div className="mt-2.5 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-emerald-500"
+                style={{ width: `${Math.round((kpi.publishedTasks / Math.max(1, kpi.publishedTasks + kpi.generatedTasks + kpi.pendingTasks)) * 100)}%` }}
+                aria-label="发布进度"
+              />
+            </div>
+          )}
+        </Link>
         <KpiCard
           label="AI 输出"
           value={kpi.aioutputs}
