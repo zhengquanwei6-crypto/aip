@@ -499,7 +499,52 @@ export default function SettingsClient({
     );
   }
 
-  // === API Key 池小组件 ===
+
+  /**
+   * v0.14-z50: 判断一条 KEY 是否走 OpenAI 兼容协议
+   * 启发式：baseUrl 路径含 /v1，或域名是已知 OpenAI 兼容中转站
+   */
+  function isOpenAICompat(row: PoolKey): boolean {
+    const u = row.baseUrl?.toLowerCase() || '';
+    if (!u) return false;
+    if (u.includes('/v1')) return true;
+    const host = (() => {
+      try { return new URL(u).hostname; } catch { return ''; }
+    })();
+    if (!host) return false;
+    const KNOWN = [
+      'api.openai.com',
+      'cometapi.com',
+      'kie.ai',
+      '4router.net',
+      'do-ai.run',
+      'inference.do-ai.run',
+      'openrouter.ai',
+      'groq.com',
+      'deepseek.com',
+      'siliconflow.cn',
+      'aliyuncs.com', // 阿里云通义
+      'volces.com',   // 火山引擎
+      'moonshot.cn',
+      'aliyun.com',
+    ];
+    return KNOWN.some((d) => host === d || host.endsWith('.' + d));
+  }
+
+  /**
+   * v0.14-z50: 把 KEY 按"OpenAI 兼容"vs"自定义" 分组
+   */
+  function groupByCompat(items: PoolKey[]): { compat: PoolKey[]; other: PoolKey[] } {
+    const compat: PoolKey[] = [];
+    const other: PoolKey[] = [];
+    for (const r of items) {
+      if (isOpenAICompat(r)) compat.push(r);
+      else other.push(r);
+    }
+    return { compat, other };
+  }
+
+    // === API Key 池小组件 ===
   function PoolTable({ provider }: { provider: 'llm' | 'image' }) {
     const rows = pool.filter((r) => r.provider === provider);
     return (
@@ -528,8 +573,19 @@ export default function SettingsClient({
                 </td>
               </tr>
             )}
-            {rows.map((r) => (
-              <tr key={r.id} className={r.active ? '' : 'opacity-60'}>
+            {(() => {
+              const grouped = groupByCompat(rows);
+              return (
+                <>
+                  {grouped.compat.length > 0 && (
+                    <>
+                      <tr>
+                        <td colSpan={8} className="bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide">
+                          🔌 OpenAI 兼容协议（{grouped.compat.length}）
+                        </td>
+                      </tr>
+                      {grouped.compat.map((r) => (
+                        <tr key={r.id} className={r.active ? '' : 'opacity-60'}>
                 <td>
                   <div className="font-medium">{r.label}</div>
                   {r.notes ? <div className="text-xs text-slate-400">{r.notes}</div> : null}
@@ -637,7 +693,131 @@ export default function SettingsClient({
                   </button>
                 </td>
               </tr>
-            ))}
+                      ))}
+                    </>
+                  )}
+                  {grouped.other.length > 0 && (
+                    <>
+                      <tr>
+                        <td colSpan={8} className="bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide">
+                          🏷️ 自定义中转站（{grouped.other.length}）
+                        </td>
+                      </tr>
+                      {grouped.other.map((r) => (
+                        <tr key={r.id} className={r.active ? '' : 'opacity-60'}>
+                <td>
+                  <div className="font-medium">{r.label}</div>
+                  {r.notes ? <div className="text-xs text-slate-400">{r.notes}</div> : null}
+                </td>
+                <td className="text-xs font-mono">{maskUrl(r.baseUrl)}</td>
+                <td className="text-xs font-mono">{r.model}</td>
+                <td className="text-xs font-mono break-all max-w-[280px]">{r.apiKey || '(空)'}</td>
+                <td>{r.priority}</td>
+                <td>
+                  {r.active ? (
+                    <span className="badge-green">active</span>
+                  ) : (
+                    <span className="badge-gray">disabled</span>
+                  )}
+                  {r.consecutiveErrors > 0 && (
+                    <span className="badge-red ml-1">连错 {r.consecutiveErrors}</span>
+                  )}
+                  {r.lastError ? (
+                    <div className="text-xs text-red-500 mt-1 max-w-[260px] truncate" title={r.lastError}>
+                      {r.lastError}
+                    </div>
+                  ) : null}
+                  {/* v0.14-z41 余额徽章 */}
+                  {(() => {
+                    const b = balanceMap[r.id];
+                    if (!b) return null;
+                    if (b.status === 'loading') {
+                      return <div className="text-xs text-slate-400 mt-1">余额查询中...</div>;
+                    }
+                    if (b.status === 'error') {
+                      return (
+                        <div className="text-xs text-slate-400 mt-1" title={b.error}>
+                          余额: 不可查
+                        </div>
+                      );
+                    }
+                    const r2 = b.remainingUsd;
+                    const tone =
+                      r2 == null ? 'badge-gray'
+                      : r2 < 0 ? 'badge-red'
+                      : r2 < 1 ? 'badge-yellow'
+                      : 'badge-green';
+                    const label =
+                      r2 == null ? (b.plan || '账户活跃')
+                      : r2 < 0 ? `透支 $${r2.toFixed(2)}`
+                      : `剩余 $${r2.toFixed(2)}` + (b.totalUsd ? ` / $${b.totalUsd.toFixed(2)}` : '');
+                    return (
+                      <span className={`badge ${tone} mt-1 text-[10px]`} title={b.plan}>
+                        {label}
+                      </span>
+                    );
+                  })()}
+                </td>
+                <td className="text-xs text-slate-500">
+                  {r.totalRequests} 次 / 错 {r.totalErrors}
+                  {r.lastUsedAt ? (
+                    <div className="text-xs text-slate-400">
+                      最近：{new Date(r.lastUsedAt).toLocaleString('zh-CN', { hour12: false })}
+                    </div>
+                  ) : null}
+                </td>
+                <td className="text-right whitespace-nowrap">
+                  <button
+                    disabled={keyBusy === r.id}
+                    onClick={() => openEdit(r)}
+                    className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    disabled={keyBusy === r.id}
+                    onClick={() => testKey(r.id)}
+                    className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
+                  >
+                    测试
+                  </button>
+                  <button
+                    disabled={keyBusy === r.id}
+                    onClick={() => quotaKey(r.id, r.label)}
+                    className="text-xs text-emerald-600 hover:underline disabled:opacity-40 mr-2"
+                    title="查询上游中转站余额"
+                  >
+                    额度
+                  </button>
+                  <button
+                    disabled={keyBusy === r.id}
+                    onClick={() => promoteKey(r.id)}
+                    className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
+                  >
+                    置顶
+                  </button>
+                  <button
+                    disabled={keyBusy === r.id}
+                    onClick={() => toggleActive(r)}
+                    className="text-xs text-slate-600 hover:underline disabled:opacity-40 mr-2"
+                  >
+                    {r.active ? '停用' : '启用'}
+                  </button>
+                  <button
+                    disabled={keyBusy === r.id}
+                    onClick={() => deleteKey(r.id, r.label)}
+                    className="text-xs text-red-600 hover:underline disabled:opacity-40"
+                  >
+                    删除
+                  </button>
+                </td>
+              </tr>
+                      ))}
+                    </>
+                  )}
+                </>
+              );
+            })()}
           </tbody>
         </table>
       </div>
