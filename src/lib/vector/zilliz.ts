@@ -112,8 +112,15 @@ export async function listCollections(cfg: ZillizConfig): Promise<string[]> {
 }
 
 export async function hasCollection(cfg: ZillizConfig, name: string): Promise<boolean> {
-  const list = await listCollections(cfg);
-  return list.includes(name);
+  // v0.14-z77: dedicated cluster 的 list 不返回 quick-create collection，用 describe 试一下
+  try {
+    await describeCollection(cfg, name);
+    return true;
+  } catch (e) {
+    // ZillizError code !== 0 表示不存在
+    if (e instanceof ZillizError) return false;
+    throw e;
+  }
 }
 
 export async function createCollection(
@@ -165,16 +172,42 @@ export async function statsCollection(
   name: string,
 ): Promise<{ rowCount: number }> {
   mustConfig(cfg);
-  // get_stats 返回 { data: { rowCount: 0 } }
-  const j = await fetchJSON<{ data: { rowCount: number } }>(
-    `${cfg.endpoint}/v2/vectordb/collections/get_stats`,
-    {
-      method: "POST",
-      headers: authHeaders(cfg),
-      body: JSON.stringify({ collectionName: name }),
-    },
-  );
-  return { rowCount: Number(j?.data?.rowCount) || 0 };
+  // v0.14-z77: dedicated cluster 的 get_stats 始终返回 0，用 entities/query count(*) 替代
+  try {
+    const j = await fetchJSON<{ data: any[] }>(
+      `${cfg.endpoint}/v2/vectordb/entities/query`,
+      {
+        method: "POST",
+        headers: authHeaders(cfg),
+        body: JSON.stringify({
+          collectionName: name,
+          filter: '',
+          outputFields: ["count(*)"],
+          limit: 1,
+        }),
+      },
+    );
+    const arr = Array.isArray(j?.data) ? j.data : [];
+    if (arr.length === 0) return { rowCount: 0 };
+    const first = arr[0];
+    const count = first?.["count(*)"] ?? first?.count ?? 0;
+    return { rowCount: Number(count) || 0 };
+  } catch (e) {
+    // count(*) 不被支持时 fallback 到 get_stats
+    try {
+      const j = await fetchJSON<{ data: { rowCount: number } }>(
+        `${cfg.endpoint}/v2/vectordb/collections/get_stats`,
+        {
+          method: "POST",
+          headers: authHeaders(cfg),
+          body: JSON.stringify({ collectionName: name }),
+        },
+      );
+      return { rowCount: Number(j?.data?.rowCount) || 0 };
+    } catch {
+      return { rowCount: 0 };
+    }
+  }
 }
 
 // ───────────────────────────────────────────────
