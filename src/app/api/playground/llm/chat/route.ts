@@ -14,6 +14,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { searchHistory } from '@/lib/vector';
 import {
   getLLMConfigWithSource,
   recordLLMResult,
@@ -49,6 +50,10 @@ interface PlaygroundLlmRequest {
   temperature?: number;
   /** 最大 token，默认 4096 */
   max_tokens?: number;
+  /** v0.14-z86: 是否启用 RAG 语义召回（从 dao_history 拉相关历史输出） */
+  useRAG?: boolean;
+  /** v0.14-z86: RAG 召回 topK，默认 3 */
+  ragTopK?: number;
 }
 
 function clampNumber(v: unknown, min: number, max: number, fallback: number): number {
@@ -119,6 +124,57 @@ export async function POST(req: NextRequest) {
         { ok: false, error: 'user 不能为空（messages 数组也可以，但必须至少含一条 role=user 的消息）' },
         { status: 400 },
       );
+    }
+
+    // v0.14-z86: RAG 召回 - 从 dao_history 拉相关历史输出当作 system 上下文
+    let ragRecalled = 0;
+    let ragQueryUsed = '';
+    if (body.useRAG === true) {
+      try {
+        // 用最后一条 user 消息作为查询
+        const lastUser = [...chat].reverse().find((m) => m.role === 'user');
+        if (lastUser?.content) {
+          ragQueryUsed = lastUser.content.slice(0, 500);
+          const topK = clampNumber(body.ragTopK, 1, 10, 3);
+          const hits = await searchHistory(ragQueryUsed, { topK });
+          if (hits.length > 0) {
+            // 拉 prisma 完整数据
+            const ids = hits.map((h) => h.id);
+            const rows = await prisma.aIOutput.findMany({ where: { id: { in: ids } } });
+            const byId = new Map(rows.map((r) => [r.id, r]));
+            // 组装 RAG context
+            const blocks: string[] = [];
+            for (const h of hits) {
+              const r = byId.get(h.id);
+              if (!r) continue;
+              const inputPreview = (r.input || '').slice(0, 200).replace(/\s+/g, ' ');
+              const outputPreview = (r.output || '').slice(0, 400).replace(/\s+/g, ' ');
+              blocks.push(
+                `[相似度${(h.score * 100).toFixed(0)}% · ${r.type}] 输入: ${inputPreview} | 输出: ${outputPreview}`,
+              );
+              ragRecalled++;
+            }
+            if (blocks.length > 0) {
+              const ragSystem: ChatMessage = {
+                role: 'system',
+                content:
+                  '【RAG 历史召回 · 仅作上下文参考】\n以下是用户过往与 AI 的对话/生成历史中与本次问题最相关的几条记录。回答时可酌情参考但不要直接复述：\n\n' +
+                  blocks.join('\n\n'),
+              };
+              // 插到 system 区（如果第 0 条已是 system 就追加，否则前置）
+              if (chat[0]?.role === 'system') {
+                chat[0] = { ...chat[0], content: chat[0].content + '\n\n' + ragSystem.content };
+              } else {
+                chat.unshift(ragSystem);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // RAG 失败不阻塞业务流
+        // eslint-disable-next-line no-console
+        console.warn('[playground/llm RAG]', (e as Error).message);
+      }
     }
 
     // 2) 选 key（用户显式 keyId > 默认池 > Setting 回退）
