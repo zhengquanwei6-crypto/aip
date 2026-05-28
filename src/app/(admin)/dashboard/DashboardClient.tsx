@@ -36,7 +36,7 @@ export interface DashboardClientProps {
 }
 
 export default function DashboardClient({ data }: DashboardClientProps) {
-  const { today, kpi, todayTasks } = data;
+  const { today, kpi, todayTasks, system } = data;
 
   return (
     <div className="space-y-6" data-v015-dashboard>
@@ -58,6 +58,38 @@ export default function DashboardClient({ data }: DashboardClientProps) {
           </div>
         </div>
       </section>
+
+      {/* v0.14-z41: KEY pool 失败警告 banner */}
+      {(system?.apiKeyPool?.llm?.lastError || system?.apiKeyPool?.image?.lastError) && (
+        <section
+          aria-label="API Key 警告"
+          className="rounded-xl border border-amber-300 bg-amber-50 p-4 sm:p-5 mb-6 text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <div className="flex items-start gap-3">
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 shrink-0">
+              ⚠️
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm sm:text-base font-semibold mb-1">API Key 池有失败</h3>
+              {system.apiKeyPool.llm.lastError && (
+                <div className="text-xs sm:text-sm">
+                  <span className="font-medium">LLM</span>（{system.apiKeyPool.llm.active}/{system.apiKeyPool.llm.total} 可用）：
+                  <span className="text-amber-700 dark:text-amber-300 break-all">{system.apiKeyPool.llm.lastError}</span>
+                </div>
+              )}
+              {system.apiKeyPool.image.lastError && (
+                <div className="text-xs sm:text-sm mt-1">
+                  <span className="font-medium">IMAGE</span>（{system.apiKeyPool.image.active}/{system.apiKeyPool.image.total} 可用）：
+                  <span className="text-amber-700 dark:text-amber-300 break-all">{system.apiKeyPool.image.lastError}</span>
+                </div>
+              )}
+              <a href="/settings" className="inline-block mt-2 text-xs sm:text-sm font-medium text-brand-700 dark:text-brand-300 hover:underline">
+                去 /settings 查看 KEY 余额 / 切换备用 →
+              </a>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* AI 搜 · 最高频入口 */}
       <form

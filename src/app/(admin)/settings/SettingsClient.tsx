@@ -105,6 +105,16 @@ export default function SettingsClient({
 
   // === v0.11 B1 · API Key 池 ===
   const [pool, setPool] = useState<PoolKey[]>([]);
+
+  // v0.14-z41: 余额自动加载
+  const [balanceMap, setBalanceMap] = useState<Record<string, {
+    status: 'loading' | 'ok' | 'error';
+    remainingUsd?: number;
+    totalUsd?: number;
+    plan?: string;
+    error?: string;
+    fetchedAt?: number;
+  }>>({});
   const [poolLoading, setPoolLoading] = useState(false);
   const [poolErr, setPoolErr] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -136,6 +146,47 @@ export default function SettingsClient({
   useEffect(() => {
     void refreshPool();
   }, []);
+
+  // v0.14-z41: pool 变化时自动加载每条 active KEY 的余额（5min cached）
+  useEffect(() => {
+    const STALE_MS = 5 * 60 * 1000;
+    const now = Date.now();
+    for (const r of pool) {
+      if (!r.id || !r.active) continue;
+      const cur = balanceMap[r.id];
+      if (cur && cur.fetchedAt && now - cur.fetchedAt < STALE_MS) continue;
+      if (cur && cur.status === 'loading') continue;
+      setBalanceMap((m) => ({ ...m, [r.id]: { status: 'loading' } }));
+      fetch(`/api/settings/keys/${r.id}/quota`, { method: 'POST' })
+        .then((res) => res.json())
+        .then((j) => {
+          if (j.ok && j.quota) {
+            setBalanceMap((m) => ({
+              ...m,
+              [r.id]: {
+                status: 'ok',
+                remainingUsd: j.quota.remainingUsd,
+                totalUsd: j.quota.totalUsd,
+                plan: j.quota.plan,
+                fetchedAt: Date.now(),
+              },
+            }));
+          } else {
+            setBalanceMap((m) => ({
+              ...m,
+              [r.id]: { status: 'error', error: j.error || '查询失败', fetchedAt: Date.now() },
+            }));
+          }
+        })
+        .catch((e) => {
+          setBalanceMap((m) => ({
+            ...m,
+            [r.id]: { status: 'error', error: (e as Error).message, fetchedAt: Date.now() },
+          }));
+        });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pool]);
 
   // v0.11 B15.6 · 拉 PlatformInfo 列表（用于「市场平台」卡片）
   async function refreshPlatforms() {
@@ -501,6 +552,36 @@ export default function SettingsClient({
                       {r.lastError}
                     </div>
                   ) : null}
+                  {/* v0.14-z41 余额徽章 */}
+                  {(() => {
+                    const b = balanceMap[r.id];
+                    if (!b) return null;
+                    if (b.status === 'loading') {
+                      return <div className="text-xs text-slate-400 mt-1">余额查询中...</div>;
+                    }
+                    if (b.status === 'error') {
+                      return (
+                        <div className="text-xs text-slate-400 mt-1" title={b.error}>
+                          余额: 不可查
+                        </div>
+                      );
+                    }
+                    const r2 = b.remainingUsd;
+                    const tone =
+                      r2 == null ? 'badge-gray'
+                      : r2 < 0 ? 'badge-red'
+                      : r2 < 1 ? 'badge-yellow'
+                      : 'badge-green';
+                    const label =
+                      r2 == null ? (b.plan || '账户活跃')
+                      : r2 < 0 ? `透支 $${r2.toFixed(2)}`
+                      : `剩余 $${r2.toFixed(2)}` + (b.totalUsd ? ` / $${b.totalUsd.toFixed(2)}` : '');
+                    return (
+                      <span className={`badge ${tone} mt-1 text-[10px]`} title={b.plan}>
+                        {label}
+                      </span>
+                    );
+                  })()}
                 </td>
                 <td className="text-xs text-slate-500">
                   {r.totalRequests} 次 / 错 {r.totalErrors}
