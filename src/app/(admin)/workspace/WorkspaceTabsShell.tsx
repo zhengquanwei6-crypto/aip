@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { History as HistoryIcon, Layers } from 'lucide-react';
+import { History as HistoryIcon, Layers, Image as ImageIcon } from 'lucide-react';
 import clsx from 'clsx';
 
 /**
@@ -12,21 +12,24 @@ import clsx from 'clsx';
  *
  * 同 /clients 模式：两面板同时挂载，切换走 hidden/show，保留各自 useState（搜索框、筛选）。
  */
-export type WorkspaceTab = 'history' | 'assets';
+export type WorkspaceTab = 'history' | 'assets' | 'imgbed';
 
 const TABS: { value: WorkspaceTab; label: string; icon: typeof HistoryIcon }[] = [
   { value: 'history', label: '历史输出', icon: HistoryIcon },
   { value: 'assets', label: '素材库', icon: Layers },
+  { value: 'imgbed', label: '图床', icon: ImageIcon },
 ];
 
 export default function WorkspaceTabsShell({
   active,
   history,
   assets,
+  imgbed,
 }: {
   active: WorkspaceTab;
   history: React.ReactNode;
   assets: React.ReactNode;
+  imgbed: React.ReactNode;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -72,6 +75,7 @@ export default function WorkspaceTabsShell({
 
       <div className={active === 'history' ? '' : 'hidden'}>{history}</div>
       <div className={active === 'assets' ? '' : 'hidden'}>{assets}</div>
+      <div className={active === 'imgbed' ? '' : 'hidden'}>{imgbed}</div>
     </div>
   );
 }

@@ -115,7 +115,7 @@ export const NAV_ITEMS: { href: string; label: string; hidden?: boolean }[] = [
   { href: '/playground', label: 'AI 对话' },
   { href: '/adapters', label: 'API 适配器' },
   { href: '/presets', label: '模板' },
-  { href: '/imgbed', label: '图床' },
+  { href: '/imgbed', label: '图床', hidden: true }, // v0.14-z55: 整合到 /workspace?tab=imgbed
   { href: '/docs', label: '使用手册' },
   { href: '/settings', label: '设置' },
 ];
