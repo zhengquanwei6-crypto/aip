@@ -160,7 +160,7 @@ export const NAV_GROUPS: {
     label: '工具',
     emoji: '🛠️',
     defaultCollapsed: false,
-    hrefs: ['/ai-tools', '/playground', '/adapters', '/presets', '/imgbed'],
+    hrefs: ['/style-genome', '/ai-tools', '/playground', '/adapters', '/presets', '/imgbed'],
   },
   {
     slug: 'system',
