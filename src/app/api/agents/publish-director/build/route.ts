@@ -15,6 +15,7 @@ import { getEffectiveAgentSystemPrompt } from '@/lib/agents/system-prompt';
 import { generateText, extractJSON, type ChatMessage } from '@/lib/ai/text';
 import { buildContentMessagesAsync } from '@/lib/ai/prompts';
 import { runImageGenerate, type ImageMode } from '@/lib/image-runner';
+import { searchHistory } from '@/lib/vector';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -560,6 +561,24 @@ export async function POST(req: NextRequest) {
     let imageTrace: any = null;
     let imageFallbackNote: string | null = null;
 
+    // v0.15-c RAG 召回（在 step1 之前外层声明，便于早期 return 也能用）
+    let ragRecalled: any[] = [];
+    let ragQuery = '';
+    try {
+      if ((body as any).useRAG !== false) {
+        ragQuery = [body.topic || '', body.audience || '', body.tone || '']
+          .filter(Boolean)
+          .join(' ')
+          .slice(0, 200);
+        if (ragQuery) {
+          const hits = await searchHistory(ragQuery, { topK: 6, filter: 'type == "platform-build"' });
+          ragRecalled = hits.filter((h: any) => h.score >= 0.65).slice(0, 3);
+        }
+      }
+    } catch (e) {
+      console.warn('[v015-c rag/recall]', (e as Error).message);
+    }
+
     // step 1: 文案
     if (regenerate === 'all' || regenerate === 'content' || !content) {
       const keywords = await prisma.keyword.findMany({
@@ -582,6 +601,17 @@ export async function POST(req: NextRequest) {
           priceRange: p.priceRange,
         })),
       });
+      // v0.15-c RAG: 注入历史参考到 messages（system 优先）
+      if (ragRecalled.length > 0) {
+        const refText = ragRecalled
+          .map((h: any, i: number) => `[${i + 1}] (相似度 ${(h.score * 100).toFixed(0)}%) ${String(h.text || '').slice(0, 250)}`)
+          .join('\n\n');
+        messages.unshift({
+          role: 'system',
+          content: `## 你过往做过的相似作品（参考语调与结构，不要照抄）：\n\n${refText}\n\n请在保持上述风格一致性的同时，输出与历史不同的新内容。`,
+        });
+      }
+
       const r = await generateText({
         messages,
         responseFormat: 'json',
@@ -620,6 +650,16 @@ export async function POST(req: NextRequest) {
     if (regenerate === 'content') {
       return NextResponse.json({
         ok: true,
+        ragInfo: {
+          enabled: (body as any).useRAG !== false,
+          recalled: ragRecalled.length,
+          query: ragQuery,
+          items: ragRecalled.map((h: any) => ({
+            id: h.id,
+            score: Number(h.score.toFixed(3)),
+            preview: String(h.text || '').slice(0, 120),
+          })),
+        },
         stage: 'content',
         content,
         stylePrompt: null,
@@ -656,6 +696,16 @@ export async function POST(req: NextRequest) {
     if (regenerate === 'style') {
       return NextResponse.json({
         ok: true,
+        ragInfo: {
+          enabled: (body as any).useRAG !== false,
+          recalled: ragRecalled.length,
+          query: ragQuery,
+          items: ragRecalled.map((h: any) => ({
+            id: h.id,
+            score: Number(h.score.toFixed(3)),
+            preview: String(h.text || '').slice(0, 120),
+          })),
+        },
         stage: 'style',
         content,
         stylePrompt,
