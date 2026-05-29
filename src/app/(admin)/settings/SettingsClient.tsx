@@ -113,7 +113,8 @@ export default function SettingsClient({
     EMBEDDING_MODEL: string;
   };
   const [vectorConfig, setVectorConfig] = useState<VectorConfig | null>(null);
-  const [vectorStatus, setVectorStatus] = useState<{
+  const [lastVectorRefresh, setLastVectorRefresh] = useState<number | null>(null);
+    const [vectorStatus, setVectorStatus] = useState<{
     enabled: boolean;
     endpoint: string;
     history: { exists: boolean; rows: number };
@@ -189,12 +190,21 @@ export default function SettingsClient({
       if (cfg.ok) setVectorConfig(cfg.config);
       if (st.ok) setVectorStatus(st);
       else setVectorStatus({ enabled: false, endpoint: '', history: { exists: false, rows: 0 }, assets: { exists: false, rows: 0 }, error: st.error });
-    } catch (e) {
+        setLastVectorRefresh(Date.now());
+  } catch (e) {
       // ignore
     }
   }
   useEffect(() => {
     void refreshVector();
+  }, []);
+
+  // v0.15-e polling: 30 秒自动刷新 vector status
+  useEffect(() => {
+    const id = setInterval(() => {
+      void refreshVector();
+    }, 30_000);
+    return () => clearInterval(id);
   }, []);
 
   async function saveVector() {
