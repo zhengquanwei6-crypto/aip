@@ -59,6 +59,9 @@ export default function LlmTab({ llmKeys }: Props) {
   const [user, setUser] = useState<string>('');
   const [temperature, setTemperature] = useState<number>(0.7);
   const [maxTokens, setMaxTokens] = useState<number>(4096);
+  // v0.14-z90: RAG 召回开关（启用后从 dao_history 拉相似过往输出当上下文）
+  const [ragEnabled, setRagEnabled] = useState<boolean>(false);
+  const [lastRagInfo, setLastRagInfo] = useState<{ recalled: number; query: string } | null>(null);
   const [history, setHistory] = useState<ChatTurn[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -99,6 +102,7 @@ export default function LlmTab({ llmKeys }: Props) {
       messages: messagesPayload,
       temperature,
       max_tokens: maxTokens,
+      useRAG: ragEnabled,
     };
     if (keyId) reqBody.keyId = keyId;
     if (modelOverride.trim()) reqBody.model = modelOverride.trim();
@@ -256,6 +260,32 @@ export default function LlmTab({ llmKeys }: Props) {
                 className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm px-2 py-1.5"
                 disabled={loading}
               />
+
+          {/* v0.14-z90: RAG 召回 toggle */}
+          <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+            <label className="flex items-start gap-2 cursor-pointer text-xs">
+              <input
+                type="checkbox"
+                checked={ragEnabled}
+                onChange={(e) => setRagEnabled(e.target.checked)}
+                className="mt-0.5 rounded border-slate-300"
+              />
+              <span className="flex-1">
+                <span className="font-medium text-slate-700 dark:text-slate-200">🧠 启用 RAG 召回历史</span>
+                <span className="block text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  从 Zilliz dao_history 拉相似过往对话作上下文（每次自动 top-3）
+                </span>
+              </span>
+            </label>
+            {lastRagInfo && (
+              <div className="mt-1.5 ml-5 text-[11px] text-emerald-600 dark:text-emerald-400">
+                上次召回 {lastRagInfo.recalled} 条 ·{' '}
+                <span className="text-slate-500 truncate inline-block max-w-[200px] align-middle" title={lastRagInfo.query}>
+                  {lastRagInfo.query}
+                </span>
+              </div>
+            )}
+          </div>
             </div>
           </div>
 
