@@ -12,7 +12,7 @@
  */
 
 import Link from 'next/link';
-import { Wand2, Layers, ArrowRight, Sparkles, Eraser, Palette, Maximize2 } from 'lucide-react';
+import { Wand2, Layers, ArrowRight, Sparkles, Eraser, Palette, Maximize2, PenSquare } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,6 +59,13 @@ const TOOLS: Tool[] = [
     desc: '上传产品图，自动统一光线 / 阴影 / 反射 / 高光，生成电商级成片',
     status: 'ready',
     icon: <Sparkles size={18} aria-hidden />,
+  },
+  {
+    href: '/ai-tools/prompt-gen',
+    label: 'AI 提示词生成器',
+    desc: '输入主题 → 生成平台风格英文 prompt × N，复制到 Midjourney / SD / Flux 出图',
+    status: 'ready',
+    icon: <PenSquare size={18} aria-hidden />,
   },
 ];
 
