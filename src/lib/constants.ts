@@ -112,6 +112,7 @@ export const NAV_ITEMS: { href: string; label: string; hidden?: boolean }[] = [
   { href: '/workspace', label: '工作区', hidden: true },
   { href: '/calendar', label: '发布日历', hidden: true },
   { href: '/style-genome', label: '🧬 风格基因' },
+  { href: '/agents/critic', label: '🩺 作品诊断' },
   { href: '/ai-tools', label: 'AI 工具' },
   { href: '/playground', label: 'AI 对话' },
   { href: '/adapters', label: 'API 适配器', hidden: true }, // v0.14-z57: 整合到 /settings 底部 section
@@ -160,7 +161,7 @@ export const NAV_GROUPS: {
     label: '工具',
     emoji: '🛠️',
     defaultCollapsed: false,
-    hrefs: ['/style-genome', '/ai-tools', '/playground', '/adapters', '/presets', '/imgbed'],
+    hrefs: ['/style-genome', '/agents/critic', '/ai-tools', '/playground', '/adapters', '/presets', '/imgbed'],
   },
   {
     slug: 'system',

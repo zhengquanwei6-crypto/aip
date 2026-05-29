@@ -72,6 +72,15 @@ export interface AgentDefinition {
 
 export const AGENTS: AgentDefinition[] = [
   {
+    slug: 'critic',
+    name: '作品诊断师',
+    description: '上传作品 → vision LLM 多轮诊断 + 图上画批注 + 风格匹配度',
+    icon: '🩺',
+    scope: ['/agents/critic'],
+    vertical: 'jiedan',
+    systemPrompt: `你是资深平面设计与摄影评审专家。任务: 给上传的图片做诊断，输出严格 JSON: { score, comments[{x,y,w,h,severity,label,message}], suggestion }。每条 comment 给具体区域比例坐标。`,
+  },
+  {
     slug: 'api-doctor',
     name: 'API 助手',
     description: '帮你接入新 API、诊断 adapter 错误、解读上游报错。',
