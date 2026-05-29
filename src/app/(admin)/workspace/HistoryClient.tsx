@@ -24,6 +24,11 @@ const TYPE_LABEL: Record<string, string> = {
   'platform-build': '平台产出',
   'ai-search': 'AI 搜',
   'ai-analysis': 'AI 分析',
+  'prompt-gen': 'AI 提示词生成器',
+  'playground:image': 'Playground 图片',
+  'playground:llm': 'Playground 文案',
+  'playground:agent': 'Playground Agent',
+  'platform-build-5img': '平台 5 图产出',
 };
 
 const TYPE_BADGE: Record<string, string> = {
@@ -34,6 +39,11 @@ const TYPE_BADGE: Record<string, string> = {
   'platform-build': 'badge-pink',
   'ai-search': 'badge-cyan',
   'ai-analysis': 'badge-orange',
+  'prompt-gen': 'badge-purple',
+  'playground:image': 'badge-yellow',
+  'playground:llm': 'badge-blue',
+  'playground:agent': 'badge-green',
+  'platform-build-5img': 'badge-pink',
 };
 
 const TYPE_FILTER_OPTIONS = [
