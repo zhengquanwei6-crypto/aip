@@ -63,9 +63,6 @@ const LEGACY_REDIRECTS: Record<string, string> = {
   // v0.12 B3.3
   '/content': '/create?tab=content',
   '/image': '/create?tab=image',
-  // v0.13 B5: 用户明示删除关键词库 + 发布日历，旧链接 307 到 /workspace
-  '/keywords': '/workspace',
-  '/calendar': '/workspace',
 };
 
 /**
@@ -112,6 +109,22 @@ export function middleware(req: NextRequest) {
     pathname.includes('.') // 文件
   ) {
     return NextResponse.next();
+  }
+
+  // v4 showcase: CSP self-only + 跳过移动端 redirect
+  // ─────────────────────────────────────────────────────────────────
+  // /showcase 是 v4 公开介绍页，跟 /m/showcase 没有对应实现，移动端
+  // 走 v4 自己的 viewport 适配（Req 11.1 单列）。
+  // CSP `default-src 'self'; connect-src 'self'` 是 Req 6.4 / Property 8
+  // 的硬性兜底 —— 哪怕未来 client 代码不小心引入第三方 fetch，浏览器
+  // 也会把它挡在外面，让属性测试 8 直接失败而不是悄悄通过。
+  if (pathname === '/showcase' || pathname.startsWith('/showcase/')) {
+    const res = NextResponse.next();
+    res.headers.set(
+      'Content-Security-Policy',
+      "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self' data:; base-uri 'self'; form-action 'self'",
+    );
+    return res;
   }
 
   // v0.12 B1 BUG-M22: 不在白名单的 /docs/<slug> 直接 404
