@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generateText, extractJSON, type ChatMessage } from '@/lib/ai/text';
+import { injectGenomeIntoMessages } from '@/lib/style-genome/inject';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -115,8 +116,10 @@ export async function POST(req: NextRequest) {
       { role: 'user', content: `主题：${theme}\n\n请输出 ${count} 条 prompt。` },
     ];
 
+        // v0.16-H1 genome injection (soft, fail-silent)
+    const __sg = await injectGenomeIntoMessages(messages as any, { skip: (body as any)?.useStyleGenome === false }).catch(() => ({ messages: messages as any[], applied: false }));
     const r = await generateText({
-      messages,
+      messages: __sg.messages as any,
       temperature: 0.85,
       maxTokens: 1800,
       responseFormat: 'json',

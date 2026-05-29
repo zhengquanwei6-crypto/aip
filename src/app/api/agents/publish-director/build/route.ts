@@ -13,6 +13,7 @@ import { prisma } from '@/lib/db';
 import { findAgent } from '@/lib/agent-types';
 import { getEffectiveAgentSystemPrompt } from '@/lib/agents/system-prompt';
 import { generateText, extractJSON, type ChatMessage } from '@/lib/ai/text';
+import { injectGenomeIntoMessages } from '@/lib/style-genome/inject';
 import { buildContentMessagesAsync } from '@/lib/ai/prompts';
 import { runImageGenerate, type ImageMode } from '@/lib/image-runner';
 import { searchHistory } from '@/lib/vector';
@@ -612,8 +613,10 @@ export async function POST(req: NextRequest) {
         });
       }
 
+            // v0.16-H1 genome injection (soft, fail-silent)
+      const __sg = await injectGenomeIntoMessages(messages as any, { skip: (body as any)?.useStyleGenome === false }).catch(() => ({ messages: messages as any[], applied: false }));
       const r = await generateText({
-        messages,
+        messages: __sg.messages as any,
         responseFormat: 'json',
         temperature: 0.8,
       });
