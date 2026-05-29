@@ -24,6 +24,7 @@ import {
   loadClientContext,
 } from '@/lib/agents/context';
 import { getEffectiveAgentSystemPrompt } from '@/lib/agents/system-prompt';
+import { searchHistory } from '@/lib/vector';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -85,14 +86,34 @@ export async function POST(
       buildContext(agent.slug, opts),
     ]);
 
-    const llmMessages: ChatMessage[] = [
+    // v0.15-d RAG: 拉最后一条 user 消息做 dao_history 召回
+    let ragRecalled: any[] = [];
+    let ragQuery = '';
+    try {
+      if ((body as any).useRAG !== false) {
+        const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+        ragQuery = (lastUser?.content || '').slice(0, 200);
+        if (ragQuery) {
+          const hits = await searchHistory(ragQuery, { topK: 5 });
+          ragRecalled = hits.filter((h: any) => h.score >= 0.65).slice(0, 3);
+        }
+      }
+    } catch (e) {
+      console.warn('[v015-d rag/agent-drawer]', (e as Error).message);
+    }
+    const ragBlock = ragRecalled.length > 0
+      ? '\n\n以下是与用户问题相关的历史输出（参考但不照抄）：\n' +
+        ragRecalled.map((h: any, i: number) => `[${i + 1}] ${String(h.text || '').slice(0, 220)}`).join('\n')
+      : '';
+
+        const llmMessages: ChatMessage[] = [
       {
         role: 'system',
         content:
           systemPrompt +
           (contextBlock
             ? '\n\n以下是平台当前状态快照（用于辅助回答；下方 API key 已脱敏，不要泄露）：\n\n' + contextBlock
-            : ''),
+            : '') + ragBlock,
       },
       ...messages.map((m) => ({ role: m.role, content: String(m.content || '') })),
     ];

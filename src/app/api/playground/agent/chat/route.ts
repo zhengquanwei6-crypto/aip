@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { findAgent } from '@/lib/agent-types';
 import { generateText, type ChatMessage } from '@/lib/ai/text';
+import { searchHistory } from '@/lib/vector';
 import {
   loadAdaptersSummary,
   loadSettingsSummary,
@@ -114,14 +115,34 @@ export async function POST(req: NextRequest) {
       body.context && typeof body.context === 'object' ? (body.context as Record<string, unknown>) : {};
     const contextBlock = await buildContext(agent.slug, opts);
 
-    const llmMessages: ChatMessage[] = [
+    // v0.15-d RAG: 用 turns 最后 user 消息做召回
+    let ragRecalled: any[] = [];
+    let ragQuery = '';
+    try {
+      if ((body as any).useRAG !== false) {
+        const lastUser = [...turns].reverse().find((t) => t.role === 'user');
+        ragQuery = (lastUser?.content || '').slice(0, 200);
+        if (ragQuery) {
+          const hits = await searchHistory(ragQuery, { topK: 5 });
+          ragRecalled = hits.filter((h: any) => h.score >= 0.65).slice(0, 3);
+        }
+      }
+    } catch (e) {
+      console.warn('[v015-d rag/playground-agent]', (e as Error).message);
+    }
+    const ragBlock = ragRecalled.length > 0
+      ? '\n\n以下是与用户问题相关的历史输出（参考但不照抄）：\n' +
+        ragRecalled.map((h: any, i: number) => `[${i + 1}] ${String(h.text || '').slice(0, 220)}`).join('\n')
+      : '';
+
+        const llmMessages: ChatMessage[] = [
       {
         role: 'system',
         content:
           agent.systemPrompt +
           (contextBlock
             ? '\n\n以下是平台当前状态快照（用于辅助回答；下方 API key 已脱敏，不要泄露）：\n\n' + contextBlock
-            : ''),
+            : '') + ragBlock,
       },
       ...turns.map<ChatMessage>((t) => ({
         role: t.role === 'assistant' ? 'assistant' : 'user',
