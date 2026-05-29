@@ -100,6 +100,7 @@ export const NAV_ITEMS: { href: string; label: string; hidden?: boolean }[] = [
   { href: '/search', label: '语义搜索' }, // v0.14-z78: 真做了
   { href: '/analysis', label: 'AI 分析', hidden: true }, // v0.14-z59: 空壳 wrapper
   { href: '/today', label: '今日任务' },
+  { href: '/income', label: '💰 接单收入' },
   { href: '/work/xiaohongshu', label: '小红书运营' },
   { href: '/work/xianyu', label: '闲鱼运营' },
   { href: '/work/qianniu', label: '千牛运营' },
@@ -148,6 +149,7 @@ export const NAV_GROUPS: {
     hrefs: [
       '/dashboard',
       '/today',
+      '/income',
       '/history',
       '/work/xiaohongshu',
       '/work/xianyu',
