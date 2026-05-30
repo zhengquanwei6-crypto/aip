@@ -6,6 +6,7 @@ import { IMAGE_TYPES } from '@/lib/constants';
 import { toast } from '@/lib/toast';
 import ListShell, { bulkSerial } from '@/components/ListShell';
 import ImageLightbox from '@/components/ImageLightbox';
+import ShareCreateModal from '@/components/share/ShareCreateModal';
 
 interface Asset {
   id: string;
@@ -64,6 +65,7 @@ export default function AssetsClient({
 }) {
   // v0.11 B7: 懒初始化 — 在第一次 render 时把 URL filters 写入 localStorage
   // 这样 ListShell 的 useStickyState 在 useEffect mount 时读取 localStorage 就能拿到 URL 值
+  const [shareTarget, setShareTarget] = useState<{ id: string; url: string } | null>(null);
   const [_seededFromUrl] = useState<true | null>(() => {
     if (typeof window === 'undefined') return null;
     const urlType = filters?.type ?? '';
@@ -412,6 +414,12 @@ export default function AssetsClient({
                   >
                     原图
                   </a>
+                  <button
+                    onClick={() => setShareTarget({ id: a.id, url: a.url })}
+                    className="text-brand-600 hover:underline"
+                  >
+                    分享
+                  </button>
                   {/* v0.12 B3.3 · V012_B3_I2I_SOURCE_BUTTON marker */}
                   <a
                     href={`/create?tab=image&sourceImage=${encodeURIComponent(a.url)}`}
@@ -434,6 +442,13 @@ export default function AssetsClient({
           index={lightboxIndex}
           onClose={() => setLightboxIndex(null)}
           onIndexChange={(i) => setLightboxIndex(i)}
+        />
+      )}
+      {shareTarget && (
+        <ShareCreateModal
+          assetId={shareTarget.id}
+          assetUrl={shareTarget.url}
+          onClose={() => setShareTarget(null)}
         />
       )}
     </>
