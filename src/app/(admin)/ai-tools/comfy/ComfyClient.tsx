@@ -324,6 +324,8 @@ export default function ComfyClient() {
       setPromptId(j.promptId);
       // 立刻订阅 SSE
       subscribeToProgress(j.promptId);
+      // v0.17-CF4: 提交即并行轮询 (不依赖 SSE onerror)
+      startResultPollFallback(j.promptId);
     } catch (e) {
       setRunError((e as Error).message);
       toast.error((e as Error).message);
@@ -435,37 +437,42 @@ export default function ComfyClient() {
 
   // 前端侧最后一道兜底：若 SSE 整个挂了，直接轮询 /result 直到拿到图。
   function startResultPollFallback(pid: string) {
+    // v0.17-CF4: 提交即并行轮询 — 不再仅在 SSE onerror 时启动
     if (pollFallbackRef.current) return;
     let tries = 0;
-    pollFallbackRef.current = setInterval(async () => {
+    const tick = async () => {
       tries += 1;
-      if (tries > 150) {
+      if (tries > 200 || appliedOutputsRef.current) {
         if (pollFallbackRef.current) clearInterval(pollFallbackRef.current);
         pollFallbackRef.current = null;
         return;
       }
       try {
-        const r = await fetch(`/api/comfyui/result/${encodeURIComponent(pid)}`, {
-          cache: 'no-store',
-        });
+        const r = await fetch(`/api/comfyui/result/${encodeURIComponent(pid)}`, { cache: 'no-store' });
         const j = await r.json();
-        if (j.ok && j.status === 'success' && j.outputs) {
+        if (j.ok && j.status === 'success' && j.outputs && Object.keys(j.outputs).length > 0) {
           const flat: typeof resultImages = [];
           for (const [nodeId, list] of Object.entries(j.outputs as Record<string, any[]>)) {
             if (Array.isArray(list)) for (const img of list) flat.push({ ...img, nodeId });
           }
-          if (flat.length) setResultImages(flat); appliedOutputsRef.current = true;
+          if (flat.length && !appliedOutputsRef.current) {
+            setResultImages(flat); appliedOutputsRef.current = true;
+          }
           if (pollFallbackRef.current) clearInterval(pollFallbackRef.current);
           pollFallbackRef.current = null;
+          disconnectStream();
         } else if (j.ok && j.status === 'error') {
           setRunError('生成失败（ComfyUI execution_error）');
           if (pollFallbackRef.current) clearInterval(pollFallbackRef.current);
           pollFallbackRef.current = null;
+          disconnectStream();
         }
       } catch {
         /* keep trying */
       }
-    }, 2000);
+    };
+    setTimeout(tick, 1500);
+    pollFallbackRef.current = setInterval(tick, 3000);
   }
 
   useEffect(() => {
