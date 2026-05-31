@@ -39,6 +39,11 @@ import {
   ChevronDown,
   ChevronRight,
   Wand2,
+  Share2,
+  Palette,
+  Wallet,
+  Stethoscope,
+  Fingerprint,
 } from 'lucide-react';
 import { NAV_ITEMS, NAV_GROUPS, HIDDEN_NAV_HREFS } from '@/lib/constants';
 import ThemeToggle from './ThemeToggle';
@@ -120,6 +125,16 @@ function iconFor(href: string) {
       return BookOpen;
     case '/settings':
       return SettingsIcon;
+    case '/style-genome':
+      return Fingerprint;
+    case '/agents/critic':
+      return Stethoscope;
+    case '/moodboard':
+      return Palette;
+    case '/income':
+      return Wallet;
+    case '/share':
+      return Share2;
     default:
       return Home;
   }
