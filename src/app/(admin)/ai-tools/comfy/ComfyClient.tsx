@@ -113,7 +113,7 @@ export default function ComfyClient() {
     history: ProgressEvent[];
   }>({ history: [] });
   const [resultImages, setResultImages] = useState<
-    { filename: string; subfolder: string; type: string; nodeId: string }[]
+    { filename: string; subfolder: string; type: string; nodeId: string; localUrl?: string; assetId?: string }[]
   >([]);
   const [runError, setRunError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -137,7 +137,7 @@ export default function ComfyClient() {
     model?: string;
     vars?: Record<string, unknown>;
     status: 'submitted' | 'running' | 'success' | 'error';
-    outputs?: Record<string, Array<{ filename?: string; subfolder?: string; type?: string }>>;
+    outputs?: Record<string, Array<{ filename?: string; subfolder?: string; type?: string; localUrl?: string; assetId?: string }>>;
     submittedAt?: string;
     completedAt?: string;
   }
@@ -196,6 +196,8 @@ export default function ComfyClient() {
           subfolder: img.subfolder || '',
           type: img.type || 'output',
           nodeId,
+          localUrl: (img as { localUrl?: string }).localUrl,
+          assetId: (img as { assetId?: string }).assetId,
         });
       }
     }
@@ -823,7 +825,9 @@ export default function ComfyClient() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {resultImages.map((img, i) => {
-                  const url = `/api/comfyui/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder)}&type=${encodeURIComponent(img.type)}`;
+                  // v0.17-CF6: localUrl 优先 (本地永久, 不依赖远程 cloudstudio); 无则回退 view 代理
+                  const url = (img as { localUrl?: string }).localUrl
+                    || `/api/comfyui/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder)}&type=${encodeURIComponent(img.type)}`;
                   return (
                     <a key={i} href={url} target="_blank" rel="noreferrer" className="block">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
