@@ -12,6 +12,7 @@ import { useToast } from '@/components/m/Toast';
 import { copyAll, buildXhsBundle, buildXianyuBundle } from '@/lib/clipboard';
 import PhonePreview from '@/components/PhonePreview';
 import TitleRefiner from '@/components/TitleRefiner';
+import { Sparkles, Copy, ClipboardCheck, ArrowRight, RefreshCw, Layers, Users, Palette, BookOpen, Smartphone } from 'lucide-react';
 
 type Platform = 'xiaohongshu' | 'xianyu';
 
@@ -38,6 +39,7 @@ export default function MContentClient() {
   const [form, setForm] = useState<FormState>(DEFAULT);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ platform: Platform; output: any } | null>(null);
+  const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('edit');
 
   function up<K extends keyof FormState>(k: K, v: FormState[K]) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -55,13 +57,7 @@ export default function MContentClient() {
       if (!res.ok || !j.ok) throw new Error(j.error || '生成失败');
       setResult({ platform: form.platform, output: j.content });
       toast.show('文案已生成', 'success');
-      // 滚动到结果
-      setTimeout(() => {
-        document.getElementById('m-content-result')?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start',
-        });
-      }, 50);
+      setActiveTab('preview');
     } catch (e) {
       toast.show((e as Error).message, 'error');
     } finally {
@@ -95,52 +91,103 @@ export default function MContentClient() {
   }
 
   return (
-    <div className="space-y-3">
-      {/* 输入 */}
-      <div className="rounded-xl bg-white border border-slate-200 p-3 space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="平台">
+    <div className="space-y-4 max-w-md mx-auto pb-10">
+      {/* 顶部标签切换 - 如果有结果，展示预览和编辑 Tab */}
+      {result && (
+        <div className="flex bg-slate-100 dark:bg-slate-900 rounded-lg p-1">
+          <button
+            onClick={() => setActiveTab('edit')}
+            className={`flex-1 py-2 text-xs font-semibold rounded-md transition-all duration-200 ${
+              activeTab === 'edit'
+                ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            ✏️ 修改配置
+          </button>
+          <button
+            onClick={() => setActiveTab('preview')}
+            className={`flex-1 py-2 text-xs font-semibold rounded-md transition-all duration-200 ${
+              activeTab === 'preview'
+                ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            👀 查看效果
+          </button>
+        </div>
+      )}
+
+      {/* 编辑表单面板 */}
+      <div className={`${activeTab === 'edit' ? 'block' : 'hidden'} space-y-4`}>
+        {/* 输入卡片 */}
+        <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 p-4 shadow-sm space-y-4">
+          
+          {/* 平台选择 - 大按钮设计 */}
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">选择发布平台</label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => up('platform', 'xiaohongshu')}
+                className={`py-3 px-4 rounded-xl border text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-200 ${
+                  form.platform === 'xiaohongshu'
+                    ? 'border-red-500 bg-red-50/50 text-red-600 dark:bg-red-950/20 dark:text-red-400'
+                    : 'border-slate-200 dark:border-slate-800 bg-transparent text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                <span className="text-base">📕</span> 小红书
+              </button>
+              <button
+                type="button"
+                onClick={() => up('platform', 'xianyu')}
+                className={`py-3 px-4 rounded-xl border text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-200 ${
+                  form.platform === 'xianyu'
+                    ? 'border-yellow-500 bg-yellow-50/50 text-yellow-700 dark:bg-yellow-950/20 dark:text-yellow-400'
+                    : 'border-slate-200 dark:border-slate-800 bg-transparent text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                <span className="text-base">💛</span> 闲鱼
+              </button>
+            </div>
+          </div>
+
+          <div className="h-px bg-slate-100 dark:bg-slate-800/80"></div>
+
+          {/* 类目 & 内容类型 */}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="制作类目" icon={<Layers className="w-3 h-3 text-slate-400" />}>
+              <select
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/60 rounded-xl px-3 py-2.5 text-xs font-medium focus:ring-2 focus:ring-brand-500 transition-all outline-none"
+                value={form.category}
+                onChange={(e) => up('category', e.target.value)}
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="策划类型" icon={<BookOpen className="w-3 h-3 text-slate-400" />}>
+              <select
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/60 rounded-xl px-3 py-2.5 text-xs font-medium focus:ring-2 focus:ring-brand-500 transition-all outline-none"
+                value={form.contentType}
+                onChange={(e) => up('contentType', e.target.value)}
+              >
+                {CONTENT_TYPES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          {/* 目标客户 */}
+          <Field label="目标受众人群" icon={<Users className="w-3 h-3 text-slate-400" />}>
             <select
-              className="m-input"
-              value={form.platform}
-              onChange={(e) => up('platform', e.target.value as Platform)}
-            >
-              {PLATFORMS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="类目">
-            <select
-              className="m-input"
-              value={form.category}
-              onChange={(e) => up('category', e.target.value)}
-            >
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="内容类型">
-            <select
-              className="m-input"
-              value={form.contentType}
-              onChange={(e) => up('contentType', e.target.value)}
-            >
-              {CONTENT_TYPES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="目标客户">
-            <select
-              className="m-input"
+              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/60 rounded-xl px-3 py-2.5 text-xs font-medium focus:ring-2 focus:ring-brand-500 transition-all outline-none"
               value={form.audience}
               onChange={(e) => up('audience', e.target.value)}
             >
@@ -151,61 +198,98 @@ export default function MContentClient() {
               ))}
             </select>
           </Field>
+
+          {/* 风格语气 */}
+          <Field label="文案风格调性" icon={<Palette className="w-3 h-3 text-slate-400" />}>
+            <div className="flex gap-2 flex-wrap mt-1">
+              {TONES.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => up('tone', t)}
+                  className={
+                    'px-3.5 py-2 rounded-xl text-xs font-semibold transition-all duration-200 ' +
+                    (form.tone === t
+                      ? 'bg-brand-600 text-white shadow-sm shadow-brand-500/20'
+                      : 'bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 border border-slate-200/50 dark:border-slate-800/60 hover:bg-slate-100')
+                  }
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </Field>
+
+          {/* 写作主题 */}
+          <Field label="写作主题主题描述（推荐）">
+            <input
+              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/60 rounded-xl px-3 py-3 text-xs font-medium placeholder-slate-400 focus:ring-2 focus:ring-brand-500 outline-none transition-all"
+              value={form.topic}
+              onChange={(e) => up('topic', e.target.value)}
+              placeholder="例：奶茶店新开业，推出高颜值手绘菜单升级活动..."
+            />
+          </Field>
+
+          {/* 生成提交按钮 */}
+          <button
+            onClick={submit}
+            disabled={loading}
+            className="w-full rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 text-white font-semibold py-3.5 flex items-center justify-center gap-2 hover:opacity-95 shadow-md shadow-brand-500/10 active:scale-[0.99] disabled:opacity-60 transition-all duration-200"
+          >
+            {loading ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-1 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                AI 正在构思文案...
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" />
+                <span>生成 AIGC 文案</span>
+              </>
+            )}
+          </button>
         </div>
-        <Field label="风格">
-          <div className="flex gap-2 flex-wrap">
-            {TONES.map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => up('tone', t)}
-                className={
-                  'px-3 py-1.5 rounded-full text-sm border ' +
-                  (form.tone === t
-                    ? 'bg-brand-600 text-white border-brand-600'
-                    : 'bg-white text-slate-700 border-slate-300')
-                }
-              >
-                {t}
-              </button>
-            ))}
+
+        {/* 正在生成中的呼吸态骨架屏 */}
+        {loading && (
+          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 p-5 shadow-sm space-y-4 animate-pulse">
+            <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-1/4"></div>
+            <div className="space-y-2">
+              <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded"></div>
+              <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-5/6"></div>
+              <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-2/3"></div>
+            </div>
+            <div className="h-28 bg-slate-100 dark:bg-slate-800/50 rounded-xl"></div>
           </div>
-        </Field>
-        <Field label="本次主题（可选）">
-          <input
-            className="m-input"
-            value={form.topic}
-            onChange={(e) => up('topic', e.target.value)}
-            placeholder="例：奶茶店开业菜单升级"
-          />
-        </Field>
-        <button
-          onClick={submit}
-          disabled={loading}
-          className="w-full rounded-lg bg-brand-600 text-white font-medium py-3 active:bg-brand-700 disabled:opacity-60"
-        >
-          {loading ? '生成中...' : '生成文案'}
-        </button>
+        )}
       </div>
 
-      {/* 结果 */}
+      {/* 结果和预览面板 */}
       {result && (
-        <div id="m-content-result" className="space-y-3">
-          <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 flex items-center justify-between gap-2">
-            <div className="text-sm text-emerald-700 font-medium">
-              ✨ 已生成
+        <div className={`${activeTab === 'preview' ? 'block' : 'hidden'} space-y-4`}>
+          {/* 一键复制浮窗 */}
+          <div className="rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-950/20 dark:to-teal-950/10 border border-emerald-150 dark:border-emerald-900/40 p-4 flex items-center justify-between gap-3 shadow-sm">
+            <div>
+              <div className="text-xs font-bold text-emerald-800 dark:text-emerald-400">✨ 写作生成已完成</div>
+              <div className="text-[10px] text-emerald-600 dark:text-emerald-500 mt-0.5">可以直接复制下方的一键发布包</div>
             </div>
             <button
               onClick={copyAllBundle}
-              className="rounded-md bg-emerald-600 text-white text-sm font-medium px-3 py-2 active:bg-emerald-700"
+              className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2.5 flex items-center gap-1.5 shadow-sm transition-all duration-200 active:scale-95"
             >
-              📋 一键复制完整发布包
+              <ClipboardCheck className="w-3.5 h-3.5" />
+              一键复制发布包
             </button>
           </div>
 
-          <div className="rounded-xl bg-white border border-slate-200 p-3">
-            <div className="text-xs text-slate-500 mb-3 text-center">
-              手机预览
+          {/* 手机预览容器 */}
+          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-800/80 p-4 shadow-sm">
+            <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 text-xs font-bold mb-3 justify-center">
+              <Smartphone className="w-3.5 h-3.5" />
+              模拟移动端渲染效果
             </div>
             {result.platform === 'xiaohongshu' ? (
               <PhonePreview
@@ -229,6 +313,8 @@ export default function MContentClient() {
             )}
           </div>
 
+          <div id="m-content-result" className="h-px"></div>
+
           {result.platform === 'xiaohongshu' ? (
             <XHSResult output={result.output} onCopy={copy} />
           ) : (
@@ -240,11 +326,20 @@ export default function MContentClient() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  icon,
+  children,
+}: {
+  label: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
-    <div>
-      <label className="block text-xs font-medium text-slate-600 mb-1">
-        {label}
+    <div className="space-y-1">
+      <label className="flex items-center gap-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+        {icon}
+        <span>{label}</span>
       </label>
       {children}
     </div>

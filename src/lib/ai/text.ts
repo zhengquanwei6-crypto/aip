@@ -34,7 +34,10 @@ export interface GenerateTextOptions {
 export interface GenerateTextResult {
   ok: boolean;
   content: string;
+  /** 真正使用的模型名（cfg.model）。 */
   model?: string;
+  /** content 来自 reasoning_content 字段（reasoning model 兼容路径）。 */
+  usedReasoning?: boolean;
   error?: string;
 }
 
@@ -175,10 +178,34 @@ export async function generateText(
       };
     }
     const data: any = await res.json();
-    const content: string =
-      data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text ?? '';
+    // 大多数 OpenAI 兼容 API 把答案放 message.content。但 reasoning models
+    // (QwQ / R1 / qwen3.5-397b-a17b 系) 会把 content=null + reasoning_content=<答案>
+    // 这种情况下我们要兜底拿 reasoning_content，但同时记一条警告说这条 key
+    // 不是普通 chat model；外部代码（如 extractJSON）能从 reasoning trace
+    // 里提到 JSON 也算它通过。
+    const choice = data?.choices?.[0];
+    const msg = choice?.message ?? {};
+    let content: string =
+      msg.content ?? choice?.text ?? '';
+    let usedReasoning = false;
+    if ((!content || content.trim() === '') && typeof msg.reasoning_content === 'string') {
+      content = msg.reasoning_content;
+      usedReasoning = true;
+    }
+    if (!content || content.trim() === '') {
+      // content 真的空 — 记录一次失败让 key health 计数变差，最终自动停用
+      const errMsg =
+        `LLM 返回空内容（model=${cfg.model}，可能是 reasoning model 但 reasoning_content 也空）。`;
+      await recordLLMResult(cfg._activeKey, false, errMsg);
+      return {
+        ok: false,
+        content: '',
+        error: errMsg,
+        model: cfg.model,
+      };
+    }
     await recordLLMResult(cfg._activeKey, true);
-    return { ok: true, content, model: cfg.model };
+    return { ok: true, content, model: cfg.model, usedReasoning };
   } catch (err) {
     const errMsg = `LLM 请求异常: ${(err as Error).message}` + summary(cfg);
     await recordLLMResult(cfg._activeKey, false, errMsg);

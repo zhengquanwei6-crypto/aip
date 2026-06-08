@@ -1,23 +1,15 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { History as HistoryIcon, Layers, Image as ImageIcon } from 'lucide-react';
-import clsx from 'clsx';
+import { History as HistoryIcon, Image as ImageIcon, Layers } from 'lucide-react';
 
-/**
- * v0.11 B5 · /workspace tabs 容器（合并 /history + /assets）
- *
- * - tab=history (默认) 渲染 HistoryClient
- * - tab=assets         渲染 AssetsClient
- *
- * 同 /clients 模式：两面板同时挂载，切换走 hidden/show，保留各自 useState（搜索框、筛选）。
- */
 export type WorkspaceTab = 'history' | 'assets' | 'imgbed';
 
-const TABS: { value: WorkspaceTab; label: string; icon: typeof HistoryIcon }[] = [
-  { value: 'history', label: '历史输出', icon: HistoryIcon },
-  { value: 'assets', label: '素材库', icon: Layers },
-  { value: 'imgbed', label: '图床', icon: ImageIcon },
+const TABS: { value: WorkspaceTab; label: string; desc: string; icon: typeof HistoryIcon }[] = [
+  { value: 'history', label: '历史输出', desc: '生成记录与完整输入输出', icon: HistoryIcon },
+  { value: 'assets', label: '资产库', desc: '图片、收藏、分享与任务', icon: Layers },
+  { value: 'imgbed', label: '图床', desc: '上传与短链分发', icon: ImageIcon },
 ];
 
 export default function WorkspaceTabsShell({
@@ -27,51 +19,67 @@ export default function WorkspaceTabsShell({
   imgbed,
 }: {
   active: WorkspaceTab;
-  history: React.ReactNode;
-  assets: React.ReactNode;
-  imgbed: React.ReactNode;
+  history: ReactNode;
+  assets: ReactNode;
+  imgbed: ReactNode;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   function go(tab: WorkspaceTab) {
-    const sp = new URLSearchParams(searchParams?.toString() ?? '');
-    if (tab === 'history') sp.delete('tab');
-    else sp.set('tab', tab);
-    const qs = sp.toString();
-    router.replace('/workspace' + (qs ? '?' + qs : ''));
+    const params = new URLSearchParams(searchParams?.toString() ?? '');
+    if (tab === 'history') params.delete('tab');
+    else params.set('tab', tab);
+    const query = params.toString();
+    router.replace(`/workspace${query ? `?${query}` : ''}`);
   }
 
   return (
-    <div className="space-y-3">
-      <header className="page-hero">
-        <h1>工作区</h1>
-        <p>AI 输出历史 + 上传素材，统一管理。</p>
+    <div className="page-shell">
+      <header className="command-panel p-5 sm:p-6">
+        <div className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs font-bold text-cyan-200">
+          <span className="pulse-dot" aria-hidden />
+          Asset Operations
+        </div>
+        <h1 className="mt-4 text-3xl font-black leading-tight text-white sm:text-4xl">工作区聚合</h1>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
+          历史输出、资产库和图床短链集中在同一个资产作战台里，方便从生成结果继续进入复用、分享和发布任务。
+        </p>
       </header>
 
-      <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-800 -mt-1">
-        {TABS.map((t) => {
-          const Icon = t.icon;
-          const isActive = active === t.value;
+      <nav className="grid gap-2 md:grid-cols-3" aria-label="工作区标签">
+        {TABS.map((tab) => {
+          const Icon = tab.icon;
+          const selected = active === tab.value;
           return (
             <button
-              key={t.value}
+              key={tab.value}
               type="button"
-              onClick={() => go(t.value)}
-              aria-pressed={isActive}
-              className={clsx(
-                'inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 text-sm border-b-2 -mb-px transition-colors',
-                isActive
-                  ? 'border-brand-600 text-brand-700 font-medium dark:text-brand-300'
-                  : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-200',
-              )}
+              onClick={() => go(tab.value)}
+              aria-pressed={selected}
+              className={
+                'command-glass detail-lift flex items-start gap-3 p-3 text-left ' +
+                (selected ? 'border-cyan-300 ring-2 ring-cyan-400/25 dark:border-cyan-800' : '')
+              }
             >
-              <Icon size={14} aria-hidden="true" />
-              {t.label}
+              <span
+                className={
+                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ' +
+                  (selected
+                    ? 'bg-cyan-400 text-slate-950'
+                    : 'bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-300')
+                }
+              >
+                <Icon className="h-4 w-4" />
+              </span>
+              <span className="min-w-0">
+                <span className="block font-medium text-slate-950 dark:text-slate-50">{tab.label}</span>
+                <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{tab.desc}</span>
+              </span>
             </button>
           );
         })}
-      </div>
+      </nav>
 
       <div className={active === 'history' ? '' : 'hidden'}>{history}</div>
       <div className={active === 'assets' ? '' : 'hidden'}>{assets}</div>

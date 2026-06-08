@@ -54,6 +54,8 @@ export async function POST(req: NextRequest, ctx: { params: { shareId: string } 
       totalSeconds: link.totalSeconds,
       consumedSeconds: link.consumedSeconds,
       disableDownload: link.disableDownload,
+      clientLabel: link.clientLabel ?? null,
+      shareId: link.shareId,
       remainingViews: link.maxViews !== null ? Math.max(0, link.maxViews - link.viewCount) : null,
       willExpireAfter: afterReason !== "ok",
     },

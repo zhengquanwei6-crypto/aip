@@ -39,7 +39,18 @@ export default function ToolsTabsShell({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-800 -mt-1">
+      <header className="command-panel p-5 sm:p-6">
+        <div className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs font-bold text-cyan-200">
+          <span className="pulse-dot" aria-hidden />
+          Utility Deck
+        </div>
+        <h1 className="mt-4 text-3xl font-black leading-tight text-white sm:text-4xl">工具作战台</h1>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
+          周报告和报价计算统一收纳，面向复盘、报价和经营动作。
+        </p>
+      </header>
+
+      <div className="command-toolbar flex items-center gap-2 overflow-x-auto">
         {TABS.map((t) => {
           const Icon = t.icon;
           const isActive = active === t.value;
@@ -50,10 +61,10 @@ export default function ToolsTabsShell({
               onClick={() => go(t.value)}
               aria-pressed={isActive}
               className={clsx(
-                'inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 text-sm border-b-2 -mb-px transition-colors',
+                'inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors',
                 isActive
-                  ? 'border-brand-600 text-brand-700 font-medium dark:text-brand-300'
-                  : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-200',
+                  ? 'border-slate-950 bg-slate-950 text-white dark:border-white dark:bg-white dark:text-slate-950'
+                  : 'border-slate-200 bg-white/70 text-slate-600 hover:border-cyan-300 hover:text-cyan-700 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-300 dark:hover:border-cyan-800',
               )}
             >
               <Icon size={14} aria-hidden="true" />

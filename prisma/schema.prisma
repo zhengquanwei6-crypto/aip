@@ -255,3 +255,32 @@ model ApiKey {
 
   @@index([provider, active, priority])
 }
+
+
+// ============= v0.18-AUTH 用户账户 =============
+// 单租户工作台：所有业务数据归属管理员 admin。注册账户能登录查看，
+// 但 workspace 共享 admin 的同一份数据。
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  passHash  String
+  role      String   @default("user") // admin / user
+  active    Boolean  @default(true)
+  lastLogin DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+
+// ============= v0.18-DISCUSS 讨论工具（平台原生聊天室） =============
+// 单一公共讨论频道。发送者 = 平台登录用户名（不另设昵称）。
+// 自增 Int id 便于前端按 afterId 做增量轮询。
+model DiscussMessage {
+  id        Int      @id @default(autoincrement())
+  username  String
+  role      String   @default("user")
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

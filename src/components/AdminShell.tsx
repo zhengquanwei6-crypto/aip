@@ -48,6 +48,7 @@ import {
 import { NAV_ITEMS, NAV_GROUPS, HIDDEN_NAV_HREFS } from '@/lib/constants';
 import ThemeToggle from './ThemeToggle';
 import Breadcrumbs from './Breadcrumbs';
+import { toast } from '@/lib/toast';
 
 const SIDEBAR_COLLAPSED_KEY = 'sidebar:collapsed';
 const NAV_GROUP_COLLAPSED_KEY = 'nav-collapsed'; // 完整 key: nav-collapsed-<slug>
@@ -177,8 +178,137 @@ export default function AdminShell({
     });
   }
 
+  const [unreadCount, setUnreadCount] = useState(0);
+
   useEffect(() => {
     setOpen(false);
+  }, [pathname]);
+
+  // 请求通知权限
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
+    }
+  }, []);
+
+  // 当路径变为讨论室时，清空未读数
+  useEffect(() => {
+    if (pathname === '/discuss') {
+      setUnreadCount(0);
+    }
+  }, [pathname]);
+
+  // 控制浏览器标签页标题高亮闪烁及角标
+  useEffect(() => {
+    const originalText = currentNav?.label ?? '果冻的AI · 智能体工作台';
+    if (unreadCount === 0) {
+      if (typeof window !== 'undefined') {
+        document.title = originalText;
+        if ('clearAppBadge' in navigator) {
+          (navigator as any).clearAppBadge().catch(() => {});
+        }
+      }
+      return;
+    }
+
+    let step = 0;
+    const interval = setInterval(() => {
+      document.title = step % 2 === 0
+        ? `( ${unreadCount} 条新消息 ) 💬 ${originalText}`
+        : `( ● 新消息 ) 💬 ${originalText}`;
+      step++;
+    }, 1000);
+
+    if ('setAppBadge' in navigator) {
+      (navigator as any).setAppBadge(unreadCount).catch(() => {});
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (typeof window !== 'undefined') {
+        document.title = originalText;
+      }
+    };
+  }, [unreadCount, currentNav, pathname]);
+
+  // v0.18-NOTIFICATION · 全局新消息与通知监听
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let lastSeenId = 0;
+    let initialized = false;
+
+    const checkMessages = async () => {
+      try {
+        const res = await fetch('/api/discuss/messages?limit=5', { cache: 'no-store' });
+        const j = await res.json();
+        if (j.ok && Array.isArray(j.messages) && j.messages.length > 0) {
+          const latestMsgs = j.messages;
+          const maxId = Math.max(...latestMsgs.map((m: any) => m.id));
+
+          if (!initialized) {
+            // 首次加载：仅记录当前最新消息 ID，防止老消息重复弹窗
+            lastSeenId = maxId;
+            initialized = true;
+            return;
+          }
+
+          // 寻找大于上一次记录的 ID 的新消息
+          const newMsgs = latestMsgs.filter((m: any) => m.id > lastSeenId);
+          if (newMsgs.length > 0) {
+            lastSeenId = maxId;
+
+            // 仅在非讨论页时弹窗通知与高亮
+            if (pathname !== '/discuss') {
+              setUnreadCount((c) => c + newMsgs.length);
+
+              newMsgs.forEach((msg: any) => {
+                // 播放超轻量合成音效
+                try {
+                  const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+                  const osc = ctx.createOscillator();
+                  const gain = ctx.createGain();
+                  osc.connect(gain);
+                  gain.connect(ctx.destination);
+                  osc.type = 'sine';
+                  osc.frequency.setValueAtTime(587.33, ctx.currentTime); // 柔和的 D5 音
+                  gain.gain.setValueAtTime(0.06, ctx.currentTime);
+                  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+                  osc.start();
+                  osc.stop(ctx.currentTime + 0.25);
+                } catch {
+                  /* 忽略音频受阻报错 */
+                }
+
+                // 发送系统通知（触发 Windows 任务栏闪烁高亮与系统弹窗通知）
+                if ('Notification' in window && Notification.permission === 'granted') {
+                  try {
+                    new Notification('💬 团队讨论室新消息', {
+                      body: `${msg.username}：${msg.content.slice(0, 40)}${msg.content.length > 40 ? '...' : ''}`,
+                    });
+                  } catch {
+                    /* ignore */
+                  }
+                }
+
+                // 全局 Toast 提示
+                toast.info(`💬 ${msg.username}：${msg.content.slice(0, 25)}${msg.content.length > 25 ? '...' : ''}`, 5000);
+              });
+            }
+          }
+        }
+      } catch {
+        /* 轮询静默失败，下次重试 */
+      }
+    };
+
+    // 4 秒轮询一次新消息
+    const timer = setInterval(checkMessages, 4000);
+    checkMessages(); // 立即加载首次
+
+    return () => clearInterval(timer);
   }, [pathname]);
 
   useEffect(() => {

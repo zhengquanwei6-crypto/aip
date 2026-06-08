@@ -9,7 +9,6 @@ export interface BulkActionDef {
   icon?: React.ReactNode;
   destructive?: boolean;
   confirmText?: string;
-  /** 触发时由父组件包装好的 handler */
   onClick: () => void;
   disabled?: boolean;
 }
@@ -24,37 +23,39 @@ export default function BulkActionBar({
   actions: BulkActionDef[];
 }) {
   if (count <= 0) return null;
+
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 animate-slide-up pointer-events-none">
-      <div className="pointer-events-auto bg-slate-900 dark:bg-slate-800 text-white shadow-xl rounded-full pl-4 pr-2 py-2 flex items-center gap-3 border border-slate-700">
-        <span className="text-sm">
-          已选 <span className="font-semibold">{count}</span> 项
+    <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 animate-slide-up px-3 pointer-events-none">
+      <div className="pointer-events-auto flex max-w-[calc(100vw-24px)] items-center gap-3 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white shadow-2xl shadow-slate-950/30">
+        <span className="whitespace-nowrap text-sm">
+          已选择 <span className="font-semibold tabular-nums">{count}</span> 项
         </span>
         <button
+          type="button"
           onClick={onClear}
-          className="text-xs text-slate-300 hover:text-white px-2 py-1 inline-flex items-center gap-1 rounded hover:bg-slate-700 transition-colors"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
           aria-label="清除选择"
         >
           <X size={14} />
           清除
         </button>
-        <div className="w-px h-6 bg-slate-600 mx-1" aria-hidden />
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {actions.map((a) => (
+        <div className="h-6 w-px bg-slate-700" aria-hidden />
+        <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto">
+          {actions.map((action) => (
             <button
-              key={a.key}
+              key={action.key}
               type="button"
-              disabled={a.disabled}
-              onClick={a.onClick}
+              disabled={action.disabled}
+              onClick={action.onClick}
               className={
-                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ' +
-                (a.destructive
-                  ? 'bg-red-600 hover:bg-red-500 text-white'
-                  : 'bg-white/10 hover:bg-white/20 text-white')
+                'inline-flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ' +
+                (action.destructive
+                  ? 'bg-red-600 text-white hover:bg-red-500'
+                  : 'bg-white/10 text-white hover:bg-white/20')
               }
             >
-              {a.icon}
-              {a.label}
+              {action.icon}
+              {action.label}
             </button>
           ))}
         </div>

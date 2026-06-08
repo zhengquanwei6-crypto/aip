@@ -243,8 +243,8 @@ export default function PromptsClient({
 
   return (
     <div className="space-y-4">
-      <div className="card">
-        <div className="card-body">
+      <div className="command-glass">
+        <div className="p-4 sm:p-5">
           <h2 className="font-semibold text-slate-800 dark:text-slate-100 mb-1">
             Prompt 模板库
           </h2>
@@ -280,8 +280,8 @@ export default function PromptsClient({
         {(filtered) => (
           <div className="space-y-3">
             {filtered.map((r) => (
-              <div key={r.key} className="card">
-                <div className="card-body">
+              <div key={r.key} className="command-glass detail-lift">
+                <div className="p-4 sm:p-5">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -302,7 +302,7 @@ export default function PromptsClient({
                           {r.description}
                         </div>
                       )}
-                      <div className="mt-2 text-xs text-slate-600 dark:text-slate-300 line-clamp-3 bg-slate-50 dark:bg-slate-800 rounded p-2 whitespace-pre-wrap font-mono">
+                      <div className="mt-2 line-clamp-3 rounded-lg border border-slate-200 bg-slate-50 p-2 font-mono text-xs whitespace-pre-wrap text-slate-600 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-300">
                         {r.system}
                       </div>
                     </div>
@@ -319,7 +319,7 @@ export default function PromptsClient({
                         <button
                           type="button"
                           onClick={() => restoreDefault(r.key)}
-                          className="text-xs px-2.5 py-1 rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1"
+                          className="btn-secondary h-8 px-3 text-xs inline-flex items-center gap-1"
                           title="恢复为默认或删除自定义"
                         >
                           <RotateCcw size={12} />
@@ -338,7 +338,7 @@ export default function PromptsClient({
       {/* 编辑弹窗 */}
       {editing && (
         <div
-          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
           onClick={() => {
             setEditing(null);
             setCreating(false);
@@ -347,7 +347,7 @@ export default function PromptsClient({
         >
           <div
             className={
-              'bg-white dark:bg-slate-900 rounded-lg p-5 space-y-3 max-h-[90vh] overflow-y-auto w-full ' +
+              'command-glass max-h-[90vh] w-full space-y-3 overflow-y-auto p-5 ' +
               (diffOpen ? 'max-w-5xl' : 'max-w-2xl')
             }
             onClick={(e) => e.stopPropagation()}
@@ -367,7 +367,7 @@ export default function PromptsClient({
                     }
                   }}
                   disabled={diffLoading}
-                  className="text-xs px-2.5 py-1 rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1 disabled:opacity-50"
+                  className="btn-secondary h-8 px-3 text-xs inline-flex items-center gap-1 disabled:opacity-50"
                   title="对比当前内容与默认模板"
                 >
                   <GitCompare size={12} />
@@ -384,7 +384,7 @@ export default function PromptsClient({
               <div>
                 <label className="label">key（^[a-z0-9:_-]+$）</label>
                 <input
-                  className="input"
+                  className="input command-input"
                   value={editing.key}
                   onChange={(e) =>
                     setEditing({ ...editing, key: e.target.value })
@@ -405,7 +405,7 @@ export default function PromptsClient({
             <div>
               <label className="label">name 名称</label>
               <input
-                className="input"
+                className="input command-input"
                 value={editing.name}
                 onChange={(e) =>
                   setEditing({ ...editing, name: e.target.value })
@@ -416,7 +416,7 @@ export default function PromptsClient({
             <div>
               <label className="label">description 简介</label>
               <input
-                className="input"
+                className="input command-input"
                 value={editing.description}
                 onChange={(e) =>
                   setEditing({ ...editing, description: e.target.value })
@@ -427,7 +427,7 @@ export default function PromptsClient({
             <div>
               <label className="label">system 提示词</label>
               <textarea
-                className="input font-mono text-xs min-h-[140px]"
+                className="input command-input font-mono text-xs min-h-[140px]"
                 value={editing.system}
                 onChange={(e) =>
                   setEditing({ ...editing, system: e.target.value })
@@ -438,7 +438,7 @@ export default function PromptsClient({
             <div>
               <label className="label">user 模板（可用 {`{{var}}`} 占位）</label>
               <textarea
-                className="input font-mono text-xs min-h-[100px]"
+                className="input command-input font-mono text-xs min-h-[100px]"
                 value={editing.user}
                 onChange={(e) =>
                   setEditing({ ...editing, user: e.target.value })
@@ -555,7 +555,7 @@ export default function PromptsClient({
                 {editing.vars.map((v, i) => (
                   <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2">
                     <input
-                      className="input text-xs"
+                      className="input command-input text-xs"
                       placeholder="key"
                       value={v.key}
                       onChange={(e) => {
@@ -565,7 +565,7 @@ export default function PromptsClient({
                       }}
                     />
                     <input
-                      className="input text-xs"
+                      className="input command-input text-xs"
                       placeholder="label"
                       value={v.label}
                       onChange={(e) => {
@@ -575,7 +575,7 @@ export default function PromptsClient({
                       }}
                     />
                     <input
-                      className="input text-xs"
+                      className="input command-input text-xs"
                       placeholder="example"
                       value={v.example ?? ''}
                       onChange={(e) => {
@@ -606,7 +606,7 @@ export default function PromptsClient({
                       vars: [...editing.vars, { key: '', label: '', example: '' }],
                     })
                   }
-                  className="text-xs text-brand-600 hover:underline inline-flex items-center gap-1"
+                  className="btn-secondary h-8 px-3 text-xs inline-flex items-center gap-1"
                 >
                   <Plus size={12} />
                   添加变量

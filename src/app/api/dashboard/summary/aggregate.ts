@@ -27,6 +27,7 @@ import {
   type MarketSnapshot,
   type PlatformInfo,
 } from '@/lib/market/types';
+import { checkExpiry, listShares } from '@/lib/share/store';
 
 export interface DashboardSummaryToday {
   /** YYYY-MM-DD（Asia/Shanghai） */
@@ -64,6 +65,50 @@ export interface RecentAIOutputItem {
   platform: string | null;
   summary: string;
   createdAt: string;
+}
+
+export interface RecentAssetItem {
+  id: string;
+  type: string;
+  source: string;
+  platform: string | null;
+  category: string | null;
+  url: string;
+  prompt: string | null;
+  fileName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShareStatsItem {
+  shareId: string;
+  assetId: string;
+  assetUrl: string;
+  status: string;
+  viewCount: number;
+  createdAt: string;
+  lastViewedAt: string | null;
+}
+
+export interface DashboardSummaryShareStats {
+  total: number;
+  active: number;
+  expired: number;
+  revoked: number;
+  viewsLast24h: number;
+  recent: ShareStatsItem[];
+}
+
+export interface ClientFollowupItem {
+  id: string;
+  nickname: string;
+  platform: string;
+  status: string;
+  category: string | null;
+  totalOrders: number;
+  totalRevenue: number;
+  lastContact: string | null;
+  updatedAt: string;
 }
 
 export interface DashboardSummarySystem {
@@ -106,6 +151,12 @@ export interface DashboardSummary {
   kpi: DashboardSummaryKpi;
   todayTasks: TodayTaskItem[];
   recentAIOutputs: RecentAIOutputItem[];
+  /** v0.19 LOOP：给首页 / Dashboard 共用的创作到发布闭环数据 */
+  recentOutputs: RecentAIOutputItem[];
+  recentAssets: RecentAssetItem[];
+  pendingTasks: TodayTaskItem[];
+  shareStats: DashboardSummaryShareStats;
+  clientFollowups: ClientFollowupItem[];
   system: DashboardSummarySystem;
   /** v0.11 B10：三平台市场趋势（介绍 + 最近一条 snapshot） */
   marketTrends: DashboardSummaryMarketTrends;
@@ -357,6 +408,53 @@ async function buildMarketTrends(): Promise<DashboardSummaryMarketTrends> {
   return out;
 }
 
+async function buildShareStats(): Promise<DashboardSummaryShareStats> {
+  const links = await listShares().catch(() => []);
+  const since = Date.now() - 24 * 60 * 60 * 1000;
+  let active = 0;
+  let expired = 0;
+  let revoked = 0;
+  let viewsLast24h = 0;
+
+  const recent: ShareStatsItem[] = links.slice(0, 6).map((link) => {
+    const status = checkExpiry(link);
+    if (status === 'ok') active++;
+    else expired++;
+    if (link.revoked) revoked++;
+    for (const v of link.viewLog ?? []) {
+      if (new Date(v.ts).getTime() >= since) viewsLast24h++;
+    }
+    return {
+      shareId: link.shareId,
+      assetId: link.assetId,
+      assetUrl: link.assetUrl,
+      status,
+      viewCount: link.viewCount,
+      createdAt: link.createdAt,
+      lastViewedAt: link.lastViewedAt,
+    };
+  });
+
+  for (const link of links.slice(6)) {
+    const status = checkExpiry(link);
+    if (status === 'ok') active++;
+    else expired++;
+    if (link.revoked) revoked++;
+    for (const v of link.viewLog ?? []) {
+      if (new Date(v.ts).getTime() >= since) viewsLast24h++;
+    }
+  }
+
+  return {
+    total: links.length,
+    active,
+    expired,
+    revoked,
+    viewsLast24h,
+    recent,
+  };
+}
+
 export async function buildDashboardSummary(): Promise<DashboardSummary> {
   const todayInfo = getShanghaiTodayInfo();
 
@@ -370,13 +468,17 @@ export async function buildDashboardSummary(): Promise<DashboardSummary> {
     .length;
 
   const [
-    pendingTasks,
+    pendingTaskCount,
     generatedTasks,
     publishedTasks,
     aioutputs,
     assets,
     clients,
     recentAioRowsRaw,
+    recentAssetRows,
+    pendingTaskRows,
+    clientRows,
+    shareStats,
     apiKeyPoolLlm,
     apiKeyPoolImage,
     publishDirectorStats,
@@ -396,6 +498,17 @@ export async function buildDashboardSummary(): Promise<DashboardSummary> {
      * 当前 DB 里 suggestion 占 12 / 93 ≈ 13%，take 12 缓冲足够。
      */
     prisma.aIOutput.findMany({ orderBy: { createdAt: 'desc' }, take: 12 }),
+    prisma.asset.findMany({ orderBy: [{ updatedAt: 'desc' }], take: 10 }),
+    prisma.task.findMany({
+      where: { status: 'pending' },
+      orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }],
+      take: 6,
+    }),
+    prisma.client.findMany({
+      orderBy: [{ updatedAt: 'desc' }],
+      take: 5,
+    }),
+    buildShareStats(),
     summarizePool('llm'),
     summarizePool('image'),
     readPublishDirectorStats(),
@@ -438,6 +551,41 @@ export async function buildDashboardSummary(): Promise<DashboardSummary> {
       };
     });
 
+  const recentAssets: RecentAssetItem[] = recentAssetRows.map((a) => ({
+    id: a.id,
+    type: a.type,
+    source: a.source,
+    platform: a.platform,
+    category: a.category,
+    url: a.url,
+    prompt: a.prompt,
+    fileName: a.fileName,
+    createdAt: a.createdAt.toISOString(),
+    updatedAt: a.updatedAt.toISOString(),
+  }));
+
+  const pendingTasks: TodayTaskItem[] = pendingTaskRows.map((t) => ({
+    id: t.id,
+    title: t.title,
+    platform: t.platform,
+    status: t.status,
+    publishTime: t.publishTime,
+    contentType: t.contentType,
+    category: t.category,
+  }));
+
+  const clientFollowups: ClientFollowupItem[] = clientRows.map((c) => ({
+    id: c.id,
+    nickname: c.nickname,
+    platform: c.platform,
+    status: c.status,
+    category: c.category,
+    totalOrders: c.totalOrders,
+    totalRevenue: c.totalRevenue,
+    lastContact: c.lastContact ? c.lastContact.toISOString() : null,
+    updatedAt: c.updatedAt.toISOString(),
+  }));
+
   return {
     ok: true,
     today: {
@@ -447,7 +595,7 @@ export async function buildDashboardSummary(): Promise<DashboardSummary> {
       pendingTasksCount: todayPendingCount,
     },
     kpi: {
-      pendingTasks,
+      pendingTasks: pendingTaskCount,
       generatedTasks,
       publishedTasks,
       aioutputs,
@@ -456,6 +604,11 @@ export async function buildDashboardSummary(): Promise<DashboardSummary> {
     },
     todayTasks,
     recentAIOutputs,
+    recentOutputs: recentAIOutputs,
+    recentAssets,
+    pendingTasks,
+    shareStats,
+    clientFollowups,
     system: {
       uptimeMs: Math.round(process.uptime() * 1000),
       version: APP_VERSION,

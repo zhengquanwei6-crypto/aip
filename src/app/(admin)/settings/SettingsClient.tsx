@@ -1,7 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
+import {
+  Activity,
+  ArrowUp,
+  CheckCircle2,
+  CircleAlert,
+  Database,
+  KeyRound,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Save,
+  Settings2,
+  SlidersHorizontal,
+  Trash2,
+  X,
+} from 'lucide-react';
+
 import { toast } from '@/lib/toast';
 import PlatformEditModal, {
   type PlatformInfoLite,
@@ -25,19 +43,17 @@ interface AdapterMeta {
   enabled: boolean;
 }
 
-/** 脱敏后的 key 字段元信息（v0.8 Batch 1 / B1.7） */
 interface SecretMeta {
   isSet: boolean;
   length: number;
 }
 
-/** v0.11 B1 · API Key 池条目（GET 已脱敏，apiKey:'' + isSet/length）*/
 interface PoolKey {
   id: string;
   provider: 'llm' | 'image';
   label: string;
   baseUrl: string;
-  apiKey: string;       // 永远 ''
+  apiKey: string;
   isSet: boolean;
   length: number;
   model: string;
@@ -58,12 +74,30 @@ interface DraftKey {
   provider: 'llm' | 'image';
   label: string;
   baseUrl: string;
-  apiKey: string;       // 用户编辑时输入新值；编辑模式下空字符串=保留原值
+  apiKey: string;
   model: string;
   active: boolean;
   priority: number;
   notes: string;
 }
+
+type VectorMaskedSecret = { isSet: boolean; preview: string; length: number };
+type VectorConfig = {
+  VECTOR_ENABLED: string;
+  VECTOR_ZILLIZ_ENDPOINT: string;
+  VECTOR_ZILLIZ_TOKEN: VectorMaskedSecret;
+  EMBEDDING_BASE_URL: string;
+  EMBEDDING_API_KEY: VectorMaskedSecret;
+  EMBEDDING_MODEL: string;
+};
+
+type VectorStatus = {
+  enabled: boolean;
+  endpoint: string;
+  history: { exists: boolean; rows: number };
+  assets: { exists: boolean; rows: number };
+  error?: string;
+};
 
 const EMPTY_DRAFT: DraftKey = {
   provider: 'llm',
@@ -76,17 +110,11 @@ const EMPTY_DRAFT: DraftKey = {
   notes: '',
 };
 
-// v0.11 B15.2 · IMAGE 池占位备用 key 标签关键字（用于 UI 提示判定）
-const B15_2_PLACEHOLDER_LABEL_HINT = 'v0.11 B15.2 占位';
-const B15_2_PLACEHOLDER_API_KEY = 'PLACEHOLDER_REPLACE_BY_USER';
-
 export default function SettingsClient({
   initial,
   hasEnvLLMKey,
   hasEnvImageKey,
   adapters,
-  // 服务端从 GET /api/settings 读取的 KEY 字段元信息
-  // 形态：{ LLM_API_KEY: { isSet, length }, IMAGE_API_KEY: { isSet, length } }
   secretMeta = {},
 }: {
   initial: Form;
@@ -96,32 +124,26 @@ export default function SettingsClient({
   secretMeta?: Record<string, SecretMeta>;
 }) {
   const [form, setForm] = useState<Form>(initial);
-  // 用户是否进入"编辑该 KEY"模式（点击进入后才会发送新值）
   const [editingKey, setEditingKey] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState<'llm' | 'image' | null>(null);
   const [seeding, setSeeding] = useState(false);
-  const [adapterList, setAdapterList] = useState(adapters);
+  const [adapterList] = useState(adapters);
 
-  // v0.14-z63: Zilliz / Embedding 配置
-  type VectorMaskedSecret = { isSet: boolean; preview: string; length: number };
-  type VectorConfig = {
-    VECTOR_ENABLED: string;
-    VECTOR_ZILLIZ_ENDPOINT: string;
-    VECTOR_ZILLIZ_TOKEN: VectorMaskedSecret;
-    EMBEDDING_BASE_URL: string;
-    EMBEDDING_API_KEY: VectorMaskedSecret;
-    EMBEDDING_MODEL: string;
-  };
+  const [pool, setPool] = useState<PoolKey[]>([]);
+  const [poolLoading, setPoolLoading] = useState(false);
+  const [poolErr, setPoolErr] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [draft, setDraft] = useState<DraftKey>(EMPTY_DRAFT);
+  const [draftEditMode, setDraftEditMode] = useState(false);
+  const [draftSaving, setDraftSaving] = useState(false);
+  const [keyBusy, setKeyBusy] = useState<string | null>(null);
+
   const [vectorConfig, setVectorConfig] = useState<VectorConfig | null>(null);
-  const [lastVectorRefresh, setLastVectorRefresh] = useState<number | null>(null);
-    const [vectorStatus, setVectorStatus] = useState<{
-    enabled: boolean;
-    endpoint: string;
-    history: { exists: boolean; rows: number };
-    assets: { exists: boolean; rows: number };
-    error?: string;
-  } | null>(null);
+  const [vectorStatus, setVectorStatus] = useState<VectorStatus | null>(null);
   const [vectorEditing, setVectorEditing] = useState(false);
+  const [vectorBusy, setVectorBusy] = useState<'save' | 'embed-test' | 'backfill' | null>(null);
+  const [embedTestResult, setEmbedTestResult] = useState('');
   const [vectorDraft, setVectorDraft] = useState({
     VECTOR_ENABLED: '0',
     VECTOR_ZILLIZ_ENDPOINT: '',
@@ -130,35 +152,22 @@ export default function SettingsClient({
     EMBEDDING_API_KEY: '',
     EMBEDDING_MODEL: '',
   });
-  const [vectorBusy, setVectorBusy] = useState<'save' | 'embed-test' | 'backfill' | null>(null);
-  const [embedTestResult, setEmbedTestResult] = useState<string>('');
-  const [testing, setTesting] = useState<'llm' | 'image' | null>(null);
 
-  // === v0.11 B1 · API Key 池 ===
-  const [pool, setPool] = useState<PoolKey[]>([]);
-
-  // v0.14-z41: 余额自动加载
-  const [balanceMap, setBalanceMap] = useState<Record<string, {
-    status: 'loading' | 'ok' | 'error';
-    remainingUsd?: number;
-    totalUsd?: number;
-    plan?: string;
-    error?: string;
-    fetchedAt?: number;
-  }>>({});
-  const [poolLoading, setPoolLoading] = useState(false);
-  const [poolErr, setPoolErr] = useState<string | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [draft, setDraft] = useState<DraftKey>(EMPTY_DRAFT);
-  const [draftEditMode, setDraftEditMode] = useState(false); // false=新建 true=编辑
-  const [keyBusy, setKeyBusy] = useState<string | null>(null); // 行上正在跑的操作 id
-  const [draftSaving, setDraftSaving] = useState(false);
-
-  // === v0.11 B15.6 · 市场平台编辑 ===
   const [platforms, setPlatforms] = useState<PlatformInfoLite[]>([]);
   const [platformsLoading, setPlatformsLoading] = useState(false);
   const [platformsErr, setPlatformsErr] = useState<string | null>(null);
   const [editingPlatform, setEditingPlatform] = useState<PlatformInfoLite | null>(null);
+
+  const groupedPool = useMemo(
+    () => ({
+      llm: pool.filter((row) => row.provider === 'llm'),
+      image: pool.filter((row) => row.provider === 'image'),
+    }),
+    [pool],
+  );
+
+  const activeCount = pool.filter((row) => row.active).length;
+  const errorCount = pool.filter((row) => row.lastError).length;
 
   async function refreshPool() {
     setPoolLoading(true);
@@ -174,11 +183,7 @@ export default function SettingsClient({
       setPoolLoading(false);
     }
   }
-  useEffect(() => {
-    void refreshPool();
-  }, []);
 
-  // v0.14-z63: 拉 vector 配置 + 状态
   async function refreshVector() {
     try {
       const [cfgRes, stRes] = await Promise.all([
@@ -187,137 +192,25 @@ export default function SettingsClient({
       ]);
       const cfg = await cfgRes.json();
       const st = await stRes.json();
-      if (cfg.ok) setVectorConfig(cfg.config);
-      if (st.ok) setVectorStatus(st);
-      else setVectorStatus({ enabled: false, endpoint: '', history: { exists: false, rows: 0 }, assets: { exists: false, rows: 0 }, error: st.error });
-        setLastVectorRefresh(Date.now());
-  } catch (e) {
-      // ignore
-    }
-  }
-  useEffect(() => {
-    void refreshVector();
-  }, []);
-
-  // v0.15-e polling: 30 秒自动刷新 vector status
-  useEffect(() => {
-    const id = setInterval(() => {
-      void refreshVector();
-    }, 30_000);
-    return () => clearInterval(id);
-  }, []);
-
-  async function saveVector() {
-    setVectorBusy('save');
-    try {
-      const body: any = {
-        VECTOR_ENABLED: vectorDraft.VECTOR_ENABLED,
-        VECTOR_ZILLIZ_ENDPOINT: vectorDraft.VECTOR_ZILLIZ_ENDPOINT,
-        EMBEDDING_BASE_URL: vectorDraft.EMBEDDING_BASE_URL,
-        EMBEDDING_MODEL: vectorDraft.EMBEDDING_MODEL,
-      };
-      if (vectorDraft.VECTOR_ZILLIZ_TOKEN.trim()) body.VECTOR_ZILLIZ_TOKEN = vectorDraft.VECTOR_ZILLIZ_TOKEN;
-      if (vectorDraft.EMBEDDING_API_KEY.trim()) body.EMBEDDING_API_KEY = vectorDraft.EMBEDDING_API_KEY;
-      const r = await fetch('/api/vector/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const j = await r.json();
-      if (!j.ok) throw new Error(j.error || '失败');
-      toast.success(`保存了 ${j.updated} 项配置`);
-      setVectorEditing(false);
-      await refreshVector();
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setVectorBusy(null);
-    }
-  }
-
-  async function testEmbedding() {
-    setVectorBusy('embed-test');
-    setEmbedTestResult('');
-    try {
-      const r = await fetch('/api/vector/embed-test', { method: 'POST' });
-      const j = await r.json();
-      if (!j.ok) {
-        setEmbedTestResult('❌ ' + (j.error || '失败'));
-        toast.error('embedding 测试失败');
-      } else {
-        setEmbedTestResult(`✓ 通 · 维度 ${j.dimension}`);
-        toast.success(`embedding 测试通过：${j.dimension} 维`);
-      }
-    } catch (e) {
-      setEmbedTestResult('❌ ' + (e as Error).message);
-      toast.error((e as Error).message);
-    } finally {
-      setVectorBusy(null);
-    }
-  }
-
-  async function backfillVector() {
-    if (!confirm('开始把 AIOutput + Asset 全量索引到 Zilliz？\n会消耗 LLM key embedding 额度（每条约 0.0001 USD）。')) return;
-    setVectorBusy('backfill');
-    try {
-      const r = await fetch('/api/vector/backfill', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: 'all', batch: 50 }),
-      });
-      const j = await r.json();
-      if (!j.ok) throw new Error(j.error || '失败');
-      toast.success(`回填完成：history ${j.history.ok}/${j.history.processed}，assets ${j.assets.ok}/${j.assets.processed}`);
-      await refreshVector();
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setVectorBusy(null);
-    }
-  }
-
-  // v0.14-z41: pool 变化时自动加载每条 active KEY 的余额（5min cached）
-  useEffect(() => {
-    const STALE_MS = 5 * 60 * 1000;
-    const now = Date.now();
-    for (const r of pool) {
-      if (!r.id || !r.active) continue;
-      const cur = balanceMap[r.id];
-      if (cur && cur.fetchedAt && now - cur.fetchedAt < STALE_MS) continue;
-      if (cur && cur.status === 'loading') continue;
-      setBalanceMap((m) => ({ ...m, [r.id]: { status: 'loading' } }));
-      fetch(`/api/settings/keys/${r.id}/quota`, { method: 'POST' })
-        .then((res) => res.json())
-        .then((j) => {
-          if (j.ok && j.quota) {
-            setBalanceMap((m) => ({
-              ...m,
-              [r.id]: {
-                status: 'ok',
-                remainingUsd: j.quota.remainingUsd,
-                totalUsd: j.quota.totalUsd,
-                plan: j.quota.plan,
-                fetchedAt: Date.now(),
-              },
-            }));
-          } else {
-            setBalanceMap((m) => ({
-              ...m,
-              [r.id]: { status: 'error', error: j.error || '查询失败', fetchedAt: Date.now() },
-            }));
-          }
-        })
-        .catch((e) => {
-          setBalanceMap((m) => ({
-            ...m,
-            [r.id]: { status: 'error', error: (e as Error).message, fetchedAt: Date.now() },
-          }));
+      if (cfg.ok) {
+        const next = cfg.config as VectorConfig;
+        setVectorConfig(next);
+        setVectorDraft({
+          VECTOR_ENABLED: next.VECTOR_ENABLED || '0',
+          VECTOR_ZILLIZ_ENDPOINT: next.VECTOR_ZILLIZ_ENDPOINT || '',
+          VECTOR_ZILLIZ_TOKEN: '',
+          EMBEDDING_BASE_URL: next.EMBEDDING_BASE_URL || '',
+          EMBEDDING_API_KEY: '',
+          EMBEDDING_MODEL: next.EMBEDDING_MODEL || '',
         });
+      }
+      if (st.ok) setVectorStatus(st as VectorStatus);
+      else setVectorStatus({ enabled: false, endpoint: '', history: { exists: false, rows: 0 }, assets: { exists: false, rows: 0 }, error: st.error });
+    } catch (e) {
+      setVectorStatus({ enabled: false, endpoint: '', history: { exists: false, rows: 0 }, assets: { exists: false, rows: 0 }, error: (e as Error).message });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pool]);
+  }
 
-  // v0.11 B15.6 · 拉 PlatformInfo 列表（用于「市场平台」卡片）
   async function refreshPlatforms() {
     setPlatformsLoading(true);
     setPlatformsErr(null);
@@ -332,205 +225,27 @@ export default function SettingsClient({
       setPlatformsLoading(false);
     }
   }
+
   useEffect(() => {
+    void refreshPool();
+    void refreshVector();
     void refreshPlatforms();
   }, []);
 
-  function openCreate(provider: 'llm' | 'image') {
-    setDraft({ ...EMPTY_DRAFT, provider });
-    setDraftEditMode(false);
-    setDrawerOpen(true);
-  }
-  function openEdit(row: PoolKey) {
-    setDraft({
-      id: row.id,
-      provider: row.provider,
-      label: row.label,
-      baseUrl: row.baseUrl,
-      apiKey: '', // 编辑时空 = 保留原值
-      model: row.model,
-      active: row.active,
-      priority: row.priority,
-      notes: row.notes ?? '',
-    });
-    setDraftEditMode(true);
-    setDrawerOpen(true);
-  }
-  function closeDrawer() {
-    setDrawerOpen(false);
-  }
+  useEffect(() => {
+    const id = setInterval(() => {
+      void refreshVector();
+    }, 30_000);
+    return () => clearInterval(id);
+  }, []);
 
-  async function saveDraft() {
-    if (!draft.label.trim()) return toast.error('请填 label');
-    if (!draft.baseUrl.trim()) return toast.error('请填 baseUrl');
-    if (!draft.model.trim()) return toast.error('请填 model');
-    if (!draftEditMode && !draft.apiKey.trim()) return toast.error('请填 apiKey');
-
-    setDraftSaving(true);
-    try {
-      let res: Response;
-      if (draftEditMode && draft.id) {
-        // PUT：apiKey 留空表示保留原值
-        const payload: Record<string, unknown> = {
-          provider: draft.provider,
-          label: draft.label,
-          baseUrl: draft.baseUrl,
-          model: draft.model,
-          active: draft.active,
-          priority: draft.priority,
-          notes: draft.notes,
-        };
-        if (draft.apiKey.trim() !== '') payload.apiKey = draft.apiKey;
-        res = await fetch(`/api/settings/keys/${draft.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-      } else {
-        res = await fetch('/api/settings/keys', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(draft),
-        });
-      }
-      const j = await res.json();
-      if (!res.ok || !j.ok) throw new Error(j.error || '保存失败');
-      toast.success(draftEditMode ? '已更新' : '已新增');
-      closeDrawer();
-      await refreshPool();
-    } catch (e) {
-      toast.error('保存失败：' + (e as Error).message);
-    } finally {
-      setDraftSaving(false);
-    }
-  }
-
-  async function testKey(id: string) {
-    setKeyBusy(id);
-    try {
-      const res = await fetch(`/api/settings/keys/${id}/test`, { method: 'POST' });
-      const j = await res.json();
-      if (j.ok) toast.success(j.message || '连通性 OK');
-      else toast.error(j.error || '连通性失败');
-      await refreshPool();
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setKeyBusy(null);
-    }
-  }
-
-  // v0.16: 查询某条 key 的余额 / 额度
-  async function quotaKey(id: string, label: string) {
-    setKeyBusy(id);
-    try {
-      const res = await fetch(`/api/settings/keys/${id}/quota`, { method: 'POST' });
-      const j = await res.json();
-      if (!j.ok) {
-        toast.error(j.error || '额度查询失败');
-        return;
-      }
-      const q = j.quota || {};
-      const fmt = (n: number | undefined | null) =>
-        typeof n === 'number' ? '$' + n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '') : '—';
-      const lines: string[] = [];
-      lines.push(`Key: ${label}`);
-      if (q.plan) lines.push(`计划: ${q.plan}`);
-      lines.push(`总额度: ${fmt(q.totalUsd)}`);
-      lines.push(`已使用: ${fmt(q.usedUsd)}`);
-      lines.push(`剩余: ${fmt(q.remainingUsd)}`);
-      if (q.expired) lines.push('⚠️ 已过期');
-      lines.push(`端点: ${q.endpoint}`);
-      if (j.lastError) lines.push(`\n最近上游错误: ${j.lastError}`);
-      const msg = lines.join('\n');
-      // 同时弹 toast（短摘要）+ 控制台日志（完整 raw）
-      const short =
-        q.remainingUsd != null
-          ? `剩余 ${fmt(q.remainingUsd)}` + (q.totalUsd ? ` / 总 ${fmt(q.totalUsd)}` : '')
-          : (q.plan || '已查到');
-      toast.success(`「${label}」额度: ${short}`);
-      // eslint-disable-next-line no-console
-      console.log('[quota]', label, q);
-      // 浏览器原生确认框承载完整信息（不依赖额外 modal 组件）
-      if (typeof window !== 'undefined') window.alert(msg);
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setKeyBusy(null);
-    }
-  }
-  async function promoteKey(id: string) {
-    setKeyBusy(id);
-    try {
-      const res = await fetch(`/api/settings/keys/${id}/promote`, { method: 'POST' });
-      const j = await res.json();
-      if (!res.ok || !j.ok) throw new Error(j.error || '失败');
-      toast.success(`已置顶（priority=${j.priority}）`);
-      await refreshPool();
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setKeyBusy(null);
-    }
-  }
-  async function deleteKey(id: string, label: string) {
-    if (!confirm(`确认删除 key「${label}」？此操作不可恢复。`)) return;
-    setKeyBusy(id);
-    try {
-      const res = await fetch(`/api/settings/keys/${id}`, { method: 'DELETE' });
-      const j = await res.json();
-      if (!res.ok || !j.ok) throw new Error(j.error || '删除失败');
-      toast.success('已删除');
-      await refreshPool();
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setKeyBusy(null);
-    }
-  }
-  async function toggleActive(row: PoolKey) {
-    setKeyBusy(row.id);
-    try {
-      const res = await fetch(`/api/settings/keys/${row.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active: !row.active, resetErrors: !row.active }),
-      });
-      const j = await res.json();
-      if (!res.ok || !j.ok) throw new Error(j.error || '失败');
-      toast.success(row.active ? '已停用' : '已启用（错误计数已重置）');
-      await refreshPool();
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setKeyBusy(null);
-    }
-  }
-
-  function maskUrl(u: string): string {
-    if (!u) return '';
-    return u.replace(/^https?:\/\/([^/]+).*$/, 'https://$1');
-  }
-
-  function up<K extends keyof Form>(k: K, v: Form[K]) {
-    setForm((f) => ({ ...f, [k]: v }));
-  }
-
-  function startEditKey(k: 'LLM_API_KEY' | 'IMAGE_API_KEY') {
-    setEditingKey((m) => ({ ...m, [k]: true }));
-    // 进入编辑后清空展示，避免发送占位符
-    setForm((f) => ({ ...f, [k]: '' }));
-  }
-
-  function cancelEditKey(k: 'LLM_API_KEY' | 'IMAGE_API_KEY') {
-    setEditingKey((m) => ({ ...m, [k]: false }));
-    setForm((f) => ({ ...f, [k]: '' }));
+  function up<K extends keyof Form>(key: K, value: Form[K]) {
+    setForm((current) => ({ ...current, [key]: value }));
   }
 
   async function save() {
     setSaving(true);
     try {
-      // 构造提交体：未进入编辑态的 KEY 字段不发送，避免误清空
       const body: Partial<Form> = {
         LLM_API_BASE_URL: form.LLM_API_BASE_URL,
         LLM_MODEL: form.LLM_MODEL,
@@ -548,12 +263,11 @@ export default function SettingsClient({
       });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || '保存失败');
-      toast.success('已保存。配置会立即生效，无需重启。');
-      // 保存成功后退出编辑态
+      toast.success('设置已保存');
       setEditingKey({});
-      setForm((f) => ({ ...f, LLM_API_KEY: '', IMAGE_API_KEY: '' }));
+      setForm((current) => ({ ...current, LLM_API_KEY: '', IMAGE_API_KEY: '' }));
     } catch (e) {
-      toast.error('保存失败：' + (e as Error).message);
+      toast.error(`保存失败：${(e as Error).message}`);
     } finally {
       setSaving(false);
     }
@@ -577,892 +291,665 @@ export default function SettingsClient({
     }
   }
 
-  async function seedPresets() {
+  async function seedAdapters() {
     setSeeding(true);
     try {
-      const r = await fetch('/api/adapters/seed', { method: 'POST' });
-      const j = await r.json();
-      if (!j.ok) throw new Error(j.error || '种入失败');
-      toast.success(`种入完成：新增 ${j.added}，已存在 ${j.skipped}`);
-      // 刷新 adapter 列表
-      const r2 = await fetch('/api/adapters');
-      const j2 = await r2.json();
-      if (j2.ok) {
-        setAdapterList(
-          j2.adapters.map((a: any) => ({
-            slug: a.slug,
-            name: a.name,
-            type: a.flow.type,
-            enabled: a.enabled,
-          })),
-        );
-      }
+      const res = await fetch('/api/adapters/seed', { method: 'POST' });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '种入失败');
+      toast.success(`已补齐适配器：新增 ${j.added}，跳过 ${j.skipped}`);
+      window.setTimeout(() => window.location.reload(), 650);
     } catch (e) {
-      toast.error('失败：' + (e as Error).message);
+      toast.error((e as Error).message);
     } finally {
       setSeeding(false);
     }
   }
 
-  function renderKeyField(
-    k: 'LLM_API_KEY' | 'IMAGE_API_KEY',
-    label: string,
-    fallbackEnv: boolean,
-  ) {
-    // v0.12 任务1：用户要求所有字段（含 KEY）明文显示，不再脱敏
-    return (
-      <Field label={label}>
-        <input
-          type="text"
-          className="input font-mono text-xs"
-          autoComplete="off"
-          spellCheck={false}
-          value={form[k]}
-          onChange={(e) => up(k, e.target.value)}
-          placeholder={fallbackEnv ? '已从 .env 读取（如需修改请在此填写）' : 'sk-...'}
-        />
-        {!form[k] && fallbackEnv && (
-          <p className="text-xs text-slate-400 mt-1">.env 中已配置，留空则使用 .env。</p>
-        )}
-      </Field>
-    );
+  function openCreate(provider: 'llm' | 'image') {
+    setDraft({ ...EMPTY_DRAFT, provider });
+    setDraftEditMode(false);
+    setDrawerOpen(true);
   }
 
-
-  /**
-   * v0.14-z50: 判断一条 KEY 是否走 OpenAI 兼容协议
-   * 启发式：baseUrl 路径含 /v1，或域名是已知 OpenAI 兼容中转站
-   */
-  function isOpenAICompat(row: PoolKey): boolean {
-    const u = row.baseUrl?.toLowerCase() || '';
-    if (!u) return false;
-    if (u.includes('/v1')) return true;
-    const host = (() => {
-      try { return new URL(u).hostname; } catch { return ''; }
-    })();
-    if (!host) return false;
-    const KNOWN = [
-      'api.openai.com',
-      'cometapi.com',
-      'kie.ai',
-      '4router.net',
-      'do-ai.run',
-      'inference.do-ai.run',
-      'openrouter.ai',
-      'groq.com',
-      'deepseek.com',
-      'siliconflow.cn',
-      'aliyuncs.com', // 阿里云通义
-      'volces.com',   // 火山引擎
-      'moonshot.cn',
-      'aliyun.com',
-    ];
-    return KNOWN.some((d) => host === d || host.endsWith('.' + d));
+  function openEdit(row: PoolKey) {
+    setDraft({
+      id: row.id,
+      provider: row.provider,
+      label: row.label,
+      baseUrl: row.baseUrl,
+      apiKey: '',
+      model: row.model,
+      active: row.active,
+      priority: row.priority,
+      notes: row.notes ?? '',
+    });
+    setDraftEditMode(true);
+    setDrawerOpen(true);
   }
 
-  /**
-   * v0.14-z50: 把 KEY 按"OpenAI 兼容"vs"自定义" 分组
-   */
-  function groupByCompat(items: PoolKey[]): { compat: PoolKey[]; other: PoolKey[] } {
-    const compat: PoolKey[] = [];
-    const other: PoolKey[] = [];
-    for (const r of items) {
-      if (isOpenAICompat(r)) compat.push(r);
-      else other.push(r);
+  async function saveDraft() {
+    if (!draft.label.trim()) return toast.error('请填写名称');
+    if (!draft.baseUrl.trim()) return toast.error('请填写 Base URL');
+    if (!draft.model.trim()) return toast.error('请填写模型名');
+    if (!draftEditMode && !draft.apiKey.trim()) return toast.error('请填写 API Key');
+
+    setDraftSaving(true);
+    try {
+      let res: Response;
+      if (draftEditMode && draft.id) {
+        const payload: Record<string, unknown> = {
+          provider: draft.provider,
+          label: draft.label,
+          baseUrl: draft.baseUrl,
+          model: draft.model,
+          active: draft.active,
+          priority: draft.priority,
+          notes: draft.notes,
+        };
+        if (draft.apiKey.trim()) payload.apiKey = draft.apiKey;
+        res = await fetch(`/api/settings/keys/${draft.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch('/api/settings/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(draft),
+        });
+      }
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '保存失败');
+      toast.success(draftEditMode ? 'Key 已更新' : 'Key 已新增');
+      setDrawerOpen(false);
+      await refreshPool();
+    } catch (e) {
+      toast.error(`保存失败：${(e as Error).message}`);
+    } finally {
+      setDraftSaving(false);
     }
-    return { compat, other };
   }
 
-    // === API Key 池小组件 ===
-  function PoolTable({ provider }: { provider: 'llm' | 'image' }) {
-    const rows = pool.filter((r) => r.provider === provider);
-    return (
-      <div className="overflow-x-auto">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>label</th>
-              <th>baseUrl</th>
-              <th>model</th>
-              <th>apiKey（明文）</th>
-              <th>priority</th>
-              <th>状态</th>
-              <th>统计</th>
-              <th className="text-right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={7} className="text-center text-slate-400 py-6">
-                  暂无 {provider === 'llm' ? 'LLM' : 'IMAGE'} key，
-                  <button onClick={() => openCreate(provider)} className="text-brand-600 hover:underline">
-                    新增第一条
-                  </button>
-                </td>
-              </tr>
-            )}
-            {(() => {
-              const grouped = groupByCompat(rows);
-              return (
-                <>
-                  {grouped.compat.length > 0 && (
-                    <>
-                      <tr>
-                        <td colSpan={8} className="bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide">
-                          🔌 OpenAI 兼容协议（{grouped.compat.length}）
-                        </td>
-                      </tr>
-                      {grouped.compat.map((r) => (
-                        <tr key={r.id} className={r.active ? '' : 'opacity-60'}>
-                <td>
-                  <div className="font-medium">{r.label}</div>
-                  {r.notes ? <div className="text-xs text-slate-400">{r.notes}</div> : null}
-                </td>
-                <td className="text-xs font-mono">{maskUrl(r.baseUrl)}</td>
-                <td className="text-xs font-mono">{r.model}</td>
-                <td className="text-xs font-mono break-all max-w-[280px]">{r.apiKey || '(空)'}</td>
-                <td>{r.priority}</td>
-                <td>
-                  {r.active ? (
-                    <span className="badge-green">active</span>
-                  ) : (
-                    <span className="badge-gray">disabled</span>
-                  )}
-                  {r.consecutiveErrors > 0 && (
-                    <span className="badge-red ml-1">连错 {r.consecutiveErrors}</span>
-                  )}
-                  {r.lastError ? (
-                    <div className="text-xs text-red-500 mt-1 max-w-[260px] truncate" title={r.lastError}>
-                      {r.lastError}
-                    </div>
-                  ) : null}
-                  {/* v0.14-z41 余额徽章 */}
-                  {(() => {
-                    const b = balanceMap[r.id];
-                    if (!b) return null;
-                    if (b.status === 'loading') {
-                      return <div className="text-xs text-slate-400 mt-1">余额查询中...</div>;
-                    }
-                    if (b.status === 'error') {
-                      return (
-                        <div className="text-xs text-slate-400 mt-1" title={b.error}>
-                          余额: 不可查
-                        </div>
-                      );
-                    }
-                    const r2 = b.remainingUsd;
-                    const tone =
-                      r2 == null ? 'badge-gray'
-                      : r2 < 0 ? 'badge-red'
-                      : r2 < 1 ? 'badge-yellow'
-                      : 'badge-green';
-                    const label =
-                      r2 == null ? (b.plan || '账户活跃')
-                      : r2 < 0 ? `透支 $${r2.toFixed(2)}`
-                      : `剩余 $${r2.toFixed(2)}` + (b.totalUsd ? ` / $${b.totalUsd.toFixed(2)}` : '');
-                    return (
-                      <span className={`badge ${tone} mt-1 text-[10px]`} title={b.plan}>
-                        {label}
-                      </span>
-                    );
-                  })()}
-                </td>
-                <td className="text-xs text-slate-500">
-                  {r.totalRequests} 次 / 错 {r.totalErrors}
-                  {r.lastUsedAt ? (
-                    <div className="text-xs text-slate-400">
-                      最近：{new Date(r.lastUsedAt).toLocaleString('zh-CN', { hour12: false })}
-                    </div>
-                  ) : null}
-                </td>
-                <td className="text-right whitespace-nowrap">
-                  <button
-                    disabled={keyBusy === r.id}
-                    onClick={() => openEdit(r)}
-                    className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
-                  >
-                    编辑
-                  </button>
-                  <button
-                    disabled={keyBusy === r.id}
-                    onClick={() => testKey(r.id)}
-                    className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
-                  >
-                    测试
-                  </button>
-                  <button
-                    disabled={keyBusy === r.id}
-                    onClick={() => quotaKey(r.id, r.label)}
-                    className="text-xs text-emerald-600 hover:underline disabled:opacity-40 mr-2"
-                    title="查询上游中转站余额"
-                  >
-                    额度
-                  </button>
-                  <button
-                    disabled={keyBusy === r.id}
-                    onClick={() => promoteKey(r.id)}
-                    className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
-                  >
-                    置顶
-                  </button>
-                  <button
-                    disabled={keyBusy === r.id}
-                    onClick={() => toggleActive(r)}
-                    className="text-xs text-slate-600 hover:underline disabled:opacity-40 mr-2"
-                  >
-                    {r.active ? '停用' : '启用'}
-                  </button>
-                  <button
-                    disabled={keyBusy === r.id}
-                    onClick={() => deleteKey(r.id, r.label)}
-                    className="text-xs text-red-600 hover:underline disabled:opacity-40"
-                  >
-                    删除
-                  </button>
-                </td>
-              </tr>
-                      ))}
-                    </>
-                  )}
-                  {grouped.other.length > 0 && (
-                    <>
-                      <tr>
-                        <td colSpan={8} className="bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wide">
-                          🏷️ 自定义中转站（{grouped.other.length}）
-                        </td>
-                      </tr>
-                      {grouped.other.map((r) => (
-                        <tr key={r.id} className={r.active ? '' : 'opacity-60'}>
-                <td>
-                  <div className="font-medium">{r.label}</div>
-                  {r.notes ? <div className="text-xs text-slate-400">{r.notes}</div> : null}
-                </td>
-                <td className="text-xs font-mono">{maskUrl(r.baseUrl)}</td>
-                <td className="text-xs font-mono">{r.model}</td>
-                <td className="text-xs font-mono break-all max-w-[280px]">{r.apiKey || '(空)'}</td>
-                <td>{r.priority}</td>
-                <td>
-                  {r.active ? (
-                    <span className="badge-green">active</span>
-                  ) : (
-                    <span className="badge-gray">disabled</span>
-                  )}
-                  {r.consecutiveErrors > 0 && (
-                    <span className="badge-red ml-1">连错 {r.consecutiveErrors}</span>
-                  )}
-                  {r.lastError ? (
-                    <div className="text-xs text-red-500 mt-1 max-w-[260px] truncate" title={r.lastError}>
-                      {r.lastError}
-                    </div>
-                  ) : null}
-                  {/* v0.14-z41 余额徽章 */}
-                  {(() => {
-                    const b = balanceMap[r.id];
-                    if (!b) return null;
-                    if (b.status === 'loading') {
-                      return <div className="text-xs text-slate-400 mt-1">余额查询中...</div>;
-                    }
-                    if (b.status === 'error') {
-                      return (
-                        <div className="text-xs text-slate-400 mt-1" title={b.error}>
-                          余额: 不可查
-                        </div>
-                      );
-                    }
-                    const r2 = b.remainingUsd;
-                    const tone =
-                      r2 == null ? 'badge-gray'
-                      : r2 < 0 ? 'badge-red'
-                      : r2 < 1 ? 'badge-yellow'
-                      : 'badge-green';
-                    const label =
-                      r2 == null ? (b.plan || '账户活跃')
-                      : r2 < 0 ? `透支 $${r2.toFixed(2)}`
-                      : `剩余 $${r2.toFixed(2)}` + (b.totalUsd ? ` / $${b.totalUsd.toFixed(2)}` : '');
-                    return (
-                      <span className={`badge ${tone} mt-1 text-[10px]`} title={b.plan}>
-                        {label}
-                      </span>
-                    );
-                  })()}
-                </td>
-                <td className="text-xs text-slate-500">
-                  {r.totalRequests} 次 / 错 {r.totalErrors}
-                  {r.lastUsedAt ? (
-                    <div className="text-xs text-slate-400">
-                      最近：{new Date(r.lastUsedAt).toLocaleString('zh-CN', { hour12: false })}
-                    </div>
-                  ) : null}
-                </td>
-                <td className="text-right whitespace-nowrap">
-                  <button
-                    disabled={keyBusy === r.id}
-                    onClick={() => openEdit(r)}
-                    className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
-                  >
-                    编辑
-                  </button>
-                  <button
-                    disabled={keyBusy === r.id}
-                    onClick={() => testKey(r.id)}
-                    className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
-                  >
-                    测试
-                  </button>
-                  <button
-                    disabled={keyBusy === r.id}
-                    onClick={() => quotaKey(r.id, r.label)}
-                    className="text-xs text-emerald-600 hover:underline disabled:opacity-40 mr-2"
-                    title="查询上游中转站余额"
-                  >
-                    额度
-                  </button>
-                  <button
-                    disabled={keyBusy === r.id}
-                    onClick={() => promoteKey(r.id)}
-                    className="text-xs text-brand-600 hover:underline disabled:opacity-40 mr-2"
-                  >
-                    置顶
-                  </button>
-                  <button
-                    disabled={keyBusy === r.id}
-                    onClick={() => toggleActive(r)}
-                    className="text-xs text-slate-600 hover:underline disabled:opacity-40 mr-2"
-                  >
-                    {r.active ? '停用' : '启用'}
-                  </button>
-                  <button
-                    disabled={keyBusy === r.id}
-                    onClick={() => deleteKey(r.id, r.label)}
-                    className="text-xs text-red-600 hover:underline disabled:opacity-40"
-                  >
-                    删除
-                  </button>
-                </td>
-              </tr>
-                      ))}
-                    </>
-                  )}
-                </>
-              );
-            })()}
-          </tbody>
-        </table>
-      </div>
-    );
+  async function testKey(id: string) {
+    setKeyBusy(id);
+    try {
+      const res = await fetch(`/api/settings/keys/${id}/test`, { method: 'POST' });
+      const j = await res.json();
+      if (j.ok) toast.success(j.message || '连通性正常');
+      else toast.error(j.error || '连通性失败');
+      await refreshPool();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setKeyBusy(null);
+    }
   }
 
-  // v0.11 B15.2 · 是否检测到 IMAGE 池中存在「占位备用 KIE key」
-  // 以 label 含特定关键字 + active=false 双条件判定，避免误伤用户自建行
-  const b15_2_placeholderRow =
-    pool.find(
-      (r) =>
-        r.provider === 'image' &&
-        !r.active &&
-        (r.label || '').includes(B15_2_PLACEHOLDER_LABEL_HINT),
-    ) || null;
+  async function quotaKey(id: string, label: string) {
+    setKeyBusy(id);
+    try {
+      const res = await fetch(`/api/settings/keys/${id}/quota`, { method: 'POST' });
+      const j = await res.json();
+      if (!j.ok) throw new Error(j.error || '额度查询失败');
+      const quota = j.quota || {};
+      const msg = [
+        `Key：${label}`,
+        quota.plan ? `计划：${quota.plan}` : '',
+        `总额度：${formatMoney(quota.totalUsd)}`,
+        `已使用：${formatMoney(quota.usedUsd)}`,
+        `剩余：${formatMoney(quota.remainingUsd)}`,
+        quota.endpoint ? `端点：${quota.endpoint}` : '',
+        j.lastError ? `最近错误：${j.lastError}` : '',
+      ].filter(Boolean).join('\n');
+      toast.success(`额度：${formatMoney(quota.remainingUsd)}`);
+      window.alert(msg);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setKeyBusy(null);
+    }
+  }
+
+  async function promoteKey(id: string) {
+    setKeyBusy(id);
+    try {
+      const res = await fetch(`/api/settings/keys/${id}/promote`, { method: 'POST' });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '操作失败');
+      toast.success('已置顶');
+      await refreshPool();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setKeyBusy(null);
+    }
+  }
+
+  async function deleteKey(id: string, label: string) {
+    if (!window.confirm(`确认删除「${label}」？此操作不可恢复。`)) return;
+    setKeyBusy(id);
+    try {
+      const res = await fetch(`/api/settings/keys/${id}`, { method: 'DELETE' });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '删除失败');
+      toast.success('已删除');
+      await refreshPool();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setKeyBusy(null);
+    }
+  }
+
+  async function toggleActive(row: PoolKey) {
+    setKeyBusy(row.id);
+    try {
+      const res = await fetch(`/api/settings/keys/${row.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: !row.active, resetErrors: !row.active }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || '操作失败');
+      toast.success(row.active ? '已停用' : '已启用');
+      await refreshPool();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setKeyBusy(null);
+    }
+  }
+
+  async function saveVector() {
+    setVectorBusy('save');
+    try {
+      const body: Record<string, string> = {
+        VECTOR_ENABLED: vectorDraft.VECTOR_ENABLED,
+        VECTOR_ZILLIZ_ENDPOINT: vectorDraft.VECTOR_ZILLIZ_ENDPOINT,
+        EMBEDDING_BASE_URL: vectorDraft.EMBEDDING_BASE_URL,
+        EMBEDDING_MODEL: vectorDraft.EMBEDDING_MODEL,
+      };
+      if (vectorDraft.VECTOR_ZILLIZ_TOKEN.trim()) body.VECTOR_ZILLIZ_TOKEN = vectorDraft.VECTOR_ZILLIZ_TOKEN;
+      if (vectorDraft.EMBEDDING_API_KEY.trim()) body.EMBEDDING_API_KEY = vectorDraft.EMBEDDING_API_KEY;
+      const res = await fetch('/api/vector/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json();
+      if (!j.ok) throw new Error(j.error || '保存失败');
+      toast.success(`向量配置已保存 ${j.updated} 项`);
+      setVectorEditing(false);
+      await refreshVector();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setVectorBusy(null);
+    }
+  }
+
+  async function testEmbedding() {
+    setVectorBusy('embed-test');
+    setEmbedTestResult('');
+    try {
+      const res = await fetch('/api/vector/embed-test', { method: 'POST' });
+      const j = await res.json();
+      if (!j.ok) {
+        setEmbedTestResult(j.error || '测试失败');
+        toast.error('Embedding 测试失败');
+      } else {
+        setEmbedTestResult(`通过，维度 ${j.dimension}`);
+        toast.success(`Embedding 测试通过：${j.dimension} 维`);
+      }
+    } catch (e) {
+      setEmbedTestResult((e as Error).message);
+      toast.error((e as Error).message);
+    } finally {
+      setVectorBusy(null);
+    }
+  }
+
+  async function backfillVector() {
+    if (!window.confirm('确认开始全量回填 AIOutput + Asset 到 Zilliz？这会消耗 embedding 额度。')) return;
+    setVectorBusy('backfill');
+    try {
+      const res = await fetch('/api/vector/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'all', batch: 50 }),
+      });
+      const j = await res.json();
+      if (!j.ok) throw new Error(j.error || '回填失败');
+      toast.success(`回填完成：history ${j.history.ok}/${j.history.processed}，assets ${j.assets.ok}/${j.assets.processed}`);
+      await refreshVector();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setVectorBusy(null);
+    }
+  }
 
   return (
-    <div className="space-y-6">
-      {/* v0.11 B1 · API Keys 池（顶到顶部） */}
-      <div className="card border-brand-200 dark:border-brand-800">
-        <div className="card-header bg-brand-50/50 dark:bg-brand-900/20 flex-wrap gap-2">
-          <h2 className="font-semibold flex items-center gap-2">
-            <span>🔑</span>
-            <span>API Keys 池</span>
-            <span className="text-xs text-slate-400 font-normal">v0.11 B1</span>
+    <div className="space-y-5">
+      <section className="grid gap-5 lg:grid-cols-[1fr_0.86fr]">
+        <div className="command-panel p-6">
+          <div className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-300">
+            <Activity className="h-3.5 w-3.5 text-cyan-300" aria-hidden />
+            系统控制面板
+          </div>
+          <h2 className="mt-5 text-4xl font-semibold leading-none text-white sm:text-5xl">
+            Key、模型、向量和平台配置集中管理。
           </h2>
-          <div className="text-xs text-slate-500">
-            按 priority 升序选取 active=true 的 key。失败连续 3 次自动停用，下次取下一条。
+          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <DarkMetric label="Key 总数" value={pool.length} />
+            <DarkMetric label="启用" value={activeCount} />
+            <DarkMetric label="异常" value={errorCount} />
+            <DarkMetric label="Adapter" value={adapterList.length} />
           </div>
         </div>
-        <div className="card-body space-y-6">
-          {poolErr && (
-            <div className="text-sm text-red-600">{poolErr}</div>
+
+        <div className="surface-elevated p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="page-kicker">快速状态</div>
+              <h3 className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">运行依赖</h3>
+            </div>
+            <button type="button" onClick={() => { void refreshPool(); void refreshVector(); void refreshPlatforms(); }} className="btn-secondary h-9 gap-2 text-xs">
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+              刷新
+            </button>
+          </div>
+          <div className="mt-4 space-y-3">
+            <StatusRow label="LLM Key 池" ok={groupedPool.llm.some((row) => row.active)} value={`${groupedPool.llm.filter((row) => row.active).length}/${groupedPool.llm.length}`} />
+            <StatusRow label="图片 Key 池" ok={groupedPool.image.some((row) => row.active)} value={`${groupedPool.image.filter((row) => row.active).length}/${groupedPool.image.length}`} />
+            <StatusRow label="向量检索" ok={Boolean(vectorStatus?.enabled)} value={vectorStatus?.enabled ? '已启用' : '未启用'} />
+            <StatusRow label="默认 Adapter" ok={Boolean(form.IMAGE_DEFAULT_ADAPTER)} value={form.IMAGE_DEFAULT_ADAPTER || '走兼容链路'} />
+          </div>
+        </div>
+      </section>
+
+      <section className="surface overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-slate-800 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="page-kicker">API Key 池</div>
+            <h3 className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">模型调用优先级</h3>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => openCreate('llm')} className="btn-secondary h-9 gap-2 text-xs">
+              <Plus className="h-3.5 w-3.5" aria-hidden />
+              新增 LLM
+            </button>
+            <button type="button" onClick={() => openCreate('image')} className="btn-primary h-9 gap-2 text-xs">
+              <Plus className="h-3.5 w-3.5" aria-hidden />
+              新增图片 Key
+            </button>
+          </div>
+        </div>
+        {poolErr && <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-700">{poolErr}</div>}
+        {poolLoading ? (
+          <div className="flex min-h-[220px] items-center justify-center text-sm text-slate-400">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载 Key 池...
+          </div>
+        ) : (
+          <div className="grid gap-px bg-slate-200 dark:bg-slate-800 lg:grid-cols-2">
+            <PoolSection
+              title="LLM 文案 Key"
+              rows={groupedPool.llm}
+              busyId={keyBusy}
+              onEdit={openEdit}
+              onTest={testKey}
+              onQuota={quotaKey}
+              onPromote={promoteKey}
+              onToggle={toggleActive}
+              onDelete={deleteKey}
+            />
+            <PoolSection
+              title="图片生成 Key"
+              rows={groupedPool.image}
+              busyId={keyBusy}
+              onEdit={openEdit}
+              onTest={testKey}
+              onQuota={quotaKey}
+              onPromote={promoteKey}
+              onToggle={toggleActive}
+              onDelete={deleteKey}
+            />
+          </div>
+        )}
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[0.92fr_1.08fr]">
+        <div className="surface p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="page-kicker">向量检索</div>
+              <h3 className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">Zilliz / Embedding</h3>
+            </div>
+            <button type="button" onClick={() => setVectorEditing((value) => !value)} className="btn-secondary h-9 gap-2 text-xs">
+              <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
+              {vectorEditing ? '收起' : '编辑'}
+            </button>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <StatusRow label="开关" ok={Boolean(vectorStatus?.enabled)} value={vectorStatus?.enabled ? '启用' : '关闭'} />
+            <StatusRow label="Endpoint" ok={Boolean(vectorStatus?.endpoint)} value={vectorStatus?.endpoint || '未配置'} />
+            <StatusRow label="History 索引" ok={Boolean(vectorStatus?.history.exists)} value={`${vectorStatus?.history.rows ?? 0} 行`} />
+            <StatusRow label="Assets 索引" ok={Boolean(vectorStatus?.assets.exists)} value={`${vectorStatus?.assets.rows ?? 0} 行`} />
+          </div>
+          {vectorStatus?.error && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">{vectorStatus.error}</div>}
+
+          {vectorEditing && (
+            <div className="mt-4 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+              <div className="field-grid">
+                <Field label="启用向量检索">
+                  <select className="input" value={vectorDraft.VECTOR_ENABLED} onChange={(e) => setVectorDraft({ ...vectorDraft, VECTOR_ENABLED: e.target.value })}>
+                    <option value="0">关闭</option>
+                    <option value="1">启用</option>
+                  </select>
+                </Field>
+                <Field label="Embedding 模型">
+                  <input className="input" value={vectorDraft.EMBEDDING_MODEL} onChange={(e) => setVectorDraft({ ...vectorDraft, EMBEDDING_MODEL: e.target.value })} placeholder="text-embedding-3-small" />
+                </Field>
+              </div>
+              <Field label="Zilliz Endpoint">
+                <input className="input font-mono text-xs" value={vectorDraft.VECTOR_ZILLIZ_ENDPOINT} onChange={(e) => setVectorDraft({ ...vectorDraft, VECTOR_ZILLIZ_ENDPOINT: e.target.value })} placeholder="https://..." />
+              </Field>
+              <Field label={`Zilliz Token${vectorConfig?.VECTOR_ZILLIZ_TOKEN.isSet ? `（已设置：${vectorConfig.VECTOR_ZILLIZ_TOKEN.preview}）` : ''}`}>
+                <input type="password" className="input font-mono text-xs" value={vectorDraft.VECTOR_ZILLIZ_TOKEN} onChange={(e) => setVectorDraft({ ...vectorDraft, VECTOR_ZILLIZ_TOKEN: e.target.value })} placeholder="留空则保留原值" />
+              </Field>
+              <Field label="Embedding Base URL">
+                <input className="input font-mono text-xs" value={vectorDraft.EMBEDDING_BASE_URL} onChange={(e) => setVectorDraft({ ...vectorDraft, EMBEDDING_BASE_URL: e.target.value })} placeholder="可留空，默认走 LLM Key 池" />
+              </Field>
+              <Field label={`Embedding API Key${vectorConfig?.EMBEDDING_API_KEY.isSet ? `（已设置：${vectorConfig.EMBEDDING_API_KEY.preview}）` : ''}`}>
+                <input type="password" className="input font-mono text-xs" value={vectorDraft.EMBEDDING_API_KEY} onChange={(e) => setVectorDraft({ ...vectorDraft, EMBEDDING_API_KEY: e.target.value })} placeholder="可留空" />
+              </Field>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setVectorEditing(false)} className="btn-secondary text-xs" disabled={vectorBusy === 'save'}>取消</button>
+                <button type="button" onClick={saveVector} className="btn-primary gap-2 text-xs" disabled={vectorBusy === 'save'}>
+                  {vectorBusy === 'save' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  保存
+                </button>
+              </div>
+            </div>
           )}
 
-          <section>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">LLM 文案 keys</h3>
-              <button
-                onClick={() => openCreate('llm')}
-                className="btn-primary text-xs px-3 py-1.5"
-              >
-                新增 LLM key
-              </button>
-            </div>
-            <PoolTable provider="llm" />
-          </section>
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+            <button type="button" onClick={testEmbedding} disabled={vectorBusy === 'embed-test' || !vectorStatus?.enabled} className="btn-secondary h-9 gap-2 text-xs">
+              {vectorBusy === 'embed-test' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
+              测试 Embedding
+            </button>
+            <button type="button" onClick={backfillVector} disabled={vectorBusy === 'backfill' || !vectorStatus?.enabled} className="btn-secondary h-9 gap-2 text-xs">
+              {vectorBusy === 'backfill' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              全量回填
+            </button>
+            {embedTestResult && <span className="text-xs text-slate-500">{embedTestResult}</span>}
+          </div>
+        </div>
 
-          <section>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">IMAGE 出图 keys</h3>
-              <button
-                onClick={() => openCreate('image')}
-                className="btn-primary text-xs px-3 py-1.5"
-              >
-                新增 IMAGE key
-              </button>
+        <div className="surface p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="page-kicker">图片适配器</div>
+              <h3 className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">默认生成链路</h3>
             </div>
-
-            {/* v0.11 B15.2 · IMAGE 池占位备用 key 提示 */}
-            {b15_2_placeholderRow && (
-              <div
-                data-b15-2-image-placeholder-hint=""
-                className="mb-2 rounded border border-violet-200 dark:border-violet-700/40 bg-violet-50/40 dark:bg-violet-900/10 p-2.5 text-xs text-violet-800 dark:text-violet-200 leading-relaxed"
-              >
-                <div className="font-medium mb-1">💡 v0.11 B15.2：IMAGE 池有备用占位 key</div>
-                <div>
-                  系统已为你预留一条 KIE 备用 key（label「{b15_2_placeholderRow.label}」，
-                  当前 <span className="font-mono">active=false</span>），未填实际值前不会被使用。
-                  当主用 4router key 连续失败被自动停用后，系统会按 <span className="font-mono">priority</span> 升序回退到这一条。
-                  点该行的「编辑」把 <span className="font-mono">apiKey</span> 替换成真实 KIE key、再点「启用」即可激活备用通道。
-                </div>
+            <Link href="/adapters" className="btn-secondary h-9 text-xs">管理</Link>
+          </div>
+          <div className="mt-4 space-y-3">
+            {adapterList.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-300 p-5 text-sm text-slate-500 dark:border-slate-800">
+                暂无适配器。
+                <button type="button" onClick={seedAdapters} disabled={seeding} className="ml-2 font-medium text-cyan-700 hover:underline dark:text-cyan-300">
+                  {seeding ? '种入中...' : '一键种入内置预设'}
+                </button>
               </div>
+            ) : (
+              <>
+                <Field label="默认图片 Adapter">
+                  <select className="input" value={form.IMAGE_DEFAULT_ADAPTER} onChange={(e) => up('IMAGE_DEFAULT_ADAPTER', e.target.value)}>
+                    <option value="">不使用 adapter，走兼容默认链路</option>
+                    {adapterList.filter((adapter) => adapter.enabled).map((adapter) => (
+                      <option key={adapter.slug} value={adapter.slug}>
+                        {adapter.name} · {adapter.type === 'sync' ? '同步' : '异步轮询'}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {adapterList.slice(0, 6).map((adapter) => (
+                    <div key={adapter.slug} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-800 dark:bg-slate-900">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-slate-800 dark:text-slate-100">{adapter.name}</span>
+                        <span className={adapter.enabled ? 'badge-green' : 'badge-gray'}>{adapter.enabled ? '启用' : '停用'}</span>
+                      </div>
+                      <div className="mt-1 text-slate-500">{adapter.slug} · {adapter.type}</div>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={seedAdapters} disabled={seeding} className="text-xs font-medium text-cyan-700 hover:underline dark:text-cyan-300">
+                  {seeding ? '检查中...' : '检查并补齐内置预设'}
+                </button>
+              </>
             )}
+          </div>
+        </div>
+      </section>
 
-            <PoolTable provider="image" />
-          </section>
+      <section className="grid gap-5 lg:grid-cols-2">
+        <ConfigCard title="LLM 兼容配置" onTest={() => test('llm')} testing={testing === 'llm'}>
+          <p className="text-xs leading-6 text-slate-500">
+            当 API Key 池中没有可用 LLM Key 时，系统会回退到这里的兼容字段。
+          </p>
+          <Field label="API Base URL">
+            <input className="input" value={form.LLM_API_BASE_URL} onChange={(e) => up('LLM_API_BASE_URL', e.target.value)} placeholder="https://api.openai.com/v1" />
+          </Field>
+          {renderSecretField('LLM_API_KEY', 'API Key', hasEnvLLMKey)}
+          <Field label="模型名称">
+            <input className="input" value={form.LLM_MODEL} onChange={(e) => up('LLM_MODEL', e.target.value)} placeholder="gpt-4o-mini" />
+          </Field>
+        </ConfigCard>
 
-          {poolLoading && (
-            <div className="text-xs text-slate-400">刷新中…</div>
+        <ConfigCard title="图片兼容配置" onTest={() => test('image')} testing={testing === 'image'}>
+          <p className="text-xs leading-6 text-slate-500">
+            当未选择 adapter 且图片 Key 池没有可用 Key 时，系统会回退到这里。
+          </p>
+          <Field label="API Base URL">
+            <input className="input" value={form.IMAGE_API_BASE_URL} onChange={(e) => up('IMAGE_API_BASE_URL', e.target.value)} placeholder="https://api.openai.com/v1" />
+          </Field>
+          {renderSecretField('IMAGE_API_KEY', 'API Key', hasEnvImageKey)}
+          <Field label="模型名称">
+            <input className="input" value={form.IMAGE_MODEL} onChange={(e) => up('IMAGE_MODEL', e.target.value)} placeholder="gpt-image-2" />
+          </Field>
+        </ConfigCard>
+      </section>
+
+      <section className="surface p-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="page-kicker">市场平台</div>
+            <h3 className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">平台信息</h3>
+          </div>
+          <button type="button" onClick={refreshPlatforms} disabled={platformsLoading} className="btn-secondary h-9 gap-2 text-xs">
+            <RefreshCw className={`h-3.5 w-3.5 ${platformsLoading ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
+        {platformsErr && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{platformsErr}</div>}
+        <div className="mt-4 divide-y divide-slate-100 dark:divide-slate-800">
+          {platforms.map((platform) => (
+            <div key={platform.slug} className="flex items-center justify-between gap-3 py-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span aria-hidden>{platform.icon}</span>
+                  <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{platform.name}</span>
+                  <span className="font-mono text-xs text-slate-400">{platform.slug}</span>
+                </div>
+                <div className="mt-1 truncate text-xs text-slate-500">{platform.tagline}</div>
+              </div>
+              <button type="button" onClick={() => setEditingPlatform(platform)} className="btn-secondary h-8 shrink-0 text-xs">
+                编辑
+              </button>
+            </div>
+          ))}
+          {!platformsLoading && platforms.length === 0 && (
+            <div className="py-8 text-center text-sm text-slate-500">暂无平台数据。</div>
           )}
         </div>
-      </div>
+      </section>
 
-      {/* 新增 / 编辑抽屉 */}
+      <section className="surface p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs leading-6 text-slate-500">
+            保存会写入数据库 Setting 表。API Key 池优先级高于本页兼容字段。
+          </p>
+          <button type="button" onClick={save} disabled={saving} className="btn-primary gap-2">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            保存设置
+          </button>
+        </div>
+      </section>
+
       {drawerOpen && (
-
-      
         <KeyDrawer
           draft={draft}
           editMode={draftEditMode}
           saving={draftSaving}
           onChange={setDraft}
-          onClose={closeDrawer}
+          onClose={() => setDrawerOpen(false)}
           onSave={saveDraft}
         />
       )}
 
-      {/* v0.14-z63: Zilliz 向量数据库配置 + 状态 */}
-      <section className="card-elevated p-4 sm:p-5">
-        <header className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-          <div>
-            <h2 className="text-sm sm:text-base font-semibold text-slate-800 dark:text-slate-100 inline-flex items-center gap-2">
-              <span>🧠</span>
-              <span>向量数据库 (Zilliz)</span>
-              {vectorStatus?.enabled ? (
-                <span className="badge badge-green text-[10px]">已启用</span>
-              ) : (
-                <span className="badge badge-gray text-[10px]">未启用</span>
-              )}
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              语义检索 / 图片搜索 / 历史召回。配置 Zilliz Cloud 端点 + embedding 调用 key。
-            </p>
-          </div>
-          {!vectorEditing && (
-            <button
-              type="button"
-              onClick={() => {
-                setVectorDraft({
-                  VECTOR_ENABLED: vectorConfig?.VECTOR_ENABLED || '0',
-                  VECTOR_ZILLIZ_ENDPOINT: vectorConfig?.VECTOR_ZILLIZ_ENDPOINT || '',
-                  VECTOR_ZILLIZ_TOKEN: '',
-                  EMBEDDING_BASE_URL: vectorConfig?.EMBEDDING_BASE_URL || '',
-                  EMBEDDING_API_KEY: '',
-                  EMBEDDING_MODEL: vectorConfig?.EMBEDDING_MODEL || '',
-                });
-                setVectorEditing(true);
-              }}
-              className="text-xs font-medium text-brand-700 hover:underline dark:text-brand-300"
-            >
-              编辑 →
-            </button>
-          )}
-        </header>
-
-        {vectorStatus && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3 text-xs">
-            <div className="border border-slate-200 dark:border-slate-700 rounded-md p-2">
-              <div className="text-slate-500 dark:text-slate-400">Endpoint</div>
-              <div className="font-mono text-[10px] truncate text-slate-800 dark:text-slate-200" title={vectorStatus.endpoint}>
-                {vectorStatus.endpoint || '(未配置)'}
-              </div>
-            </div>
-            <div className="border border-slate-200 dark:border-slate-700 rounded-md p-2">
-              <div className="text-slate-500 dark:text-slate-400">dao_history</div>
-              <div className={vectorStatus.history.exists ? 'text-emerald-600 dark:text-emerald-400 font-mono' : 'text-slate-400 font-mono'}>
-                {vectorStatus.history.exists ? `${vectorStatus.history.rows} 条` : '(不存在)'}
-              </div>
-            </div>
-            <div className="border border-slate-200 dark:border-slate-700 rounded-md p-2">
-              <div className="text-slate-500 dark:text-slate-400">dao_assets</div>
-              <div className={vectorStatus.assets.exists ? 'text-emerald-600 dark:text-emerald-400 font-mono' : 'text-slate-400 font-mono'}>
-                {vectorStatus.assets.exists ? `${vectorStatus.assets.rows} 条` : '(不存在)'}
-              </div>
-            </div>
-          </div>
-        )}
-        {vectorStatus?.error && (
-          <div className="text-xs text-red-500 mb-3 break-all">{vectorStatus.error}</div>
-        )}
-
-        {vectorEditing && (
-          <div className="space-y-3 p-3 mb-3 rounded-lg bg-slate-50 dark:bg-slate-800/30 border border-slate-200 dark:border-slate-700">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-slate-500 dark:text-slate-400">启用</label>
-                <select
-                  className="input mt-1"
-                  value={vectorDraft.VECTOR_ENABLED}
-                  onChange={(e) => setVectorDraft({ ...vectorDraft, VECTOR_ENABLED: e.target.value })}
-                >
-                  <option value="1">启用</option>
-                  <option value="0">停用</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 dark:text-slate-400">Embedding Model</label>
-                <input
-                  className="input mt-1"
-                  value={vectorDraft.EMBEDDING_MODEL}
-                  onChange={(e) => setVectorDraft({ ...vectorDraft, EMBEDDING_MODEL: e.target.value })}
-                  placeholder="text-embedding-3-small (1536 dim)"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 dark:text-slate-400">Zilliz Endpoint</label>
-              <input
-                className="input mt-1 font-mono text-xs"
-                value={vectorDraft.VECTOR_ZILLIZ_ENDPOINT}
-                onChange={(e) => setVectorDraft({ ...vectorDraft, VECTOR_ZILLIZ_ENDPOINT: e.target.value })}
-                placeholder="https://in01-xxxx.aws-xxx.vectordb.zillizcloud.com:19540"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 dark:text-slate-400">
-                Zilliz Token{vectorConfig?.VECTOR_ZILLIZ_TOKEN.isSet ? ` (已设置 · ${vectorConfig.VECTOR_ZILLIZ_TOKEN.preview} · 留空保留)` : ''}
-              </label>
-              <input
-                type="password"
-                className="input mt-1 font-mono text-xs"
-                value={vectorDraft.VECTOR_ZILLIZ_TOKEN}
-                onChange={(e) => setVectorDraft({ ...vectorDraft, VECTOR_ZILLIZ_TOKEN: e.target.value })}
-                placeholder={vectorConfig?.VECTOR_ZILLIZ_TOKEN.isSet ? '留空保留原值' : 'API Key from zilliz cloud'}
-              />
-            </div>
-            <hr className="border-slate-200 dark:border-slate-700" />
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              💡 Embedding 单独 key（可选）。不填 fallback 到 LLM key 池。<br />
-              推荐：SiliconFlow（国内免费 BAAI/bge-m3） / OpenAI / 充值 cometapi。
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 dark:text-slate-400">Embedding Base URL</label>
-              <input
-                className="input mt-1 font-mono text-xs"
-                value={vectorDraft.EMBEDDING_BASE_URL}
-                onChange={(e) => setVectorDraft({ ...vectorDraft, EMBEDDING_BASE_URL: e.target.value })}
-                placeholder="例：https://api.siliconflow.cn/v1（可选 · 留空 fallback）"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 dark:text-slate-400">
-                Embedding API Key{vectorConfig?.EMBEDDING_API_KEY.isSet ? ` (已设置 · ${vectorConfig.EMBEDDING_API_KEY.preview} · 留空保留)` : ''}
-              </label>
-              <input
-                type="password"
-                className="input mt-1 font-mono text-xs"
-                value={vectorDraft.EMBEDDING_API_KEY}
-                onChange={(e) => setVectorDraft({ ...vectorDraft, EMBEDDING_API_KEY: e.target.value })}
-                placeholder={vectorConfig?.EMBEDDING_API_KEY.isSet ? '留空保留原值' : 'sk-...（可选）'}
-              />
-            </div>
-            <div className="flex gap-2 justify-end pt-2 border-t border-slate-200 dark:border-slate-700">
-              <button
-                type="button"
-                onClick={() => setVectorEditing(false)}
-                className="btn-secondary text-xs"
-                disabled={vectorBusy === 'save'}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={saveVector}
-                className="btn-primary text-xs"
-                disabled={vectorBusy === 'save'}
-              >
-                {vectorBusy === 'save' ? '保存中…' : '保存'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="flex flex-wrap gap-2 items-center text-xs">
-          <button
-            type="button"
-            onClick={testEmbedding}
-            disabled={vectorBusy === 'embed-test' || !vectorStatus?.enabled}
-            className="btn-secondary text-xs disabled:opacity-50"
-          >
-            {vectorBusy === 'embed-test' ? '测试中…' : '🧪 测试 embedding'}
-          </button>
-          <button
-            type="button"
-            onClick={backfillVector}
-            disabled={vectorBusy === 'backfill' || !vectorStatus?.enabled}
-            className="btn-secondary text-xs disabled:opacity-50"
-          >
-            {vectorBusy === 'backfill' ? '回填中…1-3 分钟' : '🔄 全量回填到 Zilliz'}
-          </button>
-          {embedTestResult && (
-            <span className={embedTestResult.startsWith('✓') ? 'text-emerald-600' : 'text-red-500'}>
-              {embedTestResult}
-            </span>
-          )}
-        </div>
-      </section>
-      
-
-      {/* ① 默认图片 adapter（关键链路开关）*/}
-      <div className="card border-brand-200 dark:border-brand-800">
-        <div className="card-header bg-brand-50/50 dark:bg-brand-900/20">
-          <h2 className="font-semibold flex items-center gap-2">
-            <span>🔗</span>
-            <span>默认图片 adapter</span>
-          </h2>
-          <Link href="/adapters" className="text-sm text-brand-600 hover:underline">管理 adapters →</Link>
-        </div>
-        <div className="card-body space-y-3">
-          {adapterList.length === 0 ? (
-            <div className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-              暂无 adapter。<button onClick={seedPresets} disabled={seeding} className="text-brand-600 hover:underline disabled:opacity-50">
-                {seeding ? '种入中…' : '一键种入 5 个内置预设'}
-              </button>
-            </div>
-          ) : (
-            <Field label="选择默认 adapter（生图链路会优先走这个）">
-              <select
-                className="input"
-                value={form.IMAGE_DEFAULT_ADAPTER}
-                onChange={(e) => up('IMAGE_DEFAULT_ADAPTER', e.target.value)}
-              >
-                <option value="">— 不使用 adapter（走 OpenAI 兼容默认）—</option>
-                {adapterList.filter((a) => a.enabled).map((a) => (
-                  <option key={a.slug} value={a.slug}>
-                    {a.name} · {a.type === 'sync' ? '同步' : '异步轮询'}
-                  </option>
-                ))}
-                {adapterList.some((a) => !a.enabled) && (
-                  <optgroup label="（已停用）">
-                    {adapterList.filter((a) => !a.enabled).map((a) => (
-                      <option key={a.slug} value={a.slug} disabled>{a.name}（已停用）</option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-            </Field>
-          )}
-          {adapterList.length > 0 && (
-            <div className="flex items-center gap-2 pt-1 flex-wrap">
-              <button onClick={seedPresets} disabled={seeding} className="text-xs text-slate-500 hover:text-brand-600 hover:underline">
-                {seeding ? '检查中…' : '检查并补齐内置预设'}
-              </button>
-              <span className="text-xs text-slate-400">·</span>
-              <Link href="/adapters" className="text-xs text-slate-500 hover:text-brand-600 hover:underline">新建自定义 adapter</Link>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* v0.11 B15.6 · 市场平台编辑卡片（放在 IMAGE provider section 下方）*/}
-      <div
-        className="card border-violet-200 dark:border-violet-800"
-        data-b15-6-market-platforms-card=""
-      >
-        <div className="card-header bg-violet-50/40 dark:bg-violet-900/20 flex-wrap gap-2">
-          <h2 className="font-semibold flex items-center gap-2">
-            <span>📊</span>
-            <span>市场平台</span>
-            <span className="text-xs text-slate-400 font-normal">v0.11 B15.6</span>
-          </h2>
-          <div className="text-xs text-slate-500">
-            编辑 PlatformInfo（介绍 / 推荐 KPI / 推荐工作流）。写入 Setting 表 key
-            <span className="font-mono"> market:platform:&lt;slug&gt;</span>。
-          </div>
-        </div>
-        <div className="card-body space-y-2">
-          {platformsErr && (
-            <div className="text-sm text-red-600">{platformsErr}</div>
-          )}
-          {platformsLoading && (
-            <div className="text-xs text-slate-400">刷新中…</div>
-          )}
-          {!platformsLoading && platforms.length === 0 && !platformsErr && (
-            <div className="text-xs text-slate-400">
-              暂无平台数据。请检查 entrypoint 是否已自动 seed 三平台。
-            </div>
-          )}
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {platforms.map((p) => (
-              <div
-                key={p.slug}
-                className="flex items-center justify-between gap-3 py-2"
-                data-b15-6-platform-row={p.slug}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span aria-hidden className="text-base">{p.icon}</span>
-                  <span className="font-medium text-sm">{p.name}</span>
-                  <span className="text-xs text-slate-400 font-mono">({p.slug})</span>
-                  <span className="text-xs text-slate-500 truncate hidden sm:inline">
-                    · {p.tagline}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="text-xs text-brand-600 hover:underline shrink-0"
-                  onClick={() => setEditingPlatform(p)}
-                  data-b15-6-edit-button={p.slug}
-                >
-                  编辑
-                </button>
-              </div>
-            ))}
-          </div>
-          <p className="text-[11px] text-slate-400 pt-1 leading-relaxed">
-            提示：保存后立即生效，dashboard 的 MarketTrendsCard 下次拉取会显示新值。
-            entrypoint 自动 seed 检测到此 key 已存在会跳过覆盖（idempotent）。
-          </p>
-        </div>
-      </div>
-
-      {/* v0.11 B15.6 · Modal */}
       {editingPlatform && (
         <PlatformEditModal
-          open={!!editingPlatform}
+          open={Boolean(editingPlatform)}
           slug={editingPlatform.slug as PlatformSlug}
           current={editingPlatform}
           onClose={() => setEditingPlatform(null)}
           onSaved={(next) => {
-            setPlatforms((list) =>
-              list.map((it) => (it.slug === next.slug ? next : it)),
-            );
+            setPlatforms((list) => list.map((item) => (item.slug === next.slug ? next : item)));
           }}
         />
       )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* LLM */}
-        <div className="card">
-          <div className="card-header">
-            <h2 className="font-semibold">LLM 文案 API（兼容/Fallback）</h2>
-            <button
-              onClick={() => test('llm')}
-              disabled={testing === 'llm'}
-              className="text-sm text-brand-600 hover:underline disabled:opacity-50"
-            >
-              {testing === 'llm' ? '测试中...' : '测试连接'}
-            </button>
-          </div>
-          <div className="card-body space-y-3">
-            <p className="text-xs text-slate-500 leading-relaxed">
-              v0.11 B1 起优先走「API Keys 池」。当池中无 active=true 的 LLM key 时，
-              系统才会回退到这里的兼容字段（Setting 表）。两者并存，相互不冲突。
-            </p>
-            <Field label="API Base URL">
-              <input
-                className="input"
-                value={form.LLM_API_BASE_URL}
-                onChange={(e) => up('LLM_API_BASE_URL', e.target.value)}
-                placeholder="例：https://api.openai.com/v1"
-              />
-            </Field>
-            {renderKeyField('LLM_API_KEY', 'API Key', hasEnvLLMKey)}
-            <Field label="模型名称">
-              <input
-                className="input"
-                value={form.LLM_MODEL}
-                onChange={(e) => up('LLM_MODEL', e.target.value)}
-                placeholder="例：gpt-4o-mini"
-              />
-            </Field>
-          </div>
-        </div>
-
-        {/* Image API（兼容旧路径）*/}
-        <div className="card">
-          <div className="card-header">
-            <h2 className="font-semibold">图片 API（兼容/Fallback）</h2>
-            <button
-              onClick={() => test('image')}
-              disabled={testing === 'image'}
-              className="text-sm text-brand-600 hover:underline disabled:opacity-50"
-            >
-              {testing === 'image' ? '测试中...' : '测试连接'}
-            </button>
-          </div>
-          <div className="card-body space-y-3">
-            <p className="text-xs text-slate-500 leading-relaxed">
-              当上面"默认 adapter"未选 + API Keys 池无 IMAGE key 时，生图才会走这里的 OpenAI 兼容配置。<br/>
-              选了 adapter 后，下面的字段中只有 <code className="text-xs">IMAGE_API_KEY</code> 仍会被 adapter 复用（且池优先）。
-            </p>
-            <Field label="API Base URL">
-              <input
-                className="input"
-                value={form.IMAGE_API_BASE_URL}
-                onChange={(e) => up('IMAGE_API_BASE_URL', e.target.value)}
-                placeholder="例：https://api.openai.com/v1"
-              />
-            </Field>
-            {renderKeyField('IMAGE_API_KEY', 'API Key（adapter 也用这个 key）', hasEnvImageKey)}
-            <Field label="模型名称（仅 fallback 用）">
-              <input
-                className="input"
-                value={form.IMAGE_MODEL}
-                onChange={(e) => up('IMAGE_MODEL', e.target.value)}
-                placeholder="例：gpt-img-2"
-              />
-            </Field>
-          </div>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-body flex items-center justify-between flex-wrap gap-3">
-          <div className="text-xs text-slate-500 leading-relaxed">
-            说明：v0.11 B1 起 API Key 优先级 = ① API Keys 池 → ② 本页 Setting 兼容字段 → ③ .env 同名变量。
-            数据库中的 Key 仅写入本机 SQLite。GET 接口已脱敏，不再回传明文。
-          </div>
-          <div className="flex items-center gap-3">
-            <button onClick={save} disabled={saving} className="btn-primary">
-              {saving ? '保存中...' : '保存设置'}
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
+
+  function renderSecretField(key: 'LLM_API_KEY' | 'IMAGE_API_KEY', label: string, envSet: boolean) {
+    const meta = secretMeta[key];
+    const editing = Boolean(editingKey[key]);
+    if (!editing) {
+      return (
+        <Field label={label}>
+          <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-slate-600 dark:text-slate-300">
+              {meta?.isSet ? `数据库已设置，长度 ${meta.length}` : envSet ? '环境变量已设置' : '未设置'}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setEditingKey((current) => ({ ...current, [key]: true }));
+                setForm((current) => ({ ...current, [key]: '' }));
+              }}
+              className="btn-secondary h-8 text-xs"
+            >
+              更新密钥
+            </button>
+          </div>
+        </Field>
+      );
+    }
+    return (
+      <Field label={label}>
+        <div className="flex gap-2">
+          <input
+            type="password"
+            className="input"
+            autoComplete="new-password"
+            value={form[key]}
+            onChange={(e) => up(key, e.target.value)}
+            placeholder="输入新密钥"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              setEditingKey((current) => ({ ...current, [key]: false }));
+              setForm((current) => ({ ...current, [key]: '' }));
+            }}
+            className="btn-secondary shrink-0 text-xs"
+          >
+            取消
+          </button>
+        </div>
+      </Field>
+    );
+  }
 }
 
-function Field({
-  label,
-  children,
+function PoolSection({
+  title,
+  rows,
+  busyId,
+  onEdit,
+  onTest,
+  onQuota,
+  onPromote,
+  onToggle,
+  onDelete,
 }: {
-  label: string;
-  children: React.ReactNode;
+  title: string;
+  rows: PoolKey[];
+  busyId: string | null;
+  onEdit: (row: PoolKey) => void;
+  onTest: (id: string) => void;
+  onQuota: (id: string, label: string) => void;
+  onPromote: (id: string) => void;
+  onToggle: (row: PoolKey) => void;
+  onDelete: (id: string, label: string) => void;
 }) {
   return (
-    <div>
-      <label className="label">{label}</label>
-      {children}
+    <div className="bg-white p-4 dark:bg-slate-950">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h4 className="text-sm font-semibold text-slate-950 dark:text-white">{title}</h4>
+        <span className="text-xs text-slate-400">{rows.length} 条</span>
+      </div>
+      <div className="space-y-3">
+        {rows.map((row) => (
+          <div key={row.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{row.label}</span>
+                  <span className={row.active ? 'badge-green' : 'badge-gray'}>{row.active ? '启用' : '停用'}</span>
+                  {row.lastError && <span className="badge-yellow">有错误</span>}
+                </div>
+                <div className="mt-1 truncate font-mono text-xs text-slate-500">{maskUrl(row.baseUrl)} · {row.model}</div>
+                <div className="mt-1 text-xs text-slate-400">优先级 {row.priority} · 请求 {row.totalRequests} · 错误 {row.totalErrors}</div>
+                {row.lastError && <div className="mt-2 line-clamp-2 text-xs text-amber-700 dark:text-amber-300">{row.lastError}</div>}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <SmallButton onClick={() => onEdit(row)} label="编辑" />
+                <SmallButton onClick={() => onTest(row.id)} label={busyId === row.id ? '测试中' : '测试'} disabled={busyId === row.id} />
+                <SmallButton onClick={() => onQuota(row.id, row.label)} label="额度" disabled={busyId === row.id} />
+                <SmallButton onClick={() => onPromote(row.id)} label="置顶" icon={<ArrowUp className="h-3 w-3" />} disabled={busyId === row.id} />
+                <SmallButton onClick={() => onToggle(row)} label={row.active ? '停用' : '启用'} disabled={busyId === row.id} />
+                <button type="button" onClick={() => onDelete(row.id, row.label)} disabled={busyId === row.id} className="inline-flex h-8 items-center justify-center rounded-md border border-red-200 px-2 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:hover:bg-red-950">
+                  <Trash2 className="h-3 w-3" aria-hidden />
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+        {rows.length === 0 && (
+          <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 dark:border-slate-800">
+            暂无 Key。
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-/** v0.11 B1 · 新增 / 编辑抽屉 */
 function KeyDrawer({
   draft,
   editMode,
@@ -1474,103 +961,136 @@ function KeyDrawer({
   draft: DraftKey;
   editMode: boolean;
   saving: boolean;
-  onChange: (d: DraftKey) => void;
+  onChange: (draft: DraftKey) => void;
   onClose: () => void;
   onSave: () => void;
 }) {
-  function up<K extends keyof DraftKey>(k: K, v: DraftKey[K]) {
-    onChange({ ...draft, [k]: v });
+  function up<K extends keyof DraftKey>(key: K, value: DraftKey[K]) {
+    onChange({ ...draft, [key]: value });
   }
+
   return (
     <div className="fixed inset-0 z-50 flex">
-      <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
-      <div className="ml-auto w-full max-w-[560px] h-full bg-white dark:bg-slate-900 shadow-2xl flex flex-col relative">
-        <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
-          <h3 className="font-semibold">{editMode ? '编辑 API Key' : '新增 API Key'}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
+      <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative ml-auto flex h-full w-full max-w-[560px] flex-col border-l border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-950">
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+          <div>
+            <div className="page-kicker">{editMode ? '编辑 Key' : '新增 Key'}</div>
+            <h3 className="mt-1 font-semibold text-slate-950 dark:text-white">{editMode ? '更新 API Key' : '新增 API Key'}</h3>
+          </div>
+          <button type="button" onClick={onClose} className="tap-target-sm inline-flex w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-900" aria-label="关闭">
+            <X className="h-5 w-5" />
+          </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-5 space-y-3">
-          <Field label="provider">
-            <select
-              className="input"
-              value={draft.provider}
-              onChange={(e) => up('provider', (e.target.value === 'image' ? 'image' : 'llm') as 'llm' | 'image')}
-            >
-              <option value="llm">llm（文案）</option>
-              <option value="image">image（出图）</option>
+        <div className="flex-1 space-y-3 overflow-y-auto p-5">
+          <Field label="类型">
+            <select className="input" value={draft.provider} onChange={(e) => up('provider', e.target.value === 'image' ? 'image' : 'llm')}>
+              <option value="llm">LLM 文案</option>
+              <option value="image">图片生成</option>
             </select>
           </Field>
-          <Field label="label（自定义名字）">
-            <input
-              className="input"
-              value={draft.label}
-              onChange={(e) => up('label', e.target.value)}
-              placeholder="例：DeepSeek 主用 / 4router 备用"
-            />
+          <Field label="名称">
+            <input className="input" value={draft.label} onChange={(e) => up('label', e.target.value)} placeholder="例如：主用 / 备用 / 低价中转" />
           </Field>
-          <Field label="baseUrl">
-            <input
-              className="input"
-              value={draft.baseUrl}
-              onChange={(e) => up('baseUrl', e.target.value)}
-              placeholder="例：https://inference.do-ai.run/v1"
-            />
+          <Field label="Base URL">
+            <input className="input font-mono text-xs" value={draft.baseUrl} onChange={(e) => up('baseUrl', e.target.value)} placeholder="https://api.example.com/v1" />
           </Field>
-          <Field label={editMode ? 'apiKey（留空保留原值）' : 'apiKey'}>
-            <input
-              type="password"
-              className="input"
-              autoComplete="new-password"
-              value={draft.apiKey}
-              onChange={(e) => up('apiKey', e.target.value)}
-              placeholder={editMode ? '输入新 key（留空则不改）' : 'sk-...'}
-            />
+          <Field label={editMode ? 'API Key（留空保留原值）' : 'API Key'}>
+            <input type="password" className="input font-mono text-xs" autoComplete="new-password" value={draft.apiKey} onChange={(e) => up('apiKey', e.target.value)} placeholder="sk-..." />
           </Field>
-          <Field label="model">
-            <input
-              className="input"
-              value={draft.model}
-              onChange={(e) => up('model', e.target.value)}
-              placeholder="例：deepseek-v4-pro / gpt-image-2"
-            />
+          <Field label="模型">
+            <input className="input" value={draft.model} onChange={(e) => up('model', e.target.value)} placeholder="gpt-4o-mini / gpt-image-2" />
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="priority（越小越优先）">
-              <input
-                type="number"
-                className="input"
-                value={draft.priority}
-                onChange={(e) => up('priority', Number(e.target.value) || 0)}
-              />
+          <div className="field-grid">
+            <Field label="优先级">
+              <input type="number" className="input" value={draft.priority} onChange={(e) => up('priority', Number(e.target.value) || 0)} />
             </Field>
-            <Field label="启用">
-              <select
-                className="input"
-                value={draft.active ? '1' : '0'}
-                onChange={(e) => up('active', e.target.value === '1')}
-              >
+            <Field label="状态">
+              <select className="input" value={draft.active ? '1' : '0'} onChange={(e) => up('active', e.target.value === '1')}>
                 <option value="1">启用</option>
                 <option value="0">停用</option>
               </select>
             </Field>
           </div>
-          <Field label="备注（可选）">
-            <textarea
-              className="input"
-              rows={2}
-              value={draft.notes}
-              onChange={(e) => up('notes', e.target.value)}
-              placeholder="例：限速 60 RPM / 低价中转 / 仅备用"
-            />
+          <Field label="备注">
+            <textarea className="input" rows={3} value={draft.notes} onChange={(e) => up('notes', e.target.value)} placeholder="额度、用途或限制说明" />
           </Field>
         </div>
-        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
-          <button onClick={onClose} className="btn-secondary text-sm" disabled={saving}>取消</button>
-          <button onClick={onSave} className="btn-primary text-sm" disabled={saving}>
-            {saving ? '保存中…' : (editMode ? '更新' : '新增')}
+        <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-3 dark:border-slate-800">
+          <button type="button" onClick={onClose} className="btn-secondary text-sm" disabled={saving}>取消</button>
+          <button type="button" onClick={onSave} className="btn-primary gap-2 text-sm" disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+            {editMode ? '更新' : '新增'}
           </button>
         </div>
       </div>
     </div>
   );
+}
+
+function ConfigCard({ title, children, onTest, testing }: { title: string; children: ReactNode; onTest: () => void; testing: boolean }) {
+  return (
+    <div className="surface p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Settings2 className="h-4 w-4 text-cyan-600" aria-hidden />
+          <h3 className="text-lg font-semibold text-slate-950 dark:text-white">{title}</h3>
+        </div>
+        <button type="button" onClick={onTest} disabled={testing} className="btn-secondary h-9 gap-2 text-xs">
+          {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
+          测试
+        </button>
+      </div>
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function DarkMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.06] p-3">
+      <div className="text-2xl font-semibold tabular-nums text-white">{value}</div>
+      <div className="mt-1 text-xs text-slate-400">{label}</div>
+    </div>
+  );
+}
+
+function StatusRow({ label, ok, value }: { label: string; ok: boolean; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900">
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{label}</div>
+        <div className="mt-0.5 truncate text-xs text-slate-500">{value}</div>
+      </div>
+      {ok ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" /> : <CircleAlert className="h-4 w-4 shrink-0 text-amber-500" />}
+    </div>
+  );
+}
+
+function SmallButton({ label, onClick, disabled, icon }: { label: string; onClick: () => void; disabled?: boolean; icon?: ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} className="inline-flex h-8 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-600 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900">
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function maskUrl(url: string): string {
+  if (!url) return '';
+  return url.replace(/^https?:\/\/([^/]+).*$/, 'https://$1');
+}
+
+function formatMoney(value: number | undefined | null) {
+  if (typeof value !== 'number') return '-';
+  return `$${value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}`;
 }

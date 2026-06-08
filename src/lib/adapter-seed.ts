@@ -54,9 +54,9 @@ import type {
  * 但前端选择器仍走这个池 → 用户选「方图 1024×1024」体验最稳；保持池统一更易维护。
  */
 const SIZES_GPT_IMAGE_2: SizePreset[] = [
-  { label: '方图 1024×1024', value: '1024x1024', tier: '1k' },
-  { label: '竖图 1024×1536（2:3）', value: '1024x1536', tier: '1k' },
-  { label: '横图 1536×1024（3:2）', value: '1536x1024', tier: '1k' },
+  { label: '方图 1024×1024', value: '1024x1024', tier: '1K' },
+  { label: '竖图 1024×1536（2:3）', value: '1024x1536', tier: '1K' },
+  { label: '横图 1536×1024（3:2）', value: '1536x1024', tier: '1K' },
 ];
 const QUALITIES_GPT_IMAGE_2: QualityPreset[] = [
   { label: '低', value: 'low' },
@@ -78,9 +78,9 @@ const ASPECT_RATIOS_GPT_IMAGE_2: AspectRatioPreset[] = [
 
 /** kie-flux-kontext-pro */
 const SIZES_FLUX: SizePreset[] = [
-  { label: '方图1024', value: '1024x1024', tier: '1k' },
-  { label: '竖图3:4', value: '768x1024', tier: '1k' },
-  { label: '竖图9:16', value: '720x1280', tier: '1k' },
+  { label: '方图1024', value: '1024x1024', tier: '1K' },
+  { label: '竖图3:4', value: '768x1024', tier: '1K' },
+  { label: '竖图9:16', value: '720x1280', tier: '1K' },
 ];
 const QUALITIES_FLUX: QualityPreset[] = [
   { label: '标准', value: 'standard' },
@@ -98,9 +98,9 @@ const ASPECT_RATIOS_FLUX: AspectRatioPreset[] = [
 
 /** openai-dalle-3 三档官方尺寸 + 三档比例 */
 const SIZES_DALLE3: SizePreset[] = [
-  { label: '方图1024', value: '1024x1024', tier: '1k' },
-  { label: '竖图1792', value: '1024x1792', tier: '2k' },
-  { label: '横图1792', value: '1792x1024', tier: '2k' },
+  { label: '方图1024', value: '1024x1024', tier: '1K' },
+  { label: '竖图1792', value: '1024x1792', tier: '2K' },
+  { label: '横图1792', value: '1792x1024', tier: '2K' },
 ];
 const QUALITIES_DALLE3: QualityPreset[] = [
   { label: '标准', value: 'standard' },
@@ -114,7 +114,7 @@ const ASPECT_RATIOS_DALLE3: AspectRatioPreset[] = [
 
 /** generic-openai-compatible：仅一档 1024 + 1:1 */
 const SIZES_GENERIC: SizePreset[] = [
-  { label: '1024', value: '1024x1024', tier: '1k' },
+  { label: '1024', value: '1024x1024', tier: '1K' },
 ];
 const QUALITIES_GENERIC: QualityPreset[] = [];
 const ASPECT_RATIOS_GENERIC: AspectRatioPreset[] = [

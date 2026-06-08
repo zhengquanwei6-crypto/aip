@@ -113,7 +113,7 @@ export default async function PlaygroundPage({
   const initTab = (() => {
     const t = searchParams?.tab;
     if (t === 'image' || t === 'agent' || t === 'llm') return t;
-    return 'llm';
+    return 'image';
   })();
 
   return (

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Trash2, CheckSquare, Send } from 'lucide-react';
+import { ArrowRight, CheckSquare, Send, Trash2, UserPlus } from 'lucide-react';
 import { CATEGORIES } from '@/lib/constants';
 import { toast } from '@/lib/toast';
 import ListShell, { bulkSerial } from '@/components/ListShell';
@@ -108,8 +108,19 @@ export default function ClientsClient({ initial }: { initial: ClientItem[] }) {
     };
   }
 
+  const customerCount = items.filter((item) => item.status === 'customer').length;
+  const negotiatingCount = items.filter((item) => item.status === 'negotiating').length;
+  const totalRevenue = items.reduce((sum, item) => sum + item.totalRevenue, 0);
+
   return (
     <>
+      <section className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <ClientSignal label="客户总数" value={items.length} note="全部线索和成交客户" />
+        <ClientSignal label="咨询中" value={negotiatingCount} note="需要继续推进" />
+        <ClientSignal label="已成交" value={customerCount} note="可复盘收入与素材" />
+        <ClientSignal label="总成交" value={`¥${Math.round(totalRevenue)}`} note="收入闭环回流" />
+      </section>
+
       <ListShell<ClientItem>
         items={items}
         getId={(c) => c.id}
@@ -118,9 +129,10 @@ export default function ClientsClient({ initial }: { initial: ClientItem[] }) {
         toolbar={
           <button
             onClick={() => setShowAdd(true)}
-            className="btn-primary text-sm"
+            className="btn-primary h-9 gap-2 text-sm"
           >
-            ➕ 新增客户
+            <UserPlus className="h-4 w-4" aria-hidden />
+            新增客户
           </button>
         }
         searchPlaceholder="搜索昵称 / 标签 / 类目"
@@ -274,12 +286,12 @@ export default function ClientsClient({ initial }: { initial: ClientItem[] }) {
           },
         ]}
         renderCard={(c) => (
-          <div className="card">
-            <div className="card-body">
+          <div className="command-glass detail-lift">
+            <div className="p-4 sm:p-5">
               <div className="flex items-center gap-2 flex-wrap pl-8">
                 <Link
                   href={`/clients/${c.id}`}
-                  className="font-semibold text-slate-800 dark:text-slate-100 hover:text-brand-600"
+                  className="font-bold text-slate-900 hover:text-cyan-700 dark:text-slate-100 dark:hover:text-cyan-300"
                 >
                   {c.nickname}
                 </Link>
@@ -301,6 +313,16 @@ export default function ClientsClient({ initial }: { initial: ClientItem[] }) {
                 <span className={STATUS_LABEL[c.status]?.cls ?? 'badge-gray'}>
                   {STATUS_LABEL[c.status]?.label ?? c.status}
                 </span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-500">
+                <div className="rounded-lg border border-slate-200 bg-white/70 p-2 dark:border-slate-800 dark:bg-slate-950/60">
+                  <div className="text-slate-400">订单</div>
+                  <div className="mt-1 font-mono text-base font-bold text-slate-900 dark:text-white">{c.totalOrders}</div>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white/70 p-2 dark:border-slate-800 dark:bg-slate-950/60">
+                  <div className="text-slate-400">成交</div>
+                  <div className="mt-1 font-mono text-base font-bold text-slate-900 dark:text-white">¥{Math.round(c.totalRevenue)}</div>
+                </div>
               </div>
               <div className="text-xs text-slate-500 mt-2">
                 {c.category || '未分类'} · 订单 {c.totalOrders} · ¥
@@ -324,9 +346,9 @@ export default function ClientsClient({ initial }: { initial: ClientItem[] }) {
               <div className="mt-2">
                 <Link
                   href={`/clients/${c.id}`}
-                  className="text-xs text-brand-600 hover:underline"
+                  className="action-link bg-cyan-50 text-cyan-700 hover:bg-cyan-100 dark:bg-cyan-950/30 dark:text-cyan-300"
                 >
-                  详情 →
+                  进入客户档案 <ArrowRight className="h-3 w-3" aria-hidden />
                 </Link>
               </div>
             </div>
@@ -337,14 +359,22 @@ export default function ClientsClient({ initial }: { initial: ClientItem[] }) {
       {/* 新增客户弹窗 */}
       {showAdd && (
         <div
-          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
           onClick={() => setShowAdd(false)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-lg p-5 w-full max-w-md space-y-3"
+            className="command-glass w-full max-w-md space-y-3 p-5"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="font-semibold">新增客户</h3>
+            <div className="flex items-center gap-2">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+                <UserPlus className="h-4 w-4" aria-hidden />
+              </span>
+              <div>
+                <div className="page-kicker">Client Intake</div>
+                <h3 className="font-bold text-slate-950 dark:text-white">新增客户</h3>
+              </div>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <input
                 className="input"
@@ -412,5 +442,26 @@ export default function ClientsClient({ initial }: { initial: ClientItem[] }) {
         </div>
       )}
     </>
+  );
+}
+
+function ClientSignal({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: string | number;
+  note: string;
+}) {
+  return (
+    <div className="command-stat-card">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">{label}</div>
+        <span className="h-2 w-2 rounded-full bg-cyan-400 shadow-[0_0_16px_rgba(34,211,238,0.75)]" aria-hidden />
+      </div>
+      <div className="mt-3 text-2xl font-black tabular-nums text-slate-950 dark:text-white">{value}</div>
+      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{note}</div>
+    </div>
   );
 }

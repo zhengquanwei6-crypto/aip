@@ -143,27 +143,27 @@ export default function TodayTasksClient({
   return (
     <div className="space-y-5">
       {/* 顶部进度条 */}
-      <header className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3">
+      <header className="command-panel space-y-4 p-4 sm:p-5">
         <div className="flex items-baseline justify-between flex-wrap gap-2">
           <div>
-            <div className="text-[11px] uppercase tracking-wide text-slate-400 font-mono">
-              today
+            <div className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-[11px] font-bold uppercase text-cyan-200">
+              <span className="pulse-dot" aria-hidden />
+              Today Command
             </div>
-            <div className="text-base sm:text-lg font-semibold text-slate-800 dark:text-slate-100 mt-0.5">
+            <div className="mt-3 text-2xl font-black leading-tight text-white sm:text-3xl">
               共 {tasks.length} 条任务
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span>
+          <div className="flex items-center gap-2 text-xs text-slate-300">
+            <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1">
               小红书 {tasks.filter((t) => t.platform === 'xiaohongshu').length}
             </span>
-            <span>·</span>
-            <span>闲鱼 {tasks.filter((t) => t.platform === 'xianyu').length}</span>
+            <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1">闲鱼 {tasks.filter((t) => t.platform === 'xianyu').length}</span>
           </div>
         </div>
 
         {/* 三段式进度条 */}
-        <div className="flex h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+        <div className="flex h-2 overflow-hidden rounded-full bg-white/10">
           <span
             className="bg-amber-400 transition-all"
             style={{ width: `${(counts.pending / total) * 100}%` }}
@@ -187,7 +187,7 @@ export default function TodayTasksClient({
         </div>
 
         {/* 状态分段 */}
-        <div className="flex flex-wrap gap-2">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {STATUSES.map((s) => {
             const active = s.value === activeStatus;
             return (
@@ -197,17 +197,17 @@ export default function TodayTasksClient({
                 onClick={() => setActiveStatus(s.value)}
                 aria-pressed={active}
                 className={
-                  'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors ' +
+                  'inline-flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition-all ' +
                   (active
-                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700')
+                    ? 'border-cyan-300 bg-cyan-300 text-slate-950 shadow-lg shadow-cyan-500/20'
+                    : 'border-white/10 bg-white/5 text-slate-300 hover:border-cyan-300/50 hover:bg-white/10')
                 }
               >
-                <StatusBullet status={s.value} />
-                {s.label}
-                <span className="font-mono tabular-nums opacity-70">
-                  {counts[s.value] ?? 0}
+                <span className="inline-flex items-center gap-1.5">
+                  <StatusBullet status={s.value} />
+                  {s.label}
                 </span>
+                <span className="font-mono tabular-nums">{counts[s.value] ?? 0}</span>
               </button>
             );
           })}
@@ -216,8 +216,8 @@ export default function TodayTasksClient({
 
       {/* 任务卡片 */}
       {filtered.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-sm text-slate-500">
-          这个状态下没有任务。
+        <div className="command-empty">
+          这个状态下没有任务。切换状态或从素材创建一条发布任务。
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -291,9 +291,9 @@ function TaskCard({
   onOpenImage: () => void;
 }) {
   return (
-    <article className="group rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700 transition-all">
+    <article className="task-command-card group">
       {/* 顶部状态条 */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60 text-[11px]">
+      <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-950 px-4 py-2 text-[11px] text-slate-300 dark:border-slate-800">
         <span className="font-mono tabular-nums text-slate-500">
           {task.publishTime}
         </span>
@@ -313,14 +313,14 @@ function TaskCard({
       </div>
 
       {/* 主体 */}
-      <div className="p-4 flex gap-3">
+      <div className="flex gap-3 p-4">
         {/* 缩略图 */}
         <div className="shrink-0">
           {task.imageUrl ? (
             <button
               type="button"
               onClick={onOpenImage}
-              className="block w-24 h-24 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 hover:opacity-90"
+              className="block h-24 w-24 overflow-hidden rounded-lg border border-slate-200 shadow-sm hover:opacity-90 dark:border-slate-700"
               aria-label="查看大图"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -331,7 +331,7 @@ function TaskCard({
               />
             </button>
           ) : (
-            <div className="w-24 h-24 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 flex items-center justify-center text-slate-400">
+            <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-slate-400 dark:border-slate-700 dark:bg-slate-900">
               <ImageIcon size={20} aria-hidden="true" />
             </div>
           )}
@@ -339,7 +339,7 @@ function TaskCard({
 
         {/* 文字 */}
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm sm:text-base font-medium text-slate-800 dark:text-slate-100 leading-snug line-clamp-2">
+          <h3 className="line-clamp-2 text-sm font-bold leading-snug text-slate-900 dark:text-slate-100 sm:text-base">
             {task.title}
           </h3>
           {task.coverText && (
@@ -356,12 +356,12 @@ function TaskCard({
       </div>
 
       {/* 底部操作 */}
-      <div className="px-4 py-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60 flex items-center gap-2 flex-wrap text-xs">
+      <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-white/70 px-4 py-2 text-xs dark:border-slate-800 dark:bg-slate-950/70">
         <button
           type="button"
           onClick={onPubDirector}
           disabled={busy}
-          className="inline-flex items-center gap-1 rounded-md bg-slate-900 hover:bg-slate-700 disabled:opacity-50 text-white px-2.5 py-1 text-xs"
+          className="btn-primary h-8 gap-1 px-2.5 text-xs"
         >
           <Target size={12} aria-hidden="true" />
           全流程
@@ -371,7 +371,7 @@ function TaskCard({
             type="button"
             onClick={onGenContent}
             disabled={busy}
-            className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 px-2.5 py-1"
+            className="btn-secondary h-8 gap-1 px-2.5 text-xs"
           >
             {busy && busyKind === 'content' ? (
               <Loader2 size={12} className="animate-spin" aria-hidden="true" />
@@ -386,7 +386,7 @@ function TaskCard({
             type="button"
             onClick={onGenImage}
             disabled={busy}
-            className="inline-flex items-center gap-1 rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 px-2.5 py-1"
+            className="btn-secondary h-8 gap-1 px-2.5 text-xs"
           >
             {busy && busyKind === 'image' ? (
               <Loader2 size={12} className="animate-spin" aria-hidden="true" />

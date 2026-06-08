@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { copyAll } from '@/lib/clipboard';
+import { Calculator, Check, Copy, FileText, AlertTriangle } from 'lucide-react';
 
 interface Pkg {
   id: string;
@@ -109,14 +110,15 @@ export default function CalculatorClient({ packages }: { packages: Pkg[] }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-6">
       {/* 输入 */}
-      <div className="card h-fit">
-        <div className="card-header">
+      <div className="command-glass h-fit">
+        <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
+          <Calculator size={16} className="text-cyan-500" aria-hidden />
           <h2 className="font-semibold">报价参数</h2>
         </div>
-        <div className="card-body space-y-3">
+        <div className="space-y-3 p-4 sm:p-5">
           <Field label="类目">
             <select
-              className="input"
+              className="input command-input"
               value={category}
               onChange={(e) => {
                 setCategory(e.target.value);
@@ -146,10 +148,10 @@ export default function CalculatorClient({ packages }: { packages: Pkg[] }) {
                     }}
                     disabled={!pkg}
                     className={
-                      'rounded-md border px-3 py-2 text-sm ' +
+                      'rounded-lg border px-3 py-2 text-sm font-semibold transition-all ' +
                       (tier === t
-                        ? 'bg-brand-600 text-white border-brand-600'
-                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50') +
+                        ? 'border-slate-950 bg-slate-950 text-white shadow-[0_0_24px_rgba(34,211,238,0.18)] dark:border-white dark:bg-white dark:text-slate-950'
+                        : 'border-slate-200 bg-white/70 text-slate-700 hover:border-cyan-300 hover:text-cyan-700 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-300 dark:hover:border-cyan-800') +
                       (!pkg ? ' opacity-40 cursor-not-allowed' : '')
                     }
                   >
@@ -165,14 +167,14 @@ export default function CalculatorClient({ packages }: { packages: Pkg[] }) {
             </div>
           </Field>
           {currentPkg && (
-            <div className="text-xs text-slate-500 leading-relaxed bg-slate-50 rounded p-2">
+            <div className="rounded-lg border border-slate-200 bg-white/60 p-3 text-xs leading-relaxed text-slate-500 dark:border-slate-800 dark:bg-slate-950/60">
               {currentPkg.name}：{currentPkg.description || '—'}
             </div>
           )}
           <Field label={`基础价（默认中位 ${currentPkg?.midPrice ?? 0} 元，可手动调整）`}>
             <input
               type="number"
-              className="input"
+              className="input command-input"
               value={customPrice}
               onChange={(e) => setCustomPrice(e.target.value)}
               placeholder={String(currentPkg?.midPrice ?? '')}
@@ -212,14 +214,15 @@ export default function CalculatorClient({ packages }: { packages: Pkg[] }) {
           <Field label="修改次数">
             <input
               type="number"
-              className="input"
+              className="input command-input"
               min={1}
               max={20}
               value={revisions}
               onChange={(e) => setRevisions(Number(e.target.value) || 3)}
             />
           </Field>
-          <button onClick={calc} className="btn-primary w-full">
+          <button onClick={calc} className="btn-primary inline-flex w-full items-center justify-center gap-2">
+            <Calculator size={16} />
             💰 计算报价
           </button>
           {msg && (
@@ -231,16 +234,16 @@ export default function CalculatorClient({ packages }: { packages: Pkg[] }) {
       {/* 结果 */}
       <div className="space-y-4">
         {!result && (
-          <div className="card">
-            <div className="card-body text-sm text-slate-400 text-center py-12">
+          <div className="command-glass">
+            <div className="px-4 py-14 text-center text-sm text-slate-400 sm:px-5">
               填写左侧参数，点击计算
             </div>
           </div>
         )}
         {result && (
           <>
-            <div className="card border-brand-200 bg-brand-50">
-              <div className="card-body flex items-center justify-between gap-3">
+            <div className="command-glass border-cyan-300/60 bg-cyan-50/70 dark:bg-cyan-950/20">
+              <div className="flex items-center justify-between gap-3 p-4 sm:p-5">
                 <div>
                   <div className="text-xs text-brand-700">总价</div>
                   <div className="text-3xl font-bold text-brand-700 mt-0.5">
@@ -253,26 +256,28 @@ export default function CalculatorClient({ packages }: { packages: Pkg[] }) {
                 <div className="flex flex-col gap-2">
                   <button
                     onClick={copyMessage}
-                    className="rounded-md bg-brand-600 text-white text-sm font-medium px-4 py-2 hover:bg-brand-700"
+                    className="btn-primary inline-flex items-center justify-center gap-2 text-sm"
                   >
-                    📋 复制报价话术
+                    <Copy size={14} />
+                    复制报价话术
                   </button>
                   <button
                     onClick={copyBreakdown}
-                    className="rounded-md bg-white border border-slate-300 text-slate-700 text-sm font-medium px-4 py-2 hover:bg-slate-50"
+                    className="btn-secondary inline-flex items-center justify-center gap-2 text-sm"
                   >
+                    <FileText size={14} />
                     复制完整报价单
                   </button>
                 </div>
               </div>
             </div>
 
-            <div className="card">
-              <div className="card-header">
+            <div className="command-glass">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
                 <h3 className="font-semibold">价格明细</h3>
               </div>
-              <div className="card-body">
-                <table className="table">
+              <div className="overflow-x-auto p-4 sm:p-5">
+                <table className="table command-table">
                   <tbody>
                     {result.breakdown.map((b, i) => (
                       <tr key={i}>
@@ -294,29 +299,31 @@ export default function CalculatorClient({ packages }: { packages: Pkg[] }) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="card">
-                <div className="card-header">
+              <div className="command-glass">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
                   <h3 className="font-semibold">本次包含</h3>
                 </div>
-                <div className="card-body">
+                <div className="p-4 sm:p-5">
                   <ul className="space-y-1 text-sm">
                     {result.scope.map((s, i) => (
-                      <li key={i} className="text-emerald-700">
-                        ✓ {s}
+                      <li key={i} className="flex items-start gap-2 text-emerald-700">
+                        <Check size={14} className="mt-0.5 shrink-0" aria-hidden />
+                        <span>{s}</span>
                       </li>
                     ))}
                   </ul>
                 </div>
               </div>
-              <div className="card">
-                <div className="card-header">
+              <div className="command-glass">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
                   <h3 className="font-semibold">注意事项</h3>
                 </div>
-                <div className="card-body">
+                <div className="p-4 sm:p-5">
                   <ul className="space-y-1 text-sm">
                     {result.notes.map((n, i) => (
-                      <li key={i} className="text-amber-700">
-                        ⚠ {n}
+                      <li key={i} className="flex items-start gap-2 text-amber-700">
+                        <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
+                        <span>{n}</span>
                       </li>
                     ))}
                   </ul>
@@ -324,18 +331,18 @@ export default function CalculatorClient({ packages }: { packages: Pkg[] }) {
               </div>
             </div>
 
-            <div className="card">
-              <div className="card-header">
+            <div className="command-glass">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
                 <h3 className="font-semibold">报价话术</h3>
                 <button
                   onClick={copyMessage}
-                  className="text-xs text-brand-600 hover:underline"
+                  className="btn-secondary h-8 text-xs"
                 >
                   复制
                 </button>
               </div>
-              <div className="card-body">
-                <div className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed bg-slate-50 rounded p-3">
+              <div className="p-4 sm:p-5">
+                <div className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-white/70 p-3 text-sm leading-relaxed text-slate-700 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-300">
                   {result.message}
                 </div>
               </div>

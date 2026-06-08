@@ -905,7 +905,7 @@ function DraftReview({
 
       {/* 操作区 */}
       {phase === 'review' && (
-        <div className="sticky bottom-4 z-10 rounded-xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/60 dark:border-slate-800/60 p-3 shadow-2xl shadow-pink-500/10 flex flex-wrap gap-2 safe-area-bottom">
+        <div className="sticky bottom-4 z-10 rounded-xl bg-white/100 dark:bg-slate-900/100 backdrop-blur-md border border-slate-200/60 dark:border-slate-800/60 p-3 shadow-2xl shadow-pink-500/10 flex flex-wrap gap-2 safe-area-bottom">
           <button
             type="button"
             onClick={onCopyAll}

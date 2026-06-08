@@ -127,23 +127,31 @@ export default function IncomeClient() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto p-3 sm:p-4 space-y-4">
-      <header className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
-        <div className="flex items-center justify-between mb-1">
+    <div className="mx-auto max-w-7xl space-y-4 p-3 sm:p-4">
+      <header className="command-panel p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-2">
-            <DollarSign size={20} className="text-brand-600 dark:text-brand-400" />
-            <h1 className="text-lg font-semibold text-slate-800 dark:text-slate-100">💰 接单收入引擎</h1>
+            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-slate-950">
+              <DollarSign size={20} />
+            </span>
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/5 px-2.5 py-1 text-xs font-bold text-cyan-200">
+                <span className="pulse-dot" aria-hidden />
+                Business Cockpit
+              </div>
+              <h1 className="mt-3 text-3xl font-black leading-tight text-white sm:text-4xl">接单收入引擎</h1>
+            </div>
           </div>
-          <button onClick={() => setShowCreate(true)} className="btn-primary inline-flex items-center gap-1 text-xs">
+          <button onClick={() => setShowCreate(true)} className="command-rail btn-primary bg-white text-slate-950 hover:bg-slate-200 inline-flex items-center gap-1 text-xs">
             <Plus size={14} /> 新报价
           </button>
         </div>
-        <p className="text-xs text-slate-500 dark:text-slate-400">
+        <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-300">
           报价管理 + 漏斗分析 + GMV 预测 + 客户聚类 + 同类报价建议
         </p>
       </header>
 
-      {loading && <div className="text-center py-12 text-slate-400"><Loader2 className="animate-spin inline mr-2" />加载中…</div>}
+      {loading && <div className="command-empty py-12"><Loader2 className="animate-spin inline mr-2" />加载中...</div>}
 
       {!loading && analytics && (
         <>
@@ -157,8 +165,8 @@ export default function IncomeClient() {
 
           {/* 漏斗 + 预测 */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 lg:col-span-2">
-              <h3 className="text-sm font-semibold mb-3">📊 接单漏斗</h3>
+            <div className="command-glass p-4 lg:col-span-2">
+              <h3 className="mb-3 text-sm font-bold text-slate-950 dark:text-white">接单漏斗</h3>
               <div className="space-y-2">
                 {[
                   { key: 'pending', label: '待跟进', value: analytics.funnel.pending },
@@ -171,7 +179,7 @@ export default function IncomeClient() {
                   return (
                     <div key={s.key} className="flex items-center gap-3 text-sm">
                       <span className="w-16 text-xs text-slate-600 dark:text-slate-400">{s.label}</span>
-                      <div className="flex-1 h-7 rounded-md bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                      <div className="h-7 flex-1 overflow-hidden rounded-md bg-slate-100 dark:bg-slate-800">
                         <div className={`h-full ${s.key === 'won' ? 'bg-emerald-400' : s.key === 'lost' ? 'bg-red-400' : 'bg-brand-400'}`} style={{ width: `${pct}%` }} />
                       </div>
                       <span className="w-16 text-right font-mono text-xs">{s.value} ({pct.toFixed(0)}%)</span>
@@ -181,8 +189,8 @@ export default function IncomeClient() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
-              <h3 className="text-sm font-semibold mb-3">🔮 下月 GMV 预测</h3>
+            <div className="command-glass p-4">
+              <h3 className="mb-3 text-sm font-bold text-slate-950 dark:text-white">下月 GMV 预测</h3>
               {forecast?.forecast && (
                 <>
                   <div className="text-2xl font-bold bg-gradient-to-r from-brand-500 to-emerald-500 bg-clip-text text-transparent mb-1">
@@ -202,8 +210,8 @@ export default function IncomeClient() {
           {/* 报价建议器 + 客户聚类 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <QuoteRecommender />
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
-              <h3 className="text-sm font-semibold mb-3">👥 客户群体</h3>
+            <div className="command-glass p-4">
+              <h3 className="mb-3 text-sm font-bold text-slate-950 dark:text-white">客户群体</h3>
               <div className="space-y-3">
                 {analytics.clusters.map((c, i) => (
                   <div key={i} className="border-l-4 border-brand-300 dark:border-brand-700 pl-3">
@@ -226,11 +234,11 @@ export default function IncomeClient() {
 
           {/* category 胜率 */}
           {analytics.categoryStats.length > 0 && (
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
-              <h3 className="text-sm font-semibold mb-3">📈 品类表现</h3>
+            <div className="command-glass p-4">
+              <h3 className="mb-3 text-sm font-bold text-slate-950 dark:text-white">品类表现</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
                 {analytics.categoryStats.map((s) => (
-                  <div key={s.category} className="rounded-lg border border-slate-200 dark:border-slate-800 p-2">
+                    <div key={s.category} className="rounded-lg border border-slate-200 bg-white/70 p-2 dark:border-slate-800 dark:bg-slate-950/60">
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-medium">{s.category}</span>
                       <span className="font-mono text-emerald-600 dark:text-emerald-400">¥{s.revenue}</span>
@@ -245,17 +253,17 @@ export default function IncomeClient() {
           )}
 
           {/* 报价列表 */}
-          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
-            <h3 className="text-sm font-semibold mb-3">📋 报价列表 ({quotes.length})</h3>
+          <div className="command-glass p-4">
+            <h3 className="mb-3 text-sm font-bold text-slate-950 dark:text-white">报价列表 ({quotes.length})</h3>
             {quotes.length === 0 ? (
-              <div className="text-center py-12 text-sm text-slate-400">
+              <div className="command-empty py-12">
                 <AlertCircle size={32} className="mx-auto mb-2 opacity-40" />
-                还没有报价 → 点右上角"新报价"开始
+                还没有报价，点击右上角“新报价”开始
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead className="text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                <table className="table command-table w-full text-xs">
+                  <thead>
                     <tr>
                       <th className="text-left py-2 font-medium">客户</th>
                       <th className="text-left py-2 font-medium">品类</th>
@@ -267,7 +275,7 @@ export default function IncomeClient() {
                   </thead>
                   <tbody>
                     {quotes.map((q) => (
-                      <tr key={q.id} className="border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                      <tr key={q.id}>
                         <td className="py-2">{q.clientName}</td>
                         <td className="py-2">{q.category}{q.difficulty ? <span className="text-slate-400 ml-1">· 难度 {q.difficulty}</span> : null}</td>
                         <td className="py-2 text-right font-mono">¥{q.finalPrice.toLocaleString()}</td>
@@ -307,7 +315,7 @@ export default function IncomeClient() {
 function KPI({ icon, label, value, accent, subtext }: { icon: React.ReactNode; label: string; value: number | string; accent?: 'brand' | 'emerald'; subtext?: string }) {
   const accentClass = accent === 'emerald' ? 'from-emerald-400 to-emerald-600' : accent === 'brand' ? 'from-brand-400 to-brand-600' : 'from-slate-500 to-slate-700';
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3">
+    <div className="command-stat-card">
       <div className="flex items-center gap-1 text-[10px] text-slate-500 mb-1">{icon}{label}</div>
       <div className={`text-xl font-bold bg-gradient-to-r ${accentClass} bg-clip-text text-transparent`}>{value}</div>
       {subtext && <div className="text-[10px] text-slate-500">{subtext}</div>}
@@ -336,8 +344,8 @@ function QuoteRecommender() {
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
-      <h3 className="text-sm font-semibold mb-3">💡 同类报价建议</h3>
+    <div className="command-glass p-4">
+      <h3 className="mb-3 text-sm font-bold text-slate-950 dark:text-white">同类报价建议</h3>
       <div className="grid grid-cols-2 gap-2 mb-2">
         <select className="input text-xs" value={category} onChange={(e) => setCategory(e.target.value)}>
           {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -413,10 +421,13 @@ function CreateQuoteModal({ onClose, onCreated }: { onClose: () => void; onCreat
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-slate-900 rounded-xl max-w-lg w-full max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="command-glass max-h-[90vh] w-full max-w-lg overflow-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-800">
-          <h3 className="text-base font-semibold">新建报价</h3>
+          <div>
+            <div className="page-kicker">Quote Intake</div>
+            <h3 className="mt-1 text-base font-bold text-slate-950 dark:text-white">新建报价</h3>
+          </div>
           <button onClick={onClose}><X size={18} /></button>
         </div>
         <div className="p-4 space-y-3">
@@ -456,7 +467,7 @@ function CreateQuoteModal({ onClose, onCreated }: { onClose: () => void; onCreat
                 </button>
               </div>
             ))}
-            <button onClick={() => setItems([...items, { name: '', qty: 1, unitPrice: 0 }])} className="text-xs text-brand-600 dark:text-brand-400 mt-2">+ 加一条</button>
+          <button onClick={() => setItems([...items, { name: '', qty: 1, unitPrice: 0 }])} className="mt-2 text-xs font-semibold text-cyan-700 hover:underline dark:text-cyan-300">加一条</button>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -474,7 +485,7 @@ function CreateQuoteModal({ onClose, onCreated }: { onClose: () => void; onCreat
           </div>
         </div>
         <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-2">
-          <button onClick={onClose} className="text-xs px-3 py-1.5 rounded border border-slate-200 dark:border-slate-700">取消</button>
+          <button onClick={onClose} className="btn-secondary text-xs">取消</button>
           <button onClick={save} disabled={busy} className="btn-primary text-xs inline-flex items-center gap-1">
             {busy ? <Loader2 size={12} className="animate-spin" /> : null}
             保存

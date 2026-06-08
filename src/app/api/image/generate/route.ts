@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
       typeof body.quality === 'string' && body.quality.trim() ? body.quality.trim() : undefined;
     const aspectRatio: string | undefined =
       typeof body.aspectRatio === 'string' && body.aspectRatio.trim() ? body.aspectRatio.trim() : undefined;
+    const transparent: boolean = body.transparent === true || body.transparent === 'true';
     const n: number = Math.min(Math.max(Number(body.n) || 1, 1), 4);
     const mode = readMode(body.mode);
     const sourceImageUrl: string | undefined =
@@ -68,6 +69,7 @@ export async function POST(req: NextRequest) {
       ...(size !== undefined ? { size } : {}),
       ...(quality !== undefined ? { quality } : {}),
       ...(aspectRatio !== undefined ? { aspectRatio } : {}),
+      transparent,
       n,
       mode,
       ...(sourceImageUrl !== undefined ? { sourceImageUrl } : {}),
@@ -109,7 +111,7 @@ export async function POST(req: NextRequest) {
       data: {
         type: 'image',
         input: JSON.stringify({
-          prompt, size, quality, aspectRatio, mode,
+          prompt, size, quality, aspectRatio, mode, transparent,
           sourceImageUrl: sourceImageUrl ? sourceImageUrl.slice(0, 200) : null,
           sourceImageBase64Len: sourceImageBase64?.length ?? 0,
           platform, category, imageType, n,

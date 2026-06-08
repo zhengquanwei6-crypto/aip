@@ -85,6 +85,9 @@ export interface RunOptions {
   sourceImageBase64?: string;
   /** 用户从 aspectRatios 池选的 ratio 字符串（"1:1" / "16:9"...） */
   aspectRatio?: string;
+  /** v0.18-TRANSPARENT：生成透明底图（仅 gpt-image 系列 JSON-body adapter 支持）。
+   *  开启时运行时往请求体注入 background:'transparent' + output_format:'png'。 */
+  transparent?: boolean;
   /** v0.12: 主动指定 IMAGE ApiKey id；找不到/disabled 时 fallback 到默认池 */
   imageKeyOverride?: string | null;
 }
@@ -113,6 +116,10 @@ export interface RunTrace {
   i2iFlow?: 't2i' | 'i2i-dedicated';
   /** v0.11 B11：multipart adapter 把 url 转 base64 时的字节大小（便于排查） */
   i2iFetchedBytes?: number;
+  /** v0.18-TRANSPARENT：是否请求了透明底 */
+  transparent?: boolean;
+  /** v0.18-TRANSPARENT：透明底是否被当前 adapter 实际应用（不支持时为 false） */
+  transparentApplied?: boolean;
 }
 
 export interface RunResult {
@@ -387,6 +394,57 @@ function flowIsMultipart(flow: { request?: { contentType?: string; bodyTemplate?
 }
 
 /**
+ * v0.18-TRANSPARENT：透明底注入。
+ *
+ * gpt-image 系列（OpenAI gpt-image-1 / cometapi gpt-image-2 / 4router 等中转）
+ * 的 images API 原生支持 `background:"transparent"` + `output_format:"png"`，
+ * 返回带 alpha 通道的透明 PNG。这里在运行时克隆 adapter，往 JSON bodyTemplate
+ * 注入这两个字段（不改存储的 adapter 配置）。
+ *
+ * 适用条件（全满足才注入）：
+ *   - flow.type === 'sync'
+ *   - request.contentType 是 JSON（非 multipart）
+ *   - bodyTemplate 是对象
+ *   - 模型名包含 gpt-image / gpt-img（透明底是该系列特性；dalle-3 / flux / KIE
+ *     async 不支持，跳过并标记 applied=false）
+ *
+ * 返回 { adapter, applied }。applied=false 表示当前 adapter 不支持，调用方
+ * 据此在 trace 里标注、并可在前端提示用户换支持的 adapter。
+ */
+function applyTransparentBackground(adapter: AdapterConfig): { adapter: AdapterConfig; applied: boolean } {
+  const flow: any = adapter.flow;
+  if (!flow || flow.type !== 'sync') return { adapter, applied: false };
+  const req = flow.request;
+  if (!req || typeof req !== 'object') return { adapter, applied: false };
+  // 必须是 JSON body
+  const ct = req.contentType ?? 'application/json';
+  if (ct !== 'application/json') return { adapter, applied: false };
+  const tmpl = req.bodyTemplate;
+  if (!tmpl || typeof tmpl !== 'object' || Array.isArray(tmpl)) return { adapter, applied: false };
+  // 模型必须是 gpt-image 系列
+  const model = String((tmpl as Record<string, unknown>).model ?? '').toLowerCase();
+  if (!/gpt-?image|gpt-img/.test(model)) return { adapter, applied: false };
+
+  // 克隆并注入（深拷贝 flow，避免污染缓存的 adapter 对象）
+  const newTmpl: Record<string, unknown> = { ...(tmpl as Record<string, unknown>) };
+  newTmpl.background = 'transparent';
+  newTmpl.output_format = 'png';
+  // 透明底必须 PNG，移除可能存在的 jpeg 相关字段
+  delete newTmpl.output_compression;
+  // 透明底是 gpt-image-1 专属能力：gpt-image-2 会返回
+  // "Transparent background is not supported for this model" 500。
+  // 故勾选透明底时把模型降到 gpt-image-1（仅当原模型是 gpt-image 系列）。
+  if (/gpt-?image-?2/.test(model)) {
+    newTmpl.model = 'gpt-image-1';
+  }
+  const newAdapter: AdapterConfig = {
+    ...adapter,
+    flow: { ...flow, request: { ...req, bodyTemplate: newTmpl } },
+  };
+  return { adapter: newAdapter, applied: true };
+}
+
+/**
  * v0.11 B11：把 sourceImageUrl 拉成 base64（用于 multipart 文件 part）。
  *   - 支持绝对 URL 与 /uploads/... 相对路径（自动拼 origin）
  *   - 失败时返回 null（caller 决定是否报错）
@@ -508,7 +566,17 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
         }
 
         // 切换 flow（i2i 用 img2imgFlow，缺省时沿用 t2i flow）
-        const { adapter, i2iFlow } = adapterForMode(baseAdapter, mode);
+        const modeResult = adapterForMode(baseAdapter, mode);
+        let adapter = modeResult.adapter;
+        const i2iFlow = modeResult.i2iFlow;
+
+        // v0.18-TRANSPARENT：透明底注入（仅 gpt-image 系列 JSON-body sync flow）
+        let transparentApplied = false;
+        if (opts.transparent) {
+          const tr = applyTransparentBackground(adapter);
+          adapter = tr.adapter;
+          transparentApplied = tr.applied;
+        }
 
         const picked = await pickImageApiKey(opts.imageKeyOverride);
         const apiKey = picked.apiKey;
@@ -628,6 +696,11 @@ export async function runImageGenerate(opts: RunOptions): Promise<RunResult> {
         trace.mode = mode;
         if (aspectR.value) trace.aspectRatio = aspectR.value;
         if (aspectR.fallback) trace.aspectRatioFallback = true;
+        // v0.18-TRANSPARENT
+        if (opts.transparent) {
+          trace.transparent = true;
+          trace.transparentApplied = transparentApplied;
+        }
         if (mode === 'i2i') {
           trace.i2iSource = i2iSourceTrace;
           trace.i2iFlow = i2iFlow;

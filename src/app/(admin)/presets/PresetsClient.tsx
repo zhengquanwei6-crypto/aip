@@ -94,9 +94,9 @@ export default function PresetsClient({ initial }: { initial: Preset[] }) {
             <div className="flex-1" />
             <button
               onClick={() => setEditing({ ...EMPTY })}
-              className="btn-primary text-sm"
+              className="btn-primary h-9 text-sm"
             >
-              ➕ 新增预设
+              新增预设
             </button>
           </>
         }
@@ -131,13 +131,13 @@ export default function PresetsClient({ initial }: { initial: Preset[] }) {
               <div
                 key={p.id}
                 className={
-                  'card flex flex-col relative ' +
-                  (helpers.isSelected(p.id) ? 'ring-2 ring-brand-500' : '')
+                  'command-glass detail-lift relative flex flex-col ' +
+                  (helpers.isSelected(p.id) ? 'ring-2 ring-cyan-500' : '')
                 }
               >
                 <label
                   className={
-                    'absolute top-2 left-2 z-10 inline-flex items-center justify-center w-6 h-6 rounded border bg-white/90 dark:bg-slate-900/90 cursor-pointer ' +
+                    'absolute top-2 left-2 z-10 inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-lg border bg-white/100 dark:bg-slate-900/100 ' +
                     (helpers.isSelected(p.id)
                       ? 'border-brand-600 bg-brand-600 text-white'
                       : 'border-slate-300 dark:border-slate-600')
@@ -149,9 +149,11 @@ export default function PresetsClient({ initial }: { initial: Preset[] }) {
                     checked={helpers.isSelected(p.id)}
                     onChange={() => helpers.toggle(p.id)}
                   />
-                  {helpers.isSelected(p.id) ? '✓' : ''}
+                  {helpers.isSelected(p.id) && (
+                    <span className="h-2 w-2 rounded-full bg-current" aria-hidden />
+                  )}
                 </label>
-                <div className="card-body flex-1 space-y-2 pl-12">
+                <div className="flex-1 space-y-2 p-4 pl-12 sm:p-5 sm:pl-12">
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="font-semibold text-slate-800 dark:text-slate-100">
                       {p.name}
@@ -172,13 +174,13 @@ export default function PresetsClient({ initial }: { initial: Preset[] }) {
                 <div className="px-5 pb-4 flex items-center gap-3 text-sm">
                   <button
                     onClick={() => setEditing(p)}
-                    className="text-brand-600 hover:underline"
+                    className="btn-secondary h-8 px-3 text-xs"
                   >
                     编辑
                   </button>
                   <button
                     onClick={() => del(p.id)}
-                    className="text-red-600 hover:underline ml-auto"
+                    className="ml-auto rounded-lg border border-red-200 bg-red-50/80 px-3 py-1.5 text-xs font-semibold text-red-700 transition-colors hover:border-red-300 hover:bg-red-100 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
                   >
                     删除
                   </button>
@@ -191,17 +193,20 @@ export default function PresetsClient({ initial }: { initial: Preset[] }) {
 
       {editing && (
         <div
-          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
           onClick={() => setEditing(null)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-lg p-5 w-full max-w-lg space-y-3 max-h-[90vh] overflow-y-auto"
+            className="command-glass max-h-[90vh] w-full max-w-lg space-y-3 overflow-y-auto p-5"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="font-semibold">{editing.id ? '编辑' : '新增'}预设</h3>
+            <div>
+              <div className="page-kicker">Image Preset</div>
+              <h3 className="mt-1 font-bold text-slate-950 dark:text-white">{editing.id ? '编辑' : '新增'}预设</h3>
+            </div>
             <Field label="名称">
               <input
-                className="input"
+                className="input command-input"
                 value={editing.name}
                 onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                 placeholder="例：小红书简约白底"
@@ -209,7 +214,7 @@ export default function PresetsClient({ initial }: { initial: Preset[] }) {
             </Field>
             <Field label="风格关键词（正向）">
               <textarea
-                className="input min-h-[100px]"
+                className="input command-input min-h-[100px]"
                 value={editing.styleKeywords}
                 onChange={(e) =>
                   setEditing({ ...editing, styleKeywords: e.target.value })
@@ -218,7 +223,7 @@ export default function PresetsClient({ initial }: { initial: Preset[] }) {
             </Field>
             <Field label="负向提示词（可选）">
               <textarea
-                className="input min-h-[60px]"
+                className="input command-input min-h-[60px]"
                 value={editing.negativePrompt}
                 onChange={(e) =>
                   setEditing({ ...editing, negativePrompt: e.target.value })
@@ -228,7 +233,7 @@ export default function PresetsClient({ initial }: { initial: Preset[] }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <Field label="图片类型">
                 <select
-                  className="input"
+                  className="input command-input"
                   value={editing.imageType}
                   onChange={(e) =>
                     setEditing({ ...editing, imageType: e.target.value })
@@ -243,7 +248,7 @@ export default function PresetsClient({ initial }: { initial: Preset[] }) {
               </Field>
               <Field label="尺寸">
                 <input
-                  className="input"
+                  className="input command-input"
                   value={editing.size}
                   onChange={(e) =>
                     setEditing({ ...editing, size: e.target.value })
@@ -251,7 +256,7 @@ export default function PresetsClient({ initial }: { initial: Preset[] }) {
                 />
               </Field>
             </div>
-            <label className="flex items-center gap-3 p-2 rounded border border-slate-200 dark:border-slate-700 cursor-pointer">
+            <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-200 bg-white/60 p-3 text-sm dark:border-slate-800 dark:bg-slate-950/50">
               <input
                 type="checkbox"
                 checked={editing.isDefault}

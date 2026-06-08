@@ -1,316 +1,262 @@
-/**
- * v0.15 · 首页看板 · 推倒重做
- *
- * 用户原话：去掉多余无用的内容，仅保留有用的数据展示以及快捷入口。
- *
- * 留下：
- *   - 顶部 AI 搜（最高频入口）
- *   - 一行 4 个核心 KPI（待办 / 已生成 / 已发布 / AI 输出）
- *   - 4 个真正用得到的快捷入口（小红书 / 闲鱼 / 千牛 / 今日任务）
- *   - 今日任务前 5 条（预览，跳转 /today 处理）
- *
- * 删除：
- *   - 磁盘警告卡（移到 /settings）
- *   - 市场趋势卡
- *   - 系统健康 + 最近失败双卡
- *   - 最近 AI 输出卡（已在 /history 展示）
- *   - KPI section heading + 内容沉淀分组
- *   - 创作 / 看素材 等重复入口
- */
 'use client';
 
-import {
-  CalendarCheck,
-  CheckSquare,
-  CheckCircle2,
-  Send,
-  Sparkles,
-  ArrowRight,
-} from 'lucide-react';
 import Link from 'next/link';
-import KpiCard from './components/KpiCard';
+import type { ReactNode } from 'react';
+import {
+  ArrowRight,
+  Boxes,
+  CheckCircle2,
+  CircleAlert,
+  Image as ImageIcon,
+  Link2,
+  ListChecks,
+  MessageSquare,
+  PenLine,
+  Settings2,
+  Sparkles,
+  Users,
+} from 'lucide-react';
+
 import type { DashboardSummary } from '@/app/api/dashboard/summary/aggregate';
+import CommandHeader from '@/components/command/CommandHeader';
+import OpsRail from '@/components/command/OpsRail';
+import EmptyActionState from '@/components/command/EmptyActionState';
 
 export interface DashboardClientProps {
   data: DashboardSummary;
 }
 
+const STATUS_LABEL: Record<string, string> = {
+  pending: '待处理',
+  generated: '已生成',
+  published: '已发布',
+  recapped: '已复盘',
+};
+
 export default function DashboardClient({ data }: DashboardClientProps) {
-  const { today, kpi, todayTasks, system } = data;
+  const { today, kpi, system, todayTasks } = data;
+  const llm = system.apiKeyPool.llm;
+  const image = system.apiKeyPool.image;
+  const hasKeyIssue = Boolean(llm.lastError || image.lastError);
 
   return (
-    <div className="space-y-6" data-v015-dashboard>
-      {/* v0.14 ui-1 hero - OLD 字段版 */}
-      <section className="hero-bar p-5 sm:p-7 mb-6 sm:mb-8" aria-label="今日概览">
-        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-xs sm:text-sm font-medium text-brand-700 dark:text-brand-300 tracking-wide uppercase">
-              {today.date} · {today.weekday}
-            </div>
-            <h1 className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-50 tracking-tight">
-              你好，今天有 <span className="hero-num-accent">{today.pendingTasksCount}</span> 个待办
-            </h1>
-            <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400 max-w-xl">
-              已生成 <span className="font-semibold text-slate-700 dark:text-slate-300 tabular-nums">{kpi.generatedTasks}</span> 条 ·
-              已发布 <span className="font-semibold text-slate-700 dark:text-slate-300 tabular-nums">{kpi.publishedTasks}</span> 条 ·
-              累计 AI 输出 <span className="font-semibold text-slate-700 dark:text-slate-300 tabular-nums">{kpi.aioutputs}</span> 次
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* v0.14-z41: KEY pool 失败警告 banner */}
-      {(system?.apiKeyPool?.llm?.lastError || system?.apiKeyPool?.image?.lastError) && (
-        <section
-          aria-label="API Key 警告"
-          className="rounded-xl border border-amber-300 bg-amber-50 p-4 sm:p-5 mb-6 text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
-        >
-          <div className="flex items-start gap-3">
-            <div className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 shrink-0">
-              ⚠️
-            </div>
-            <div className="min-w-0 flex-1">
-              <h3 className="text-sm sm:text-base font-semibold mb-1">API Key 池有失败</h3>
-              {system.apiKeyPool.llm.lastError && (
-                <div className="text-xs sm:text-sm">
-                  <span className="font-medium">LLM</span>（{system.apiKeyPool.llm.active}/{system.apiKeyPool.llm.total} 可用）：
-                  <span className="text-amber-700 dark:text-amber-300 break-all">{system.apiKeyPool.llm.lastError}</span>
-                </div>
-              )}
-              {system.apiKeyPool.image.lastError && (
-                <div className="text-xs sm:text-sm mt-1">
-                  <span className="font-medium">IMAGE</span>（{system.apiKeyPool.image.active}/{system.apiKeyPool.image.total} 可用）：
-                  <span className="text-amber-700 dark:text-amber-300 break-all">{system.apiKeyPool.image.lastError}</span>
-                </div>
-              )}
-              <a href="/settings" className="inline-block mt-2 text-xs sm:text-sm font-medium text-brand-700 dark:text-brand-300 hover:underline">
-                去 /settings 查看 KEY 余额 / 切换备用 →
-              </a>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* AI 搜 · 最高频入口 */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          const fd = new FormData(e.currentTarget);
-          const q = String(fd.get('q') || '').trim();
-          if (q) window.location.href = `/search?q=${encodeURIComponent(q)}`;
-        }}
-        className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 flex items-center gap-3"
-      >
-        <span className="text-2xl shrink-0" aria-hidden>🔍</span>
-        <input
-          name="q"
-          className="flex-1 bg-transparent outline-none text-sm sm:text-base placeholder:text-slate-400 dark:placeholder:text-slate-500"
-          placeholder="问点什么 · 例如「小红书今日平面设计类目最火的主题」"
+    <div className="page-shell">
+      <section className="grid gap-5 lg:grid-cols-[1fr_0.78fr]">
+        <CommandHeader
+          eyebrow={`${system.version} · ${today.date} · ${today.weekday}`}
+          title="AI 战情总控"
+          description="用一个屏幕查看生产健康、任务流、生成输出、资产、分享和经营信号。"
+          stats={[
+            { label: '待处理', value: kpi.pendingTasks, tone: 'warning' },
+            { label: 'AI 输出', value: kpi.aioutputs, tone: 'ai' },
+            { label: '素材', value: kpi.assets, tone: 'info' },
+            { label: '分享', value: data.shareStats.total, tone: 'success' },
+          ]}
+          actions={[
+            { href: '/ai-tools/prompt-gen', label: '从内容开始', primary: true, icon: <PenLine className="h-4 w-4" /> },
+            { href: '/assets', label: '查看资产', icon: <Boxes className="h-4 w-4" /> },
+          ]}
         />
-        <button type="submit" className="btn-primary text-sm shrink-0">
-          搜索
-        </button>
-      </form>
 
-      {/* 顶部欢迎条：日期 + 待办数量 */}
-      <header className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-center gap-3">
-          <div
-            className="inline-flex h-10 w-10 items-center justify-center rounded-md bg-brand-100 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300 shrink-0"
-            aria-hidden
-          >
-            <CalendarCheck className="h-5 w-5" />
+        <div className="command-panel p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase text-cyan-200">系统健康</div>
+              <h2 className="mt-1 text-lg font-semibold text-white">
+                实时信号
+              </h2>
+            </div>
+            <span className={hasKeyIssue ? 'badge-yellow' : 'badge-green'}>
+              {hasKeyIssue ? '需检查' : '健康'}
+            </span>
           </div>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-slate-100">
-              今天 {today.date} · {today.weekday}
-            </h1>
-            <p className="mt-0.5 text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-              你有{' '}
-              <span className="font-semibold text-amber-600 dark:text-amber-400 tabular-nums">
-                {today.pendingTasksCount}
-              </span>{' '}
-              个待办任务
-            </p>
+          <div className="mt-4 space-y-3">
+            <HealthRow label="LLM Key 池" value={`${llm.active}/${llm.total} 启用`} issue={llm.lastError} />
+            <HealthRow label="图片 Key 池" value={`${image.active}/${image.total} 启用`} issue={image.lastError} />
+            <HealthRow label="磁盘占用" value={`${data.diskUsage.rootPercent ?? 0}%`} />
+            <HealthRow label="上传文件" value={`${data.diskUsage.uploadsCount ?? 0} 个`} />
           </div>
-          <Link
-            href="/today"
-            className="text-xs sm:text-sm text-brand-600 hover:text-brand-700 inline-flex items-center gap-1 shrink-0"
-          >
-            查看今日 <ArrowRight size={14} aria-hidden="true" />
+          <Link href="/settings" className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-white hover:underline">
+            查看设置
+            <ArrowRight className="h-4 w-4" aria-hidden />
           </Link>
         </div>
-      </header>
+      </section>
 
-      {/* 4 个核心 KPI · 一排 */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard
-          label="待办"
-          value={kpi.pendingTasks}
-          icon={<CheckSquare className="h-4 w-4" />}
-          tone="amber"
-          href="/today"
-        />
-        {/* v0.14-z59: 已生成+已发布合并为进度条卡 */}
-        <Link
-          href="/today"
-          data-progress-bar-published
-          className="group relative overflow-hidden rounded-xl border border-slate-200 bg-white p-4 sm:p-5 pt-5 sm:pt-6 dark:border-slate-800 dark:bg-slate-900 hover:border-brand-300 hover:shadow-md dark:hover:border-brand-700 transition-all sm:col-span-2"
-        >
-          <div className="absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-blue-400 via-emerald-400 to-emerald-600 rounded-t-xl" aria-hidden />
-          <div className="flex items-center gap-2 mb-2">
-            <div className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400">
-              <Send className="h-4 w-4" aria-hidden />
+      <OpsRail
+        steps={[
+          { href: '/ai-tools/prompt-gen', label: 'Prompt', description: '提示词生成与复用', value: data.recentOutputs.length, icon: PenLine, active: true },
+          { href: '/ai-tools', label: 'Image', description: '生成与精修图片', value: kpi.aioutputs, icon: ImageIcon },
+          { href: '/assets', label: 'Asset', description: '入库、收藏、下载', value: kpi.assets, icon: Boxes },
+          { href: '/share', label: 'Share', description: '客户预览链接', value: data.shareStats.active, icon: Link2 },
+          { href: '/today', label: 'Task', description: '排程与发布任务', value: data.pendingTasks.length, icon: ListChecks },
+          { href: '/clients', label: 'Client', description: '客户与收入复盘', value: data.clientFollowups.length, icon: Users },
+        ]}
+      />
+
+      <section className="command-panel p-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="text-xs font-semibold uppercase text-cyan-200">Live Mission Matrix</div>
+            <h2 className="mt-1 text-xl font-black text-white">创作、资产、分享、经营同屏联动</h2>
+          </div>
+          <Link href="/playground" className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:border-cyan-300/60 hover:bg-white/10">
+            启动生成
+            <ArrowRight className="h-4 w-4" aria-hidden />
+          </Link>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <CommandSignal icon={<Sparkles className="h-4 w-4" />} label="最近输出" value={data.recentOutputs.length} desc="可复用到提示词与图片" />
+          <CommandSignal icon={<Boxes className="h-4 w-4" />} label="最近资产" value={data.recentAssets.length} desc="可分享、下载、建任务" />
+          <CommandSignal icon={<ListChecks className="h-4 w-4" />} label="待排程" value={data.pendingTasks.length} desc="进入今日任务处理" />
+          <CommandSignal icon={<Users className="h-4 w-4" />} label="客户跟进" value={data.clientFollowups.length} desc="回流报价与收入复盘" />
+        </div>
+      </section>
+
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <ModuleLink href="/ai-tools" icon={<Sparkles className="h-4 w-4" />} title="创作" desc="提示词、图片工具、ComfyUI。" />
+        <ModuleLink href="/assets" icon={<Boxes className="h-4 w-4" />} title="资产" desc="素材库、上传、收藏。" />
+        <ModuleLink href="/share" icon={<Link2 className="h-4 w-4" />} title="分享" desc={`${data.shareStats.active} 条可用链接。`} />
+        <ModuleLink href="/discuss" icon={<MessageSquare className="h-4 w-4" />} title="协作" desc="团队记录与决策。" />
+        <ModuleLink href="/settings" icon={<Settings2 className="h-4 w-4" />} title="设置" desc="Key、适配器、系统。" />
+      </section>
+
+      <section className="grid gap-5 lg:grid-cols-[0.82fr_1.18fr]">
+        <div className="surface p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="page-kicker">今日</div>
+              <h2 className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">
+                {today.pendingTasksCount} 个待处理任务
+              </h2>
             </div>
-            <div className="text-sm font-medium text-slate-700 dark:text-slate-300">任务进度</div>
+            <ListChecks className="h-5 w-5 text-slate-400" aria-hidden />
           </div>
-          <div className="flex items-baseline gap-2 tabular-nums">
-            <span className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">{kpi.publishedTasks}</span>
-            <span className="text-sm text-slate-500 dark:text-slate-400">已发布</span>
-            <span className="text-slate-300 dark:text-slate-600">·</span>
-            <span className="text-lg font-semibold text-blue-700 dark:text-blue-400">{kpi.generatedTasks}</span>
-            <span className="text-sm text-slate-500 dark:text-slate-400">已生成</span>
-          </div>
-          {(kpi.generatedTasks + kpi.publishedTasks > 0) && (
-            <div className="mt-2.5 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-emerald-500"
-                style={{ width: `${Math.round((kpi.publishedTasks / Math.max(1, kpi.publishedTasks + kpi.generatedTasks + kpi.pendingTasks)) * 100)}%` }}
-                aria-label="发布进度"
+          <div className="mt-4 space-y-2">
+            {todayTasks.slice(0, 6).map((task) => (
+              <Link
+                key={task.id}
+                href="/today"
+                className="group flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm hover:border-slate-300 hover:bg-white dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-950"
+              >
+                <span className="w-12 shrink-0 font-mono text-xs text-slate-400">{task.publishTime}</span>
+                <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200">{task.title}</span>
+                <span className="badge-gray shrink-0">{STATUS_LABEL[task.status] ?? task.status}</span>
+              </Link>
+            ))}
+            {todayTasks.length === 0 && (
+              <EmptyActionState
+                title="今天暂无排程任务"
+                description="可以从素材库或三平台工作页创建新的发布任务。"
+                actionHref="/assets"
+                actionLabel="从素材建任务"
+                icon={<ListChecks className="h-5 w-5" aria-hidden />}
               />
+            )}
+          </div>
+        </div>
+
+        <div className="surface p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="page-kicker">近期生产</div>
+              <h2 className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">
+                最新资产
+              </h2>
             </div>
-          )}
-        </Link>
-        <KpiCard
-          label="AI 输出"
-          value={kpi.aioutputs}
-          icon={<Sparkles className="h-4 w-4" />}
-          tone="purple"
-          href="/history"
-        />
-      </section>
-
-      {/* 4 个快捷入口 · 直击工作场景 */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <QuickLink
-          href="/work/xiaohongshu"
-          emoji="📕"
-          title="小红书运营"
-          desc="一键产 5 张同源笔记"
-        />
-        <QuickLink
-          href="/work/xianyu"
-          emoji="🐟"
-          title="闲鱼运营"
-          desc="主图 + 卖点详情图"
-        />
-        <QuickLink
-          href="/work/qianniu"
-          emoji="🐂"
-          title="千牛运营"
-          desc="主图 + 详情场景图"
-        />
-        <QuickLink
-          href="/today"
-          emoji="📋"
-          title="今日任务"
-          desc={`${today.pendingTasksCount} 条待办`}
-        />
-      </section>
-
-      {/* 今日待办预览（前 5 条） */}
-      {todayTasks.length > 0 && (
-        <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-          <div className="px-4 sm:px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-              今日任务预览
-            </h2>
-            <Link
-              href="/today"
-              className="text-xs text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"
-            >
-              全部 {todayTasks.length}+ 条 <ArrowRight size={12} aria-hidden="true" />
+            <Link href="/assets" className="text-sm font-medium text-slate-600 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white">
+              打开资产库
             </Link>
           </div>
-          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-            {todayTasks.slice(0, 5).map((t) => (
-              <li
-                key={t.id}
-                className="px-4 sm:px-5 py-2.5 flex items-center gap-3 text-sm hover:bg-slate-50 dark:hover:bg-slate-800/40"
-              >
-                <span className="font-mono text-xs text-slate-400 tabular-nums shrink-0 w-12">
-                  {t.publishTime}
-                </span>
-                <span
-                  className={
-                    'badge text-[10px] shrink-0 ' +
-                    (t.platform === 'xiaohongshu' ? 'badge-red' : 'badge-yellow')
-                  }
-                >
-                  {t.platform === 'xiaohongshu' ? '小红书' : '闲鱼'}
-                </span>
-                <span className="flex-1 min-w-0 truncate text-slate-700 dark:text-slate-200">
-                  {t.title}
-                </span>
-                <StatusDot status={t.status} />
-              </li>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {data.recentAssets.slice(0, 4).map((asset) => (
+              <Link key={asset.id} href="/assets" className="group overflow-hidden rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900">
+                {asset.url ? (
+                  <img src={asset.url} alt={asset.fileName || asset.type} className="aspect-square w-full object-cover transition-transform group-hover:scale-[1.04]" />
+                ) : (
+                  <div className="flex aspect-square items-center justify-center text-slate-400">
+                    <ImageIcon className="h-6 w-6" aria-hidden />
+                  </div>
+                )}
+                <div className="truncate px-2 py-2 text-xs text-slate-500">{asset.type}</div>
+              </Link>
             ))}
-          </ul>
-        </section>
-      )}
+            {data.recentAssets.length === 0 && (
+              <div className="col-span-full">
+                <EmptyActionState
+                  title="还没有近期资产"
+                  description="先生成或上传图片，素材会自动进入战情室资产流。"
+                  actionHref="/ai-tools"
+                  actionLabel="开始创作"
+                  icon={<ImageIcon className="h-5 w-5" aria-hidden />}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
 
-function QuickLink({
+function HealthRow({ label, value, issue }: { label: string; value: string; issue?: string | null }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{label}</div>
+        {issue ? <CircleAlert className="h-4 w-4 text-amber-500" aria-hidden /> : <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden />}
+      </div>
+      <div className="mt-1 text-xs text-slate-500">{value}</div>
+      {issue && <div className="mt-2 line-clamp-2 text-xs text-amber-700 dark:text-amber-300">{issue}</div>}
+    </div>
+  );
+}
+
+function CommandSignal({
+  icon,
+  label,
+  value,
+  desc,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number;
+  desc: string;
+}) {
+  return (
+    <div className="detail-lift rounded-lg border border-white/10 bg-white/10 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-slate-950">{icon}</span>
+        <span className="font-mono text-3xl font-black tabular-nums text-white">{value}</span>
+      </div>
+      <div className="mt-4 text-sm font-bold text-white">{label}</div>
+      <p className="mt-1 text-xs leading-5 text-slate-400">{desc}</p>
+    </div>
+  );
+}
+
+function ModuleLink({
   href,
-  emoji,
+  icon,
   title,
   desc,
 }: {
   href: string;
-  emoji: string;
+  icon: ReactNode;
   title: string;
   desc: string;
 }) {
   return (
-    <Link
-      href={href}
-      className="group rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 hover:border-brand-300 dark:hover:border-brand-700 hover:shadow-sm transition-all"
-    >
-      <div className="text-2xl mb-2" aria-hidden>
-        {emoji}
+    <Link href={href} className="command-glass detail-lift group block p-4">
+      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+        {icon}
       </div>
-      <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-        {title}
-      </div>
-      <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 inline-flex items-center gap-1">
-        {desc}
-        <ArrowRight
-          size={12}
-          aria-hidden="true"
-          className="opacity-0 group-hover:opacity-100 transition-opacity"
-        />
+      <div className="mt-4 text-sm font-semibold text-slate-950 dark:text-white">{title}</div>
+      <p className="mt-1 text-xs leading-5 text-slate-500">{desc}</p>
+      <div className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-200">
+        打开
+        <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden />
       </div>
     </Link>
-  );
-}
-
-function StatusDot({ status }: { status: string }) {
-  const map: Record<string, { color: string; label: string }> = {
-    pending: { color: 'bg-slate-400', label: '未生成' },
-    generated: { color: 'bg-blue-500', label: '已生成' },
-    published: { color: 'bg-emerald-500', label: '已发布' },
-    recapped: { color: 'bg-purple-500', label: '已复盘' },
-  };
-  const it = map[status] ?? { color: 'bg-slate-300', label: status };
-  return (
-    <span
-      className="inline-flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500 shrink-0"
-      title={it.label}
-    >
-      <span className={'inline-block w-1.5 h-1.5 rounded-full ' + it.color} aria-hidden />
-      {it.label}
-    </span>
   );
 }

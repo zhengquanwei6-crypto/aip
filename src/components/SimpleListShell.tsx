@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, Check, Minus, Trash2 } from 'lucide-react';
+import { Check, Minus, Search, Trash2 } from 'lucide-react';
+
 import BulkActionBar from './BulkActionBar';
 import { useStickyState } from '@/hooks/useStickyState';
 
@@ -12,7 +13,6 @@ export interface SimpleListShellProps<T> {
   searchKeys?: (keyof T | string)[];
   searchPlaceholder?: string;
   toolbar?: React.ReactNode;
-  /** 把列表本体（已经过滤）渲染交给父组件，用以保留各页原有结构 */
   children: (filtered: T[], helpers: SimpleHelpers) => React.ReactNode;
   bulkDelete?: {
     label?: string;
@@ -35,7 +35,7 @@ export default function SimpleListShell<T>(props: SimpleListShellProps<T>) {
     getId,
     storageKey,
     searchKeys = [],
-    searchPlaceholder = '搜索…',
+    searchPlaceholder = '搜索...',
     toolbar,
     children,
     bulkDelete,
@@ -43,12 +43,8 @@ export default function SimpleListShell<T>(props: SimpleListShellProps<T>) {
     onToastError,
   } = props;
 
-  const [persist, setPersist] = useStickyState<{ q: string }>(storageKey, {
-    q: '',
-  });
+  const [persist, setPersist] = useStickyState<{ q: string }>(storageKey, { q: '' });
   const q = persist.q || '';
-  const setQ = (s: string) => setPersist({ q: s });
-
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState(false);
 
@@ -62,26 +58,23 @@ export default function SimpleListShell<T>(props: SimpleListShellProps<T>) {
   const clearSelection = () => setSelected(new Set());
 
   const filtered = useMemo(() => {
-    if (!q.trim() || searchKeys.length === 0) return items;
     const needle = q.trim().toLowerCase();
-    return items.filter((it) => {
-      for (const k of searchKeys) {
-        const raw = (it as any)[k as string];
-        if (raw == null) continue;
-        if (String(raw).toLowerCase().includes(needle)) return true;
-      }
-      return false;
-    });
+    if (!needle || searchKeys.length === 0) return items;
+    return items.filter((item) =>
+      searchKeys.some((key) => {
+        const raw = (item as Record<string, unknown>)[key as string];
+        return raw != null && String(raw).toLowerCase().includes(needle);
+      }),
+    );
   }, [items, q, searchKeys]);
 
-  // 选中已被筛掉的，要清出
   useEffect(() => {
     if (selected.size === 0) return;
-    const ids = new Set(filtered.map(getId));
+    const filteredIds = new Set(filtered.map(getId));
     let changed = false;
     const next = new Set<string>();
     for (const id of selected) {
-      if (ids.has(id)) next.add(id);
+      if (filteredIds.has(id)) next.add(id);
       else changed = true;
     }
     if (changed) setSelected(next);
@@ -89,99 +82,87 @@ export default function SimpleListShell<T>(props: SimpleListShellProps<T>) {
   }, [filtered]);
 
   const allIds = filtered.map(getId);
-  const allChecked =
-    allIds.length > 0 && allIds.every((id) => selected.has(id));
+  const allChecked = allIds.length > 0 && allIds.every((id) => selected.has(id));
   const someChecked = !allChecked && allIds.some((id) => selected.has(id));
+
   function toggleAll() {
-    if (allChecked) {
-      clearSelection();
-    } else {
-      setSelected(new Set(allIds));
-    }
+    if (allChecked) clearSelection();
+    else setSelected(new Set(allIds));
   }
 
   async function runBulkDelete() {
     if (!bulkDelete || selected.size === 0 || running) return;
     const text =
-      (bulkDelete.confirmText && bulkDelete.confirmText(selected.size)) ||
-      `确认删除已选 ${selected.size} 条记录？此操作不可撤销。`;
+      bulkDelete.confirmText?.(selected.size) ||
+      `确认删除已选择的 ${selected.size} 条记录？此操作不可撤销。`;
     if (!window.confirm(text)) return;
+
     setRunning(true);
     try {
       const ids = Array.from(selected);
-      const r = await bulkDelete.run(ids);
-      if (r.ok) {
-        onToastSuccess?.(r.message || `已删除 ${ids.length} 条`);
+      const result = await bulkDelete.run(ids);
+      if (result.ok) {
+        onToastSuccess?.(result.message || `已删除 ${ids.length} 条`);
         clearSelection();
       } else {
-        onToastError?.(r.message || '删除失败');
+        onToastError?.(result.message || '删除失败');
       }
-    } catch (e) {
-      onToastError?.((e as Error).message || '删除失败');
+    } catch (error) {
+      onToastError?.((error as Error).message || '删除失败');
     } finally {
       setRunning(false);
     }
   }
 
   return (
-    <div className="space-y-4">
-      <div className="card">
-        <div className="card-body space-y-3">
-          {toolbar && (
-            <div className="flex items-center gap-2 flex-wrap">{toolbar}</div>
-          )}
-          <div className="relative">
-            <Search
-              size={14}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-            />
-            <input
-              className="input pl-9 w-full"
-              placeholder={searchPlaceholder}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-          </div>
-          <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
-            {bulkDelete && filtered.length > 0 && (
-              <button
-                type="button"
-                onClick={toggleAll}
-                className="inline-flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                aria-label="全选"
+    <div className="space-y-4 page-transition">
+      <div className="command-toolbar detail-lift">
+        {toolbar && <div className="mb-3 flex flex-wrap items-center gap-2">{toolbar}</div>}
+        <div className="relative">
+          <Search
+            size={14}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+          />
+          <input
+            className="input command-input w-full pl-9"
+            placeholder={searchPlaceholder}
+            value={q}
+            onChange={(event) => setPersist({ q: event.target.value })}
+          />
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+          {bulkDelete && filtered.length > 0 && (
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="action-link text-slate-600 hover:bg-cyan-50 hover:text-cyan-700 dark:text-slate-300 dark:hover:bg-cyan-950/30 dark:hover:text-cyan-200"
+              aria-label="全选"
+            >
+              <span
+                className={
+                  'inline-flex h-4 w-4 items-center justify-center rounded border ' +
+                  (allChecked
+                    ? 'border-slate-950 bg-slate-950 text-white dark:border-white dark:bg-white dark:text-slate-950'
+                    : someChecked
+                      ? 'border-cyan-500 bg-cyan-500/50 text-white'
+                      : 'border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-950')
+                }
               >
-                <span
-                  className={
-                    'w-4 h-4 inline-flex items-center justify-center border rounded ' +
-                    (allChecked
-                      ? 'bg-brand-600 border-brand-600 text-white'
-                      : someChecked
-                        ? 'bg-brand-600/40 border-brand-600 text-white'
-                        : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800')
-                  }
-                >
-                  {allChecked ? (
-                    <Check size={12} />
-                  ) : someChecked ? (
-                    <Minus size={12} />
-                  ) : null}
-                </span>
-                {allChecked ? '取消全选' : '全选'}
-              </button>
-            )}
-            <span>
-              共 <b>{filtered.length}</b> 条
-              {q ? `（搜索 "${q}"）` : ''}
-            </span>
-          </div>
+                {allChecked ? <Check size={12} /> : someChecked ? <Minus size={12} /> : null}
+              </span>
+              {allChecked ? '取消全选' : '全选'}
+            </button>
+          )}
+          <span>
+            共 <b>{filtered.length}</b> 条
+            {q ? `，搜索「${q}」` : ''}
+          </span>
         </div>
       </div>
 
       {filtered.length === 0 ? (
-        <div className="card">
-          <div className="card-body text-center text-sm text-slate-400 py-10">
-            {q ? '没有匹配的记录' : '暂无数据'}
-          </div>
+        <div className="command-empty">
+          {q ? '没有匹配的记录' : '暂无数据'}
         </div>
       ) : (
         children(filtered, {

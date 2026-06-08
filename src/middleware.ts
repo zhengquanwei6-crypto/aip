@@ -33,6 +33,30 @@ import { NextRequest, NextResponse } from 'next/server';
 const MOBILE_RE =
   /Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini|Mobile Safari/i;
 
+/**
+ * v0.18-AUTH · 会话 cookie 名（与 src/lib/auth/core.ts SESSION_COOKIE 一致）。
+ * middleware 跑在 Edge，拿不到 prisma secret，所以只做"有没有 cookie"的轻
+ * 量门禁；真正的 HMAC 校验在受保护的 server layout 里完成（双保险）。
+ */
+const SESSION_COOKIE = 'guodong_session';
+
+/**
+ * 公开路径（无需登录）：
+ *   - /            首页（介绍页）
+ *   - /login /register  登录注册
+ *   - /showcase*   公开展示页
+ *   - /docs*       使用手册
+ *   - /s/*         公开图片分享页
+ * 其余一切（/dashboard /today /assets /ai-tools /m/* ...）都需要登录。
+ */
+function isPublicPath(pathname: string): boolean {
+  if (pathname === '/') return true;
+  if (pathname === '/login' || pathname === '/register') return true;
+  if (pathname === '/showcase' || pathname.startsWith('/showcase/')) return true;
+  if (pathname === '/s' || pathname.startsWith('/s/')) return true;
+  return false;
+}
+
 function isMobilePath(p: string): boolean {
   return p === '/m' || p.startsWith('/m/');
 }
@@ -136,6 +160,22 @@ export function middleware(req: NextRequest) {
     if (slug && !VALID_DOC_SLUGS.has(slug)) {
       return notFoundResponse();
     }
+  }
+
+  // v0.18-AUTH · 登录门禁
+  // ─────────────────────────────────────────────────────────────────
+  // 非公开路径必须带会话 cookie，否则 307 → /login?next=<原路径>。
+  // 这里只校验 cookie 存在性（Edge 拿不到签名密钥）；真正的 HMAC 校验在
+  // 受保护页面的 server layout 里做。已登录用户访问 /login /register 时
+  // 反向跳回 /dashboard。
+  const hasSession = Boolean(req.cookies.get(SESSION_COOKIE)?.value);
+  if (!isPublicPath(pathname) && !hasSession) {
+    const loginUrl = new URL('/login', req.url);
+    loginUrl.searchParams.set('next', pathname);
+    return NextResponse.redirect(loginUrl, 307);
+  }
+  if ((pathname === '/login' || pathname === '/register') && hasSession) {
+    return NextResponse.redirect(new URL('/dashboard', req.url), 307);
   }
 
   // v0.11 B5 + v0.12 B3.3: 旧 URL 精确重定向, 必须放在 cookie / UA 判定之前

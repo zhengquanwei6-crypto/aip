@@ -274,22 +274,29 @@ export function PlatformWorkspaceClient(props: PlatformWorkspaceProps) {
   const isLoading = phase === 'polishing' || phase === 'clarifying' || phase === 'generating';
 
   return (
-    <div className="max-w-6xl mx-auto p-4 space-y-4">
-      <div className="flex items-center gap-2">
-        <span className="text-3xl">{props.icon}</span>
-        <div className="flex-1">
-          <h1 className="text-xl font-semibold">{props.title}</h1>
-          <p className="text-xs text-slate-500">输入主题 → ✨ 润色（可选）→ 关键问题问答 → 一次产 5 张同源图笔记（{props.expectSize}）</p>
+    <div className="max-w-6xl mx-auto p-6 space-y-6 bg-slate-50/50 dark:bg-slate-950/20 rounded-3xl border border-slate-100 dark:border-slate-900/60 shadow-sm">
+      {/* 头部信息 */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-900/50">
+        <div className="flex items-center gap-3">
+          <span className="text-4xl filter drop-shadow-md">{props.icon}</span>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-slate-800 dark:text-slate-100">{props.title}</h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              主题描述 → <span className="text-purple-500 font-semibold">✨ 智能润色</span> → 选项澄清 → 产出 5 张系列连环图（{props.expectSize}）
+            </p>
+          </div>
         </div>
-        <KeyOverrideSelector scope={props.slug} show={['llm', 'image']} />
+        <div className="flex items-center gap-2 bg-white dark:bg-slate-900 px-3 py-1.5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
+          <KeyOverrideSelector scope={props.slug} show={['llm', 'image']} />
+        </div>
       </div>
 
-      {/* 输入区 */}
-      <div className="card">
-        <div className="card-body space-y-3">
+      {/* 输入控制台 */}
+      <div className="relative rounded-2xl border border-slate-200/60 dark:border-slate-850 bg-white dark:bg-slate-900 shadow-sm overflow-hidden transition-all focus-within:ring-2 focus-within:ring-brand-500/20 focus-within:border-brand-500">
+        <div className="p-4 space-y-4">
           <div className="relative">
             <textarea
-              className="input min-h-[100px] pr-24"
+              className="w-full bg-transparent border-0 resize-none min-h-[110px] text-sm text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:ring-0 focus:outline-none leading-relaxed"
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
               placeholder={props.placeholder}
@@ -300,40 +307,77 @@ export function PlatformWorkspaceClient(props: PlatformWorkspaceProps) {
               type="button"
               onClick={runPolish}
               disabled={isLoading || !topic.trim() || polishLoading}
-              className="absolute right-2 bottom-2 inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-purple-200 dark:border-purple-700 bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-200 hover:bg-purple-100 disabled:opacity-50"
+              className="absolute right-0 bottom-0 inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50/55 dark:bg-purple-950/20 text-purple-700 dark:text-purple-400 hover:bg-purple-100/80 dark:hover:bg-purple-900/30 disabled:opacity-40 transition-all duration-200"
               title="让 AI 把你的描述加工得更具体"
             >
               {polishLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-              <span>AI 润色</span>
+              <span>AI 智能润色</span>
             </button>
           </div>
-          <div className="flex items-center gap-2">
+          
+          <div className="h-px bg-slate-100 dark:bg-slate-800/80"></div>
+          
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
               onClick={onGenerateClick}
               disabled={isLoading || !topic.trim()}
-              className="btn-primary inline-flex items-center gap-1"
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 text-white font-semibold text-sm flex items-center gap-2 hover:opacity-95 shadow-md shadow-brand-500/10 active:scale-[0.98] disabled:opacity-50 transition-all duration-200"
             >
-              {isLoading ? <><Loader2 className="animate-spin" size={14} /> {stage || '处理中...'}</> : '一键生成 5 张同源笔记'}
+              {isLoading ? (
+                <>
+                  <Loader2 className="animate-spin" size={14} />
+                  <span>{stage || '正在处理数据...'}</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  <span>一键生成 5 张同源画卷</span>
+                </>
+              )}
             </button>
             {result && !isLoading && (
-              <button onClick={() => onGenerateClick()} className="btn-secondary inline-flex items-center gap-1 text-sm">
-                <RefreshCw size={14} /> 重新生成
+              <button
+                onClick={() => onGenerateClick()}
+                className="px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs inline-flex items-center gap-1.5 hover:bg-slate-100 transition-all"
+              >
+                <RefreshCw size={13} />
+                <span>重新生成</span>
               </button>
             )}
             {result?.ok && t && !isLoading && (
-              <button onClick={copyAllContent} className="btn-secondary inline-flex items-center gap-1 text-sm">
-                <Copy size={14} /> 复制全部文案
+              <button
+                onClick={copyAllContent}
+                className="px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs inline-flex items-center gap-1.5 hover:bg-slate-100 transition-all"
+              >
+                <Copy size={13} />
+                <span>复制完整文案</span>
               </button>
             )}
           </div>
-          {error && <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/30 p-2 rounded">{error}</div>}
-          {result?.partialSuccess && (
-            <div className="text-sm text-amber-700 bg-amber-50 dark:bg-amber-950/30 p-2 rounded inline-flex items-center gap-2">
-              <AlertCircle size={14} /> 部分图片生成失败（{result.successCount}/{result.totalImages} 成功）
-            </div>
-          )}
         </div>
+
+        {/* 顶部加载状态进度条 */}
+        {isLoading && (
+          <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-100 dark:bg-slate-800 overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-brand-500 to-indigo-500 animate-infinite-loading w-1/3 rounded-full"></div>
+          </div>
+        )}
       </div>
+
+      {error && (
+        <div className="text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/50 p-3 rounded-2xl flex items-center gap-2 shadow-sm">
+          <AlertCircle size={15} className="shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+      
+      {result?.partialSuccess && (
+        <div className="text-sm text-amber-800 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/50 p-3 rounded-2xl flex items-center gap-2 shadow-sm">
+          <AlertCircle size={15} className="shrink-0" />
+          <span>部分图片生成失败（已生成 {result.successCount}/{result.totalImages} 张）</span>
+        </div>
+      )}
+
 
       {/* 润色预览抽屉 */}
       {polishOpen && (
@@ -411,33 +455,44 @@ export function PlatformWorkspaceClient(props: PlatformWorkspaceProps) {
       )}
 
       {/* 最近生成 */}
-      <div className="card">
-        <button type="button" onClick={() => setRecentOpen(o => !o)} className="card-header w-full flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+      <div className="rounded-2xl border border-slate-200/60 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+        <button
+          type="button"
+          onClick={() => setRecentOpen(o => !o)}
+          className="w-full px-5 py-4 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/40 hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors"
+        >
           <div className="flex items-center gap-2">
-            <Clock size={14} className="text-slate-500" />
-            <span className="font-semibold text-sm">最近生成（{recent.length}）</span>
+            <Clock size={15} className="text-slate-400" />
+            <span className="font-bold text-sm text-slate-700 dark:text-slate-300">最近生成历史（{recent.length}）</span>
             {recentLoading && <Loader2 size={12} className="animate-spin text-slate-400" />}
           </div>
-          {recentOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          {recentOpen ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
         </button>
         {recentOpen && (
-          <div className="card-body">
+          <div className="p-4 border-t border-slate-100 dark:border-slate-800">
             {recent.length === 0 ? (
-              <div className="text-xs text-slate-400 text-center py-4">还没有生成过笔记</div>
+              <div className="text-xs text-slate-400 text-center py-6">还没有生成过笔记内容</div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {recent.map((item) => (
-                  <button key={item.id} onClick={() => loadOldOne(item)} className="text-left border border-slate-200 dark:border-slate-700 rounded-lg p-2 hover:border-blue-400 dark:hover:border-blue-600 transition-colors flex gap-2 items-start">
+                  <button
+                    key={item.id}
+                    onClick={() => loadOldOne(item)}
+                    className="text-left border border-slate-200/80 dark:border-slate-800 rounded-xl p-3 hover:border-brand-500/50 hover:bg-slate-50/50 dark:hover:bg-slate-850/50 transition-all flex gap-3 items-center group"
+                  >
                     {item.images[0]?.ok && item.images[0]?.url ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={item.images[0].url} alt="" className="w-14 h-14 object-cover rounded flex-shrink-0" />
+                      <img src={item.images[0].url} alt="" className="w-12 h-12 object-cover rounded-lg flex-shrink-0 group-hover:scale-105 transition-transform duration-250" />
                     ) : (
-                      <div className="w-14 h-14 bg-slate-100 dark:bg-slate-800 rounded flex-shrink-0 flex items-center justify-center text-xs text-slate-400">无图</div>
+                      <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-lg flex-shrink-0 flex items-center justify-center text-[10px] text-slate-400 font-bold">无图</div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium truncate">{item.title || item.topic || '(无标题)'}</div>
-                      <div className="text-[10px] text-slate-500 mt-0.5">{new Date(item.createdAt).toLocaleString('zh-CN', { hour12: false })}</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">{item.images.filter(i => i.ok).length} 张图 {item.tags.length > 0 ? '· ' + item.tags.slice(0, 3).join(' #') : ''}</div>
+                      <div className="text-xs font-bold text-slate-700 dark:text-slate-250 truncate group-hover:text-brand-600 transition-colors">{item.title || item.topic || '(无标题)'}</div>
+                      <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 flex items-center gap-1.5">
+                        <span>{new Date(item.createdAt).toLocaleString('zh-CN', { hour12: false })}</span>
+                        <span>•</span>
+                        <span>{item.images.filter(i => i.ok).length} 张图</span>
+                      </div>
                     </div>
                   </button>
                 ))}
@@ -450,39 +505,49 @@ export function PlatformWorkspaceClient(props: PlatformWorkspaceProps) {
       {/* 结果区 */}
       {result?.ok && t?.pages && (
         <>
-          <div className="card">
-            <div className="card-header flex items-center justify-between">
-              <h2 className="font-semibold">🎨 5 张图组合</h2>
+          <div className="rounded-2xl border border-slate-200/60 dark:border-slate-855 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <h2 className="font-bold text-sm text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                <span>🎨 5 张图画组合</span>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-brand-50 dark:bg-brand-950/40 text-brand-600 dark:text-brand-400 font-bold">已生成</span>
+              </h2>
               {result.timing && (
-                <span className="text-xs text-slate-500">
-                  脚本 {(result.timing.llmMs / 1000).toFixed(1)}s · 出图 {(result.timing.imgPipelineMs / 1000).toFixed(1)}s
-                  {result.pipeline && ` · ${result.pipeline}`}
+                <span className="text-xs text-slate-450 dark:text-slate-500">
+                  耗时：文案 {(result.timing.llmMs / 1000).toFixed(1)}s · 图画 {(result.timing.imgPipelineMs / 1000).toFixed(1)}s
+                  {result.pipeline && ` (${result.pipeline})`}
                 </span>
               )}
             </div>
-            <div className="card-body">
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="p-5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
                 {t.pages.map((p, i) => (
-                  <div key={i} className="space-y-1 cursor-pointer" onClick={() => p.imageUrl && setActiveImageIdx(i)}>
-                    <div className="aspect-square bg-slate-100 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 overflow-hidden relative">
+                  <div
+                    key={i}
+                    className="space-y-2 cursor-pointer group"
+                    onClick={() => p.imageUrl && setActiveImageIdx(i)}
+                  >
+                    <div className="aspect-[3/4] bg-slate-50 dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden relative shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
                       {p.imageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={p.imageUrl} alt={`第 ${i + 1} 张`} className="w-full h-full object-cover" />
+                        <img src={p.imageUrl} alt={`第 ${i + 1} 张`} className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-300" />
                       ) : (
-                        <div className="w-full h-full flex items-center justify-center text-xs text-slate-400">
-                          <div className="text-center"><ImageOff size={24} className="mx-auto mb-1" />{p.imageError || '未生成'}</div>
+                        <div className="w-full h-full flex items-center justify-center text-xs text-slate-400 p-2">
+                          <div className="text-center"><ImageOff size={20} className="mx-auto mb-1.5 text-slate-350" /><span className="text-[10px]">{p.imageError || '生成失败'}</span></div>
                         </div>
                       )}
-                      <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/50 text-white text-[10px]">{i + 1}</div>
-                      {p.mode && <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/50 text-white text-[9px]">{p.mode}</div>}
+                      <div className="absolute top-2 left-2 w-5 h-5 rounded-full bg-black/60 backdrop-blur-sm text-white text-[10px] font-bold flex items-center justify-center">{i + 1}</div>
+                      {p.mode && <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-black/60 backdrop-blur-sm text-white text-[9px] font-medium tracking-wider uppercase">{p.mode}</div>}
                     </div>
-                    <div className="text-[11px] font-medium leading-tight">{pageFns[i]}</div>
-                    <div className="text-[10px] text-slate-500 truncate" title={p.pageTitle}>{p.pageTitle || '—'}</div>
+                    <div className="px-1 space-y-0.5">
+                      <div className="text-xs font-bold text-slate-700 dark:text-slate-300 leading-snug truncate group-hover:text-brand-600 transition-colors">{pageFns[i]}</div>
+                      <div className="text-[10px] text-slate-400 dark:text-slate-500 truncate" title={p.pageTitle}>{p.pageTitle || '暂无大字文案'}</div>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
           </div>
+
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="card">

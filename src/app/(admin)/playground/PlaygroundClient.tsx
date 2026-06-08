@@ -105,21 +105,21 @@ export default function PlaygroundClient(props: Props) {
 
   return (
     <div className="space-y-6">
-      <header className="space-y-3">
+      <header className="studio-shell overflow-hidden p-5 text-white sm:p-6">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.32em] text-slate-400 font-mono">
-            playground
+          <div className="inline-flex items-center gap-2 rounded-lg border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.28em] text-cyan-100">
+            GPT IMG 2 / Live Studio
           </div>
-          <h1 className="mt-1 text-xl sm:text-2xl font-semibold text-slate-900 dark:text-slate-100">
-            AI 对话
+          <h1 className="mt-4 max-w-3xl text-3xl font-black leading-none tracking-normal text-white sm:text-5xl">
+            GPT IMG 2 Creative Cockpit
           </h1>
-          <p className="mt-1 text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-            即时调用 LLM / 图片 / Agent，复用「设置 → API Keys 池」+ 适配器尺寸/比例预设
+          <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-300">
+            Prompt, model, ratio, quality, source image and asset handoff are now in one visible production lane.
           </p>
         </div>
 
         {/* 线性下划线 segment */}
-        <div role="tablist" aria-label="Playground 模式选择" className="border-b border-slate-200 dark:border-slate-800 flex items-end gap-6">
+        <div role="tablist" aria-label="Playground mode" className="relative mt-5 grid gap-2 sm:grid-cols-3">
           {TABS.map((t) => {
             const active = t.value === tab;
             return (
@@ -127,18 +127,17 @@ export default function PlaygroundClient(props: Props) {
                 key={t.value}
                 role="tab"
                 aria-selected={active}
-                aria-pressed={active}
                 onClick={() => switchTab(t.value)}
                 data-tab={t.value}
                 className={clsx(
-                  '-mb-px py-2.5 px-1 border-b-2 transition-colors text-sm',
+                  'rounded-lg border px-4 py-3 text-left transition-all duration-300',
                   active
-                    ? 'border-slate-900 dark:border-white text-slate-900 dark:text-slate-100 font-medium'
-                    : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300',
+                    ? 'border-cyan-300/60 bg-cyan-300/20 text-white shadow-lg shadow-cyan-950/20'
+                    : 'border-white/10 bg-white/5 text-slate-300 hover:-translate-y-0.5 hover:border-white/25 hover:bg-white/10',
                 )}
               >
-                <span>{t.label}</span>
-                <span className="hidden sm:inline ml-1.5 text-[11px] text-slate-400">
+                <span className="block text-sm font-bold">{t.label}</span>
+                <span className="mt-1 block text-xs text-slate-400">
                   · {t.sub}
                 </span>
               </button>

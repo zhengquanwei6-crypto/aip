@@ -138,9 +138,9 @@ export default function SemanticSearchClient({ initialStatus }: Props) {
   const hits = tab === 'history' ? historyHits : assetHits;
 
   return (
-    <div className="space-y-4">
+      <div className="space-y-4">
             {!initialStatus.enabled && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+        <div className="command-glass border-amber-300/70 p-4 text-amber-900 dark:border-amber-700/70 dark:text-amber-200">
           <div className="flex items-start gap-2">
             <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
             <div className="text-sm">
@@ -152,7 +152,7 @@ export default function SemanticSearchClient({ initialStatus }: Props) {
 
       {/* 搜索框 */}
       <form
-        className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 focus-within:border-brand-400 dark:focus-within:border-brand-600 transition-colors"
+        className="command-glass flex items-center gap-2 px-3 py-2 transition-colors focus-within:border-cyan-400 dark:focus-within:border-cyan-600"
         onSubmit={(e) => {
           e.preventDefault();
           submit();
@@ -181,7 +181,7 @@ export default function SemanticSearchClient({ initialStatus }: Props) {
       </form>
 
       {/* tab 切换 */}
-      <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-800">
+      <div className="command-toolbar flex items-center gap-2 overflow-x-auto">
         {[
           { v: 'history' as Tab, label: '历史输出', icon: Sparkles, count: initialStatus.history.rows },
           { v: 'assets' as Tab, label: '素材', icon: ImageIcon, count: initialStatus.assets.rows },
@@ -194,10 +194,10 @@ export default function SemanticSearchClient({ initialStatus }: Props) {
               type="button"
               onClick={() => switchTab(t.v)}
               className={clsx(
-                'inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 text-sm border-b-2 -mb-px transition-colors',
+                'inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors',
                 isActive
-                  ? 'border-brand-600 text-brand-700 dark:text-brand-300 font-medium'
-                  : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-200',
+                  ? 'border-slate-950 bg-slate-950 text-white dark:border-white dark:bg-white dark:text-slate-950'
+                  : 'border-slate-200 bg-white/70 text-slate-600 hover:border-cyan-300 hover:text-cyan-700 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-300 dark:hover:border-cyan-800',
               )}
             >
               <Icon size={14} aria-hidden />
@@ -210,23 +210,23 @@ export default function SemanticSearchClient({ initialStatus }: Props) {
 
       {/* 错误条 */}
       {err && (
-        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+        <div className="command-glass border-red-300/70 p-3 text-sm text-red-700 dark:border-red-800/70 dark:text-red-300">
           {err}
         </div>
       )}
 
       {/* 结果列表 */}
       {!q.trim() ? (
-        <div className="text-center py-12 text-sm text-slate-400">
+        <div className="command-glass py-12 text-center text-sm text-slate-400">
           输入关键词开始语义搜索（支持中英混合、模糊匹配）
         </div>
       ) : loading ? (
-        <div className="text-center py-12 text-sm text-slate-400 inline-flex items-center justify-center gap-2 w-full">
+        <div className="command-glass inline-flex w-full items-center justify-center gap-2 py-12 text-center text-sm text-slate-400">
           <Loader2 className="h-4 w-4 animate-spin" />
           搜索中…
         </div>
       ) : hits.length === 0 ? (
-        <div className="text-center py-12 text-sm text-slate-400">
+        <div className="command-glass py-12 text-center text-sm text-slate-400">
           没有相关结果。试试换个关键词。
         </div>
       ) : tab === 'history' ? (
@@ -236,7 +236,7 @@ export default function SemanticSearchClient({ initialStatus }: Props) {
             return (
               <li
                 key={h.id}
-                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 hover:border-brand-300 dark:hover:border-brand-700 transition-colors"
+                className="command-glass detail-lift p-3 transition-colors hover:border-cyan-300 dark:hover:border-cyan-700"
               >
                 <div className="flex items-center gap-2 mb-1 text-xs">
                   <span className="badge badge-blue">{h.type}</span>
@@ -258,7 +258,7 @@ export default function SemanticSearchClient({ initialStatus }: Props) {
               href={a.url}
               target="_blank"
               rel="noopener"
-              className="block rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden hover:border-brand-400 dark:hover:border-brand-600 transition-colors"
+              className="command-glass detail-lift block overflow-hidden transition-colors hover:border-cyan-400 dark:hover:border-cyan-600"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img

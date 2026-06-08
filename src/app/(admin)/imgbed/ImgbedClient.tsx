@@ -1,33 +1,22 @@
-// v0.13 mobile m7: imgbed 2 cols on mobile
-// v0.13 mobile m5: tap-target-sm injected
 'use client';
 
-/**
- * v0.13 B3 · ImgbedClient
- *
- * 功能：
- *   - 顶部上传区（拖拽 + 多文件 · 体积无上限 · PNG/JPG/WebP/GIF）
- *   - 三 tab 切换（全部 / AI 生成 / 手动上传）· URL 同步 ?tab=
- *   - 网格列表：缩略图 + /i/<id> 短链 + 复制按钮 + 删除按钮 + 来源徽章
- *   - 分页 · prev / next · 显示 当前页/总页
- */
-
+import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import clsx from 'clsx';
 import {
-  Upload,
-  Copy,
   Check,
-  Trash2,
-  Image as ImageIcon,
-  Sparkles,
+  Copy,
+  ExternalLink,
   Layers,
   Loader2,
-  X,
-  AlertCircle,
-  ExternalLink,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+  Upload,
 } from 'lucide-react';
-import clsx from 'clsx';
+
+import { toast } from '@/lib/toast';
 
 interface AssetItem {
   id: string;
@@ -50,14 +39,7 @@ interface Props {
   stats: { all: number; ai: number; manual: number };
 }
 
-const ALLOWED_MIME = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/jpg',
-  'image/webp',
-  'image/gif',
-]);
-// v0.13 B3.1: 上传体积上限取消（用户原话「不设尺寸、空间限制」）
+const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif']);
 
 const TABS: { value: Props['tab']; label: string; icon: typeof Layers }[] = [
   { value: 'all', label: '全部', icon: Layers },
@@ -65,63 +47,80 @@ const TABS: { value: Props['tab']; label: string; icon: typeof Layers }[] = [
   { value: 'manual', label: '手动上传', icon: Upload },
 ];
 
+function sourceLabel(source: string) {
+  if (source === 'ai_generated') return 'AI 生成';
+  if (source === 'manual_upload') return '手动上传';
+  return source || '未知来源';
+}
+
+function fmtDate(value: string) {
+  try {
+    return new Date(value).toLocaleString('zh-CN', { hour12: false });
+  } catch {
+    return value;
+  }
+}
+
 export default function ImgbedClient(props: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [items, setItems] = useState<AssetItem[]>(props.initialItems);
   const [busy, setBusy] = useState(false);
-  const [errMsg, setErrMsg] = useState<string | null>(null);
-  const [okMsg, setOkMsg] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [copyId, setCopyId] = useState<string | null>(null);
   const [origin, setOrigin] = useState('');
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setOrigin(window.location.origin);
-    }
+    setOrigin(window.location.origin);
   }, []);
 
-  // 当 props.initialItems 变化时（路由切 tab/page 后 SSR 再水合）刷新本地 state
   useEffect(() => {
     setItems(props.initialItems);
   }, [props.initialItems]);
 
   const totalPages = Math.max(1, Math.ceil(props.total / props.pageSize));
+  const isWorkspace = pathname?.startsWith('/workspace');
+
+  const routeConfig = useMemo(
+    () => ({
+      route: isWorkspace ? '/workspace' : '/imgbed',
+      tabKey: isWorkspace ? 'ibTab' : 'tab',
+      pageKey: isWorkspace ? 'ibPage' : 'page',
+    }),
+    [isWorkspace],
+  );
 
   function go(next: { tab?: Props['tab']; page?: number }) {
-    const sp = new URLSearchParams(searchParams?.toString() ?? '');
+    const params = new URLSearchParams(searchParams?.toString() ?? '');
+    if (isWorkspace) params.set('tab', 'imgbed');
+
     if (next.tab !== undefined) {
-      if (next.tab === 'all') sp.delete('tab');
-      else sp.set('tab', next.tab);
-      sp.delete('page'); // tab 切换时回到第 1 页
+      if (next.tab === 'all') params.delete(routeConfig.tabKey);
+      else params.set(routeConfig.tabKey, next.tab);
+      params.delete(routeConfig.pageKey);
     }
     if (next.page !== undefined) {
-      if (next.page <= 1) sp.delete('page');
-      else sp.set('page', String(next.page));
+      if (next.page <= 1) params.delete(routeConfig.pageKey);
+      else params.set(routeConfig.pageKey, String(next.page));
     }
-    const qs = sp.toString();
-    router.push('/imgbed' + (qs ? '?' + qs : ''));
+    const query = params.toString();
+    router.push(routeConfig.route + (query ? `?${query}` : ''));
     router.refresh();
   }
 
-  function shortLink(id: string): string {
-    if (!origin) return `/i/${id}`;
-    return `${origin}/i/${id}`;
+  function shortLink(id: string) {
+    return origin ? `${origin}/i/${id}` : `/i/${id}`;
   }
 
   async function copyToClipboard(text: string, id: string) {
     try {
       await navigator.clipboard.writeText(text);
       setCopyId(id);
-      setOkMsg(`已复制：${text}`);
-      setTimeout(() => {
-        setCopyId(null);
-        setOkMsg(null);
-      }, 1800);
-    } catch (e) {
-      setErrMsg('复制失败：' + (e as Error).message);
-      setTimeout(() => setErrMsg(null), 3000);
+      toast.success('短链已复制');
+      window.setTimeout(() => setCopyId(null), 1600);
+    } catch (error) {
+      toast.error((error as Error).message || '复制失败');
     }
   }
 
@@ -129,317 +128,248 @@ export default function ImgbedClient(props: Props) {
     const fileArr = Array.from(files);
     if (fileArr.length === 0) return;
 
-    // 前端先做白名单 + 大小检查
-    const rejected: string[] = [];
     const accepted: File[] = [];
-    for (const f of fileArr) {
-      if (!ALLOWED_MIME.has(f.type)) {
-        rejected.push(`${f.name}（类型 ${f.type || '未知'} 不在白名单）`);
-        continue;
-      }
-      accepted.push(f);
+    const rejected: string[] = [];
+    for (const file of fileArr) {
+      if (ALLOWED_MIME.has(file.type)) accepted.push(file);
+      else rejected.push(file.name);
     }
-
-    if (rejected.length > 0) {
-      setErrMsg('已跳过：' + rejected.join('；'));
-      setTimeout(() => setErrMsg(null), 5000);
-    }
+    if (rejected.length > 0) toast.error(`已跳过不支持的文件：${rejected.join('、')}`, 6000);
     if (accepted.length === 0) return;
 
     setBusy(true);
     let okCount = 0;
-    let errs: string[] = [];
-    for (const f of accepted) {
-      const fd = new FormData();
-      fd.append('file', f);
-      fd.append('type', '图床上传');
+    const errors: string[] = [];
+    for (const file of accepted) {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('type', '图床上传');
       try {
-        const r = await fetch('/api/assets/upload', { method: 'POST', body: fd });
-        const j = await r.json();
-        if (!r.ok || !j.ok) {
-          errs.push(`${f.name}: ${j.error || r.status}`);
-        } else {
-          okCount += 1;
-        }
-      } catch (e) {
-        errs.push(`${f.name}: ${(e as Error).message}`);
+        const response = await fetch('/api/assets/upload', { method: 'POST', body: formData });
+        const data = await response.json();
+        if (!response.ok || !data.ok) errors.push(`${file.name}: ${data.error || response.status}`);
+        else okCount += 1;
+      } catch (error) {
+        errors.push(`${file.name}: ${(error as Error).message}`);
       }
     }
     setBusy(false);
+
     if (okCount > 0) {
-      setOkMsg(`✅ 上传 ${okCount} 张成功`);
-      setTimeout(() => setOkMsg(null), 3000);
+      toast.success(`已上传 ${okCount} 张图片`);
       router.refresh();
     }
-    if (errs.length > 0) {
-      setErrMsg('部分失败：' + errs.join('；'));
-      setTimeout(() => setErrMsg(null), 6000);
-    }
+    if (errors.length > 0) toast.error(`部分上传失败：${errors.join('；')}`, 7000);
   }
 
   async function deleteAsset(id: string) {
-    if (!confirm('确定删除这张图？文件 + DB 记录都会删，无法恢复。')) return;
+    if (!window.confirm('确认删除这张图片？文件和数据库记录都会删除，无法恢复。')) return;
     try {
-      const r = await fetch(`/api/assets/${id}`, { method: 'DELETE' });
-      const j = await r.json();
-      if (!r.ok || !j.ok) {
-        setErrMsg('删除失败：' + (j.error || r.status));
-        setTimeout(() => setErrMsg(null), 3000);
-        return;
-      }
-      setItems((prev) => prev.filter((x) => x.id !== id));
-      setOkMsg('已删除');
-      setTimeout(() => setOkMsg(null), 1500);
+      const response = await fetch(`/api/assets/${id}`, { method: 'DELETE' });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || '删除失败');
+      setItems((current) => current.filter((item) => item.id !== id));
+      toast.success('图片已删除');
       router.refresh();
-    } catch (e) {
-      setErrMsg('删除异常：' + (e as Error).message);
-      setTimeout(() => setErrMsg(null), 3000);
+    } catch (error) {
+      toast.error((error as Error).message);
     }
   }
 
   return (
-    <div className="space-y-4 px-4 sm:px-6 py-3 sm:py-4 max-w-7xl mx-auto">
-      <header className="page-hero">
-        <h1>图床</h1>
-        <p>上传图片或保存生成结果，每张图都有专属直链。</p>
+    <div className="page-shell">
+      <header className="command-panel p-5 sm:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs font-bold text-cyan-200">
+              <span className="pulse-dot" aria-hidden />
+              资产 / 图床
+            </div>
+            <h1 className="mt-4 text-3xl font-black leading-tight text-white sm:text-4xl">图床与短链</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
+              上传图片、复制 /i/&lt;id&gt; 短链，并按来源快速过滤。它是资产库的轻量入口，适合内部快速分发图片。
+            </p>
+          </div>
+          <button type="button" onClick={() => router.refresh()} className="command-rail btn-primary bg-white text-slate-950 hover:bg-slate-200">
+            <RefreshCw className="mr-2 h-4 w-4" />
+            刷新
+          </button>
+        </div>
       </header>
 
-      <div className="flex items-center gap-2">
-        <ImageIcon size={20} className="text-brand-600 dark:text-brand-400" aria-hidden="true" />
-        <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-50">
-          图床 · 图片管理
-        </h1>
-        <span className="text-xs text-slate-400 dark:text-slate-500 ml-2">
-          所有图统一短链 · /i/&lt;id&gt;
-        </span>
-      </div>
+      <section className="grid gap-3 md:grid-cols-3">
+        <Metric label="全部图片" value={props.stats.all} icon={<Layers className="h-4 w-4" />} />
+        <Metric label="AI 生成" value={props.stats.ai} icon={<Sparkles className="h-4 w-4" />} />
+        <Metric label="手动上传" value={props.stats.manual} icon={<Upload className="h-4 w-4" />} />
+      </section>
 
-      {/* 上传区 */}
-      <div
-        data-v013-b3-uploader
-        onDragOver={(e) => {
-          e.preventDefault();
+      <section
+        onDragOver={(event) => {
+          event.preventDefault();
           setDragOver(true);
         }}
         onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
+        onDrop={(event) => {
+          event.preventDefault();
           setDragOver(false);
-          if (e.dataTransfer?.files) void uploadFiles(e.dataTransfer.files);
+          if (event.dataTransfer?.files) void uploadFiles(event.dataTransfer.files);
         }}
         className={clsx(
-          'rounded-lg border-2 border-dashed p-6 sm:p-8 text-center transition-colors',
-          dragOver
-            ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/20'
-            : 'border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40',
+          'command-glass command-rail relative overflow-hidden p-6 text-center transition-colors sm:p-8',
+          dragOver ? 'border-cyan-400 bg-cyan-50/70 dark:bg-cyan-950/30' : '',
         )}
       >
-        <Upload size={28} className="mx-auto mb-2 text-slate-400" aria-hidden="true" />
-        <p className="text-sm text-slate-700 dark:text-slate-200 mb-1">
-          拖拽图片到此处 · 或点击下方按钮选择文件
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+          {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Upload className="h-5 w-5" />}
+        </div>
+        <h2 className="mt-4 text-base font-semibold text-slate-950 dark:text-slate-50">
+          {dragOver ? '释放文件开始上传' : '拖拽图片到这里'}
+        </h2>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+          支持 PNG / JPG / WebP / GIF，可一次选择多张；实际容量只受服务器磁盘限制。
         </p>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
-          支持 PNG / JPG / WebP / GIF · 可一次选多张 · 体积无上限（仅受 VPS 磁盘约束）
-        </p>
-        <label className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-brand-600 hover:bg-brand-700 disabled:bg-slate-400 text-white text-sm font-medium cursor-pointer transition-colors">
-          {busy ? (
-            <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-          ) : (
-            <Upload size={14} aria-hidden="true" />
-          )}
-          {busy ? '上传中…' : '选择文件'}
+        <label className="btn-primary mt-5 cursor-pointer">
+          {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+          {busy ? '上传中' : '选择文件'}
           <input
             type="file"
             multiple
             accept="image/png,image/jpeg,image/webp,image/gif"
             className="hidden"
             disabled={busy}
-            onChange={(e) => {
-              if (e.target.files) void uploadFiles(e.target.files);
-              e.currentTarget.value = ''; // 允许重复选同一张
+            onChange={(event) => {
+              if (event.target.files) void uploadFiles(event.target.files);
+              event.currentTarget.value = '';
             }}
           />
         </label>
-      </div>
+      </section>
 
-      {/* 通知区 */}
-      {errMsg && (
-        <div className="rounded-md border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-900/20 p-2 text-xs text-red-800 dark:text-red-100 flex items-start gap-2">
-          <AlertCircle size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
-          <span className="break-all">{errMsg}</span>
-        </div>
-      )}
-      {okMsg && (
-        <div className="rounded-md border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-900/20 p-2 text-xs text-emerald-800 dark:text-emerald-100 flex items-start gap-2">
-          <Check size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
-          <span className="break-all">{okMsg}</span>
-        </div>
-      )}
-
-      {/* Tab 切换 */}
-      <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-800">
-        {TABS.map((t) => {
-          const Icon = t.icon;
-          const isActive = props.tab === t.value;
-          const count =
-            t.value === 'all'
-              ? props.stats.all
-              : t.value === 'ai'
-              ? props.stats.ai
-              : props.stats.manual;
-          return (
-            <button
-              key={t.value}
-              type="button"
-              onClick={() => go({ tab: t.value })}
-              aria-pressed={isActive}
-              className={clsx(
-                'inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 text-sm border-b-2 -mb-px transition-colors',
-                isActive
-                  ? 'border-brand-600 text-brand-700 font-medium dark:text-brand-300'
-                  : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-200',
-              )}
-            >
-              <Icon size={14} aria-hidden="true" />
-              {t.label}
-              <span className="text-xs text-slate-400 ml-0.5">({count})</span>
-            </button>
-          );
-        })}
-        <span className="ml-auto text-[11px] text-slate-400 px-2">
-          第 {props.page} / {totalPages} 页 · 共 {props.total} 张
-        </span>
-      </div>
-
-      {/* 网格 */}
-      {items.length === 0 ? (
-        <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400">
-          <ImageIcon size={28} className="mx-auto mb-2 opacity-40" aria-hidden="true" />
-          这一页还没有图。上传一张试试。
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-3">
-          {items.map((it) => {
-            const link = shortLink(it.id);
-            const isCopied = copyId === it.id;
+      <section className="command-toolbar">
+        <div className="flex flex-wrap gap-2">
+          {TABS.map((tab) => {
+            const Icon = tab.icon;
+            const active = props.tab === tab.value;
             return (
-              <div
-                key={it.id}
-                data-v013-b3-card={it.id}
-                className="group relative flex flex-col gap-1.5 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2"
+              <button
+                key={tab.value}
+                type="button"
+                onClick={() => go({ tab: tab.value })}
+                className={
+                  'inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ' +
+                  (active
+                    ? 'border-slate-950 bg-slate-950 text-white dark:border-white dark:bg-white dark:text-slate-950'
+                    : 'border-slate-200 bg-white/70 text-slate-600 hover:border-cyan-300 hover:text-cyan-700 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-300 dark:hover:border-cyan-800')
+                }
               >
-                <a
-                  href={it.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="relative block aspect-square overflow-hidden rounded bg-slate-100 dark:bg-slate-800"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={it.url}
-                    alt={it.type}
-                    loading="lazy"
-                    className="absolute inset-0 w-full h-full object-contain"
-                  />
-                  <div className="absolute top-1 right-1">
-                    <span
-                      className={clsx(
-                        'inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-medium',
-                        it.source === 'ai_generated'
-                          ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'
-                          : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-                      )}
-                    >
-                      {it.source === 'ai_generated' ? (
-                        <>
-                          <Sparkles size={9} aria-hidden="true" /> AI
-                        </>
-                      ) : (
-                        <>
-                          <Upload size={9} aria-hidden="true" /> 手动
-                        </>
-                      )}
-                    </span>
-                  </div>
-                </a>
-                <div className="flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                  <span className="truncate" title={it.prompt || it.fileName}>
-                    {it.prompt
-                      ? it.prompt.slice(0, 30) + (it.prompt.length > 30 ? '…' : '')
-                      : it.fileName.slice(0, 24)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <input
-                    readOnly
-                    value={link}
-                    className="flex-1 min-w-0 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-1 text-[10px] font-mono text-slate-700 dark:text-slate-300 truncate"
-                    onFocus={(e) => e.currentTarget.select()}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void copyToClipboard(link, it.id)}
-                    className="tap-target-sm inline-flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 p-1.5 text-slate-600 dark:text-slate-300 transition-colors"
-                    title="复制短链"
-                  >
-                    {isCopied ? (
-                      <Check size={12} className="text-emerald-600" aria-hidden="true" />
-                    ) : (
-                      <Copy size={12} aria-hidden="true" />
-                    )}
-                  </button>
-                  <a
-                    href={link}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="tap-target-sm inline-flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 p-1.5 text-slate-600 dark:text-slate-300 transition-colors"
-                    title="新窗口打开"
-                  >
-                    <ExternalLink size={12} aria-hidden="true" />
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() => void deleteAsset(it.id)}
-                    className="tap-target-sm inline-flex items-center justify-center rounded border border-red-200 dark:border-red-900 bg-white dark:bg-slate-900 hover:bg-red-50 dark:hover:bg-red-900/30 p-1.5 text-red-600 dark:text-red-400 transition-colors"
-                    title="删除"
-                  >
-                    <Trash2 size={12} aria-hidden="true" />
-                  </button>
-                </div>
-                <div className="text-[9px] text-slate-400 dark:text-slate-500 flex items-center justify-between">
-                  <span>{new Date(it.createdAt).toLocaleString('zh-CN', { hour12: false })}</span>
-                  {it.platform && <span>· {it.platform}</span>}
-                </div>
-              </div>
+                <Icon className="h-4 w-4" />
+                {tab.label}
+              </button>
             );
           })}
         </div>
+        <div className="text-sm text-slate-500 dark:text-slate-400">
+          当前显示 <span className="font-medium text-slate-900 dark:text-slate-100">{props.total}</span> 张
+        </div>
+      </section>
+
+      {items.length === 0 ? (
+        <div className="command-empty">当前筛选下暂无图片</div>
+      ) : (
+        <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+          {items.map((item, index) => (
+            <article
+              key={item.id}
+              className="asset-command-card detail-lift overflow-hidden reveal-up"
+              style={{ animationDelay: `${Math.min(index, 10) * 35}ms` }}
+            >
+              <div className="relative aspect-square bg-slate-100 dark:bg-slate-900">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={item.url} alt={item.fileName || item.id} className="h-full w-full object-cover" loading="lazy" />
+                <span className="absolute left-2 top-2 rounded-md bg-slate-950/70 px-2 py-1 text-[11px] text-white backdrop-blur">
+                  {sourceLabel(item.source)}
+                </span>
+              </div>
+              <div className="space-y-3 p-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                    {item.fileName || item.type || '未命名图片'}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-slate-400">{fmtDate(item.createdAt)}</div>
+                </div>
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 font-mono text-[11px] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+                  /i/{item.id}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(shortLink(item.id), item.id)}
+                    className="btn-secondary h-8 flex-1 px-2 py-1 text-xs"
+                  >
+                    {copyId === item.id ? <Check className="mr-1 h-3.5 w-3.5" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
+                    复制
+                  </button>
+                  <a
+                    href={`/i/${item.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900"
+                    aria-label="打开短链"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => deleteAsset(item.id)}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950"
+                    aria-label="删除图片"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </section>
       )}
 
-      {/* 分页 */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 pt-2">
+        <div className="flex items-center justify-center gap-2">
           <button
             type="button"
-            disabled={props.page <= 1}
             onClick={() => go({ page: props.page - 1 })}
-            className="px-3 py-1 text-sm rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 disabled:opacity-40 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            disabled={props.page <= 1}
+            className="btn-secondary px-3 py-1.5 text-xs disabled:opacity-40"
           >
             上一页
           </button>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
+          <span className="text-sm text-slate-500">
             {props.page} / {totalPages}
           </span>
           <button
             type="button"
-            disabled={props.page >= totalPages}
             onClick={() => go({ page: props.page + 1 })}
-            className="px-3 py-1 text-sm rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 disabled:opacity-40 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            disabled={props.page >= totalPages}
+            className="btn-secondary px-3 py-1.5 text-xs disabled:opacity-40"
           >
             下一页
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function Metric({ label, value, icon }: { label: string; value: number; icon: ReactNode }) {
+  return (
+    <div className="command-stat-card flex items-center justify-between">
+      <div>
+        <div className="text-xs text-slate-500 dark:text-slate-400">{label}</div>
+        <div className="mt-1 text-2xl font-black tabular-nums text-slate-950 dark:text-slate-50">{value}</div>
+      </div>
+      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+        {icon}
+      </div>
     </div>
   );
 }

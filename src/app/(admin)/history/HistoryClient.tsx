@@ -1,25 +1,18 @@
-/**
- * v0.15 · 历史记录 · UI 重做
- *
- * 用户原话：信息杂乱无章，重点信息不突出，UI 以及逻辑推到重建。
- *
- * 新结构：
- *   - 顶部汇总条（按类型分布的 chip 筛选 + 总数）
- *   - 左列紧凑列表（一行一条 · 类型徽标 + 时间 + 输出预览）
- *   - 右列详情面板（type / model / createdAt / 输入 / 输出 + 操作按钮）
- *   - 移动端单栏：列表 → 点击进入详情视图
- */
 'use client';
 
-import { useState, useMemo } from 'react';
+import type { ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import {
-  Copy,
-  Trash2,
-  RefreshCw,
-  X,
-  Search,
   ChevronLeft,
+  Clipboard,
+  Copy,
+  FileText,
+  RefreshCw,
+  Search,
+  Sparkles,
+  Trash2,
 } from 'lucide-react';
+
 import { copyAll } from '@/lib/clipboard';
 import { toast } from '@/lib/toast';
 
@@ -38,32 +31,30 @@ const TYPE_LABEL: Record<string, string> = {
   image_prompt: '图片提示词',
   suggestion: '运营建议',
   'platform-build': '平台产出',
-  'platform-build-5img': '平台产出·5图',
-  'ai-search': 'AI 搜',
+  'platform-build-5img': '平台产出 5 图',
+  'ai-search': 'AI 搜索',
   'ai-analysis': 'AI 分析',
+  'prompt-gen': '提示词生成',
+  'playground:image': 'Playground 图片',
+  'playground:llm': 'Playground 文案',
+  'playground:agent': 'Playground Agent',
 };
 
-const TYPE_BADGE: Record<string, string> = {
-  text: 'badge-blue',
-  image: 'badge-yellow',
-  image_prompt: 'badge-purple',
-  suggestion: 'badge-green',
-  'platform-build': 'badge-pink',
-  'platform-build-5img': 'badge-pink',
-  'ai-search': 'badge-cyan',
-  'ai-analysis': 'badge-orange',
-};
-
-function isPublishDirector(row: HistoryRow): boolean {
-  if (!row.input) return false;
+function isPublishDirector(row: HistoryRow) {
   return row.input.includes('"via":"publish-director"');
 }
 
-function isChatType(row: HistoryRow): boolean {
-  return typeof row.type === 'string' && row.type.startsWith('chat-');
+function isChatType(row: HistoryRow) {
+  return row.type.startsWith('chat-');
 }
 
-function fmtDate(iso: string): string {
+function typeLabel(row: HistoryRow) {
+  if (isChatType(row)) return 'AI 对话';
+  if (isPublishDirector(row)) return '发布导演';
+  return TYPE_LABEL[row.type] ?? (row.type || '未知类型');
+}
+
+function fmtDate(iso: string) {
   try {
     return new Date(iso).toLocaleString('zh-CN', { hour12: false });
   } catch {
@@ -71,101 +62,71 @@ function fmtDate(iso: string): string {
   }
 }
 
-function shortPreview(text: string, max = 90): string {
-  if (!text) return '';
-  let t = text.replace(/\s+/g, ' ').trim();
-  // 尝试解析 JSON 取关键字段做摘要
-  if (t.startsWith('{') && t.length < 4000) {
+function preview(text: string, max = 110) {
+  const compact = prettyText(text).replace(/\s+/g, ' ').trim();
+  return compact.length > max ? `${compact.slice(0, max)}...` : compact;
+}
+
+function prettyText(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  if ((trimmed.startsWith('{') || trimmed.startsWith('[')) && trimmed.length < 20_000) {
     try {
-      const obj = JSON.parse(t);
-      if (typeof obj?.summary === 'string') t = obj.summary;
-      else if (typeof obj?.title === 'string') t = obj.title;
-      else if (typeof obj?.body === 'string') t = obj.body;
-      else if (typeof obj?.coverText === 'string') t = obj.coverText;
-      else if (Array.isArray(obj?.titles) && obj.titles[0]) t = obj.titles[0];
-      else if (typeof obj?.prompt === 'string') t = obj.prompt;
+      return JSON.stringify(JSON.parse(trimmed), null, 2);
     } catch {
-      /* keep original */
+      return text;
     }
   }
-  return t.length > max ? t.slice(0, max) + '…' : t;
+  return text;
 }
 
 export default function HistoryClient({ initial }: { initial: HistoryRow[] }) {
   const [rows, setRows] = useState<HistoryRow[]>(initial);
-  const [activeId, setActiveId] = useState<string | null>(initial[0]?.id ?? null);
-  const [filterType, setFilterType] = useState<string>('');
-  const [query, setQuery] = useState<string>('');
-  const [mobileDetail, setMobileDetail] = useState<boolean>(false);
+  const [activeId, setActiveId] = useState(initial[0]?.id ?? '');
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('');
+  const [mobileDetail, setMobileDetail] = useState(false);
 
-  // 类型分布 → chip
-  const typeCounts = useMemo(() => {
-    const m: Record<string, number> = {};
-    rows.forEach((r) => {
-      const k = isChatType(r) ? '__chat__' : isPublishDirector(r) ? '__pub__' : r.type;
-      m[k] = (m[k] ?? 0) + 1;
-    });
-    return m;
+  const chips = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const key = isChatType(row) ? '__chat__' : isPublishDirector(row) ? '__publish__' : row.type;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return [
+      { value: '', label: '全部', count: rows.length },
+      ...Array.from(counts.entries()).map(([value, count]) => ({
+        value,
+        label:
+          value === '__chat__'
+            ? 'AI 对话'
+            : value === '__publish__'
+              ? '发布导演'
+              : TYPE_LABEL[value] ?? value,
+        count,
+      })),
+    ];
   }, [rows]);
 
-  const chipDefs = useMemo(() => {
-    const arr: { value: string; label: string; count: number }[] = [
-      { value: '', label: '全部', count: rows.length },
-    ];
-    Object.entries(typeCounts).forEach(([k, c]) => {
-      let label = TYPE_LABEL[k] ?? k;
-      if (k === '__chat__') label = '💬 AI 对话';
-      else if (k === '__pub__') label = '🎯 发布导演';
-      arr.push({ value: k, label, count: c });
-    });
-    return arr;
-  }, [typeCounts, rows.length]);
-
   const filtered = useMemo(() => {
-    return rows.filter((r) => {
-      if (filterType) {
-        if (filterType === '__chat__' && !isChatType(r)) return false;
-        else if (filterType === '__pub__' && !isPublishDirector(r)) return false;
-        else if (
-          filterType !== '__chat__' &&
-          filterType !== '__pub__' &&
-          r.type !== filterType
-        )
-          return false;
+    const needle = query.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (filter) {
+        if (filter === '__chat__' && !isChatType(row)) return false;
+        else if (filter === '__publish__' && !isPublishDirector(row)) return false;
+        else if (filter !== '__chat__' && filter !== '__publish__' && row.type !== filter) return false;
       }
-      if (query) {
-        const q = query.toLowerCase();
-        return (
-          r.input.toLowerCase().includes(q) ||
-          r.output.toLowerCase().includes(q) ||
-          (r.model ?? '').toLowerCase().includes(q)
-        );
-      }
-      return true;
+      if (!needle) return true;
+      return (
+        row.input.toLowerCase().includes(needle) ||
+        row.output.toLowerCase().includes(needle) ||
+        row.model.toLowerCase().includes(needle) ||
+        typeLabel(row).toLowerCase().includes(needle)
+      );
     });
-  }, [rows, filterType, query]);
+  }, [rows, filter, query]);
 
-  const active = useMemo(
-    () => rows.find((r) => r.id === activeId) ?? null,
-    [rows, activeId],
-  );
-
-  async function deleteOne(id: string) {
-    if (!confirm('删除这条历史？')) return;
-    try {
-      const res = await fetch(`/api/history/${id}`, { method: 'DELETE' });
-      const j = await res.json();
-      if (!res.ok || !j.ok) throw new Error(j.error || '删除失败');
-      setRows((arr) => arr.filter((r) => r.id !== id));
-      if (activeId === id) {
-        const next = rows.find((r) => r.id !== id);
-        setActiveId(next?.id ?? null);
-      }
-      toast.success('已删除');
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  }
+  const active = rows.find((row) => row.id === activeId) ?? filtered[0] ?? null;
 
   async function copyText(text: string, label: string) {
     const ok = await copyAll(text);
@@ -173,103 +134,109 @@ export default function HistoryClient({ initial }: { initial: HistoryRow[] }) {
     else toast.error('复制失败');
   }
 
+  async function deleteOne(id: string) {
+    if (!window.confirm('确认删除这条历史记录？此操作不可撤销。')) return;
+    try {
+      const response = await fetch(`/api/history/${id}`, { method: 'DELETE' });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || '删除失败');
+      setRows((current) => current.filter((row) => row.id !== id));
+      if (activeId === id) setActiveId('');
+      toast.success('历史记录已删除');
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
+  }
+
   return (
-    <div className="space-y-4">
-      {/* 顶部汇总条 */}
-      <header className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3">
-        <div className="flex items-baseline justify-between flex-wrap gap-2">
+    <div className="page-shell">
+      <header className="command-panel p-5 sm:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <div className="text-[11px] uppercase tracking-wide text-slate-400 font-mono">
-              history
+            <div className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs font-bold text-cyan-200">
+              <span className="pulse-dot" aria-hidden />
+              资产 / 历史
             </div>
-            <div className="text-base sm:text-lg font-semibold text-slate-800 dark:text-slate-100 mt-0.5">
-              共 {rows.length} 条 AI 输出
-            </div>
+            <h1 className="mt-4 text-3xl font-black leading-tight text-white sm:text-4xl">历史记录</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
+              用左侧快速定位生成记录，右侧查看完整输入输出。这里保留旧能力，但视觉和交互统一到新的工作台体系。
+            </p>
           </div>
-          <div className="relative">
-            <Search
-              size={14}
-              className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400"
-              aria-hidden="true"
-            />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索 input / output / model"
-              className="text-sm pl-7 pr-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-transparent w-60"
-            />
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {chipDefs.map((c) => {
-            const active = c.value === filterType;
-            return (
-              <button
-                key={c.value}
-                type="button"
-                onClick={() => setFilterType(c.value)}
-                className={
-                  'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors ' +
-                  (active
-                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700')
-                }
-              >
-                {c.label}
-                <span className="font-mono tabular-nums opacity-70">{c.count}</span>
-              </button>
-            );
-          })}
+          <button type="button" onClick={() => window.location.reload()} className="command-rail btn-primary bg-white text-slate-950 hover:bg-slate-200">
+            <RefreshCw className="mr-2 h-4 w-4" />
+            刷新
+          </button>
         </div>
       </header>
 
-      {/* 双栏 */}
-      <div className="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)] gap-4">
-        {/* 左列：紧凑列表 */}
+      <section className="command-toolbar">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            className="input command-input pl-9"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索输入、输出、模型或类型"
+          />
+        </div>
+        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+          {chips.map((chip) => (
+            <button
+              key={chip.value}
+              type="button"
+              onClick={() => setFilter(chip.value)}
+              className={
+                'inline-flex shrink-0 items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ' +
+                (filter === chip.value
+                  ? 'border-slate-950 bg-slate-950 text-white dark:border-white dark:bg-white dark:text-slate-950'
+                  : 'border-slate-200 bg-white/70 text-slate-600 hover:border-cyan-300 hover:text-cyan-700 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-300 dark:hover:border-cyan-800')
+              }
+            >
+              {chip.label}
+              <span className="font-mono tabular-nums opacity-70">{chip.count}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
         <aside
           className={
-            'rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden lg:max-h-[calc(100vh-200px)] lg:overflow-y-auto ' +
+            'command-glass overflow-hidden lg:max-h-[calc(100vh-240px)] lg:overflow-y-auto ' +
             (mobileDetail ? 'hidden lg:block' : '')
           }
           aria-label="历史记录列表"
         >
           {filtered.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-400">
-              没有匹配的记录
-            </div>
+            <div className="command-empty border-0">没有匹配的历史记录</div>
           ) : (
             <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-              {filtered.map((r) => {
-                const active = r.id === activeId;
-                const fromPub = isPublishDirector(r);
+              {filtered.map((row) => {
+                const selected = active?.id === row.id;
                 return (
-                  <li key={r.id}>
+                  <li key={row.id}>
                     <button
                       type="button"
                       onClick={() => {
-                        setActiveId(r.id);
+                        setActiveId(row.id);
                         setMobileDetail(true);
                       }}
                       className={
-                        'block w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 ' +
-                        (active
-                          ? 'bg-brand-50/60 dark:bg-brand-900/20 border-l-2 border-brand-600'
-                          : 'border-l-2 border-transparent')
+                        'block w-full border-l-2 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-900/60 ' +
+                        (selected
+                          ? 'border-cyan-500 bg-cyan-50/60 dark:bg-cyan-950/20'
+                          : 'border-transparent')
                       }
                     >
-                      <div className="flex items-center gap-2 text-[11px]">
-                        <span className={(TYPE_BADGE[r.type] ?? 'badge-gray') + ' text-[10px]'}>
-                          {TYPE_LABEL[r.type] ?? r.type}
-                        </span>
-                        {fromPub && <span className="badge-yellow text-[10px]">🎯</span>}
-                        <span className="ml-auto text-slate-400 tabular-nums">
-                          {fmtDate(r.createdAt).slice(5, 16)}
-                        </span>
+                      <div className="flex items-center gap-2">
+                        <span className="badge-gray">{typeLabel(row)}</span>
+                        {isPublishDirector(row) && <Sparkles className="h-3.5 w-3.5 text-amber-500" />}
+                        <span className="ml-auto text-[11px] text-slate-400">{fmtDate(row.createdAt)}</span>
                       </div>
-                      <div className="mt-1.5 text-xs text-slate-700 dark:text-slate-200 line-clamp-2 leading-snug">
-                        {shortPreview(r.output, 110)}
+                      <div className="mt-2 line-clamp-2 text-sm text-slate-700 dark:text-slate-200">
+                        {preview(row.output || row.input) || '空输出'}
                       </div>
+                      <div className="mt-2 truncate text-xs text-slate-400">{row.model || '未记录模型'}</div>
                     </button>
                   </li>
                 );
@@ -278,96 +245,90 @@ export default function HistoryClient({ initial }: { initial: HistoryRow[] }) {
           )}
         </aside>
 
-        {/* 右列：详情 */}
-        <section
-          className={
-            'rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 ' +
-            (mobileDetail ? '' : 'hidden lg:block')
-          }
-          aria-label="历史记录详情"
-        >
+        <section className={(mobileDetail ? '' : 'hidden lg:block') + ' min-w-0'}>
           {active ? (
-            <div className="flex flex-col h-full">
-              <div className="px-4 sm:px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2 flex-wrap">
+            <div className="command-glass overflow-hidden">
+              <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 p-4 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setMobileDetail(false)}
-                  className="lg:hidden inline-flex items-center gap-1 text-xs text-slate-500"
+                  className="btn-secondary px-3 py-1.5 text-xs lg:hidden"
                 >
-                  <ChevronLeft size={14} /> 列表
+                  <ChevronLeft className="mr-1 h-3.5 w-3.5" />
+                  返回
                 </button>
-                <span className={(TYPE_BADGE[active.type] ?? 'badge-gray') + ' text-[10px]'}>
-                  {TYPE_LABEL[active.type] ?? active.type}
-                </span>
-                {active.model && (
-                  <span className="text-[11px] font-mono text-slate-500">{active.model}</span>
-                )}
-                <span className="text-[11px] text-slate-400 tabular-nums ml-auto">
-                  {fmtDate(active.createdAt)}
-                </span>
+                <span className="badge-blue">{typeLabel(active)}</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">{fmtDate(active.createdAt)}</span>
+                <span className="ml-auto truncate text-xs text-slate-400">{active.model || '未记录模型'}</span>
               </div>
-              <div className="px-4 sm:px-5 py-4 overflow-y-auto space-y-4">
-                <Section title="输入">
-                  <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words bg-slate-50 dark:bg-slate-800/50 rounded-md p-3 max-h-72 overflow-y-auto font-mono">
-                    {active.input}
-                  </pre>
-                  <div className="mt-1.5 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => copyText(active.input, '输入')}
-                      className="text-[11px] text-brand-600 hover:underline inline-flex items-center gap-1"
-                    >
-                      <Copy size={11} /> 复制 input
-                    </button>
-                  </div>
-                </Section>
-                <Section title="输出">
-                  <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words bg-slate-50 dark:bg-slate-800/50 rounded-md p-3 max-h-[480px] overflow-y-auto font-mono">
-                    {active.output}
-                  </pre>
-                  <div className="mt-2 flex flex-wrap gap-2 justify-end text-[11px]">
-                    <button
-                      type="button"
-                      onClick={() => copyText(active.output, '输出')}
-                      className="text-brand-600 hover:underline inline-flex items-center gap-1"
-                    >
-                      <Copy size={11} /> 复制 output
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteOne(active.id)}
-                      className="text-red-600 hover:underline inline-flex items-center gap-1"
-                    >
-                      <Trash2 size={11} /> 删除
-                    </button>
-                  </div>
-                </Section>
+
+              <div className="grid gap-4 p-4 xl:grid-cols-2">
+                <RecordBlock
+                  title="输入"
+                  icon={<Clipboard className="h-4 w-4" />}
+                  text={prettyText(active.input)}
+                  onCopy={() => copyText(active.input, '输入')}
+                />
+                <RecordBlock
+                  title="输出"
+                  icon={<FileText className="h-4 w-4" />}
+                  text={prettyText(active.output)}
+                  onCopy={() => copyText(active.output, '输出')}
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-2 border-t border-slate-200 p-4 dark:border-slate-800">
+                <button type="button" onClick={() => copyText(active.output, '输出')} className="btn-primary">
+                  <Copy className="mr-2 h-4 w-4" />
+                  复制输出
+                </button>
+                <button type="button" onClick={() => copyText(active.input, '输入')} className="btn-secondary">
+                  <Copy className="mr-2 h-4 w-4" />
+                  复制输入
+                </button>
+                <button type="button" onClick={() => deleteOne(active.id)} className="btn-danger ml-auto">
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  删除
+                </button>
               </div>
             </div>
           ) : (
-            <div className="p-10 text-center text-sm text-slate-400">
-              在左侧选一条记录查看详情
-            </div>
+            <div className="command-empty">请选择一条历史记录</div>
           )}
         </section>
-      </div>
+      </section>
     </div>
   );
 }
 
-function Section({
+function RecordBlock({
   title,
-  children,
+  icon,
+  text,
+  onCopy,
 }: {
   title: string;
-  children: React.ReactNode;
+  icon: ReactNode;
+  text: string;
+  onCopy: () => void;
 }) {
   return (
-    <div>
-      <div className="text-[11px] uppercase tracking-wide text-slate-400 font-mono mb-1.5">
+    <div className="command-glass">
+      <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 dark:border-slate-800 dark:text-slate-200">
+        {icon}
         {title}
+        <button
+          type="button"
+          onClick={onCopy}
+          className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white hover:text-slate-900 dark:hover:bg-slate-950 dark:hover:text-white"
+          aria-label={`复制${title}`}
+        >
+          <Copy className="h-3.5 w-3.5" />
+        </button>
       </div>
-      {children}
+      <pre className="max-h-[52vh] overflow-auto whitespace-pre-wrap break-words p-3 text-xs leading-5 text-slate-700 dark:text-slate-300">
+        {text || '无内容'}
+      </pre>
     </div>
   );
 }

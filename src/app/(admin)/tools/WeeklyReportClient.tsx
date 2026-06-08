@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { copyAll } from '@/lib/clipboard';
 import type { WeeklyReport } from '@/lib/weekly';
 import { PLATFORM_LABEL } from '@/lib/constants';
+import { Copy, Download, Sparkles } from 'lucide-react';
 
 const METRIC_LABELS: Record<string, string> = {
   impressions: '曝光',
@@ -63,8 +64,8 @@ export default function WeeklyReportClient({
   return (
     <div className="space-y-4">
       {/* 头 */}
-      <div className="card">
-        <div className="card-body flex items-center justify-between flex-wrap gap-3">
+      <div className="command-glass">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
           <div>
             <div className="text-xs text-slate-500">周复盘</div>
             <h2 className="text-lg font-semibold mt-0.5">
@@ -76,18 +77,21 @@ export default function WeeklyReportClient({
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {msg && <span className="text-sm text-emerald-600">{msg}</span>}
-            <button onClick={copyMd} className="btn-secondary text-sm">
-              📋 复制 Markdown
+            <button onClick={copyMd} className="btn-secondary inline-flex items-center gap-2 text-sm">
+              <Copy size={14} />
+              复制 Markdown
             </button>
-            <button onClick={downloadMd} className="btn-secondary text-sm">
-              ⬇ 下载 .md
+            <button onClick={downloadMd} className="btn-secondary inline-flex items-center gap-2 text-sm">
+              <Download size={14} />
+              下载 .md
             </button>
             <button
               onClick={genAi}
               disabled={aiLoading}
-              className="btn-primary text-sm"
+              className="btn-primary inline-flex items-center gap-2 text-sm"
             >
-              {aiLoading ? 'AI 生成中...' : '🤖 AI 写下周建议'}
+              <Sparkles size={14} />
+              {aiLoading ? 'AI 生成中...' : 'AI 写下周建议'}
             </button>
           </div>
         </div>
@@ -95,8 +99,8 @@ export default function WeeklyReportClient({
 
       {/* AI 建议 */}
       {aiSummary && (
-        <div className="card border-brand-200 bg-brand-50">
-          <div className="card-body">
+        <div className="command-glass border-cyan-300/60 bg-cyan-50/70 dark:bg-cyan-950/20">
+          <div className="p-4 sm:p-5">
             <div className="text-sm text-brand-700 font-semibold mb-2">
               AI 总结
             </div>
@@ -119,11 +123,11 @@ export default function WeeklyReportClient({
       )}
 
       {/* 关键指标对比 */}
-      <div className="card">
-        <div className="card-header">
+      <div className="command-glass">
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
           <h3 className="font-semibold">关键指标 vs 上周</h3>
         </div>
-        <div className="card-body grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:p-5 md:grid-cols-3 lg:grid-cols-6">
           {(Object.keys(METRIC_LABELS) as (keyof typeof METRIC_LABELS)[]).map(
             (k) => {
               const t = (report.delta.thisWeek as any)[k];
@@ -146,12 +150,12 @@ export default function WeeklyReportClient({
 
       {/* 类目排行 + 平台对比 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="card">
-          <div className="card-header">
+        <div className="command-glass">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
             <h3 className="font-semibold">本周类目表现</h3>
           </div>
-          <div className="card-body">
-            <table className="table">
+          <div className="overflow-x-auto p-4 sm:p-5">
+            <table className="table command-table">
               <thead>
                 <tr>
                   <th>类目</th>
@@ -180,12 +184,12 @@ export default function WeeklyReportClient({
             </table>
           </div>
         </div>
-        <div className="card">
-          <div className="card-header">
+        <div className="command-glass">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
             <h3 className="font-semibold">本周平台对比</h3>
           </div>
-          <div className="card-body">
-            <table className="table">
+          <div className="overflow-x-auto p-4 sm:p-5">
+            <table className="table command-table">
               <thead>
                 <tr>
                   <th>平台</th>
@@ -221,12 +225,12 @@ export default function WeeklyReportClient({
       {/* 高/低表现榜 */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <TitleList
-          title="🚀 本周高表现 Top 5"
+          title="本周高表现 Top 5"
           rows={report.topTitles}
           tone="green"
         />
         <TitleList
-          title="📉 本周低表现 Bottom 5"
+          title="本周低表现 Bottom 5"
           rows={report.lowTitles}
           tone="red"
         />
@@ -251,7 +255,7 @@ function CompareCard({
   const tone = delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-red-600' : 'text-slate-400';
   const arrow = delta > 0 ? '↑' : delta < 0 ? '↓' : '—';
   return (
-    <div className="rounded-md border border-slate-200 p-3 bg-white">
+    <div className="command-stat-card">
       <div className="text-xs text-slate-500">{label}</div>
       <div className="text-2xl font-semibold text-slate-800 mt-1">
         {prefix}
@@ -278,11 +282,11 @@ function TitleList({
   tone: 'green' | 'red';
 }) {
   return (
-    <div className="card">
-      <div className="card-header">
+    <div className="command-glass">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
         <h3 className="font-semibold">{title}</h3>
       </div>
-      <div className="card-body">
+      <div className="p-4 sm:p-5">
         {rows.length === 0 ? (
           <div className="text-sm text-slate-400 py-4 text-center">暂无数据</div>
         ) : (

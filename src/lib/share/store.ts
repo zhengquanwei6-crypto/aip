@@ -18,6 +18,25 @@ export interface WatermarkConfig {
   text: string;
   position: "tl" | "tr" | "bl" | "br" | "center";
   opacity: number; // 0-1
+  /**
+   * v0.18-SHARE4 防骗稿：水印模式
+   *   - "corner": 旧版单角标（易被裁/抹）
+   *   - "tiled":  满铺斜纹水印（裁剪/克隆都去不掉，防白嫖成品）
+   * 不填默认按 enabled + 单角标兼容旧链接。
+   */
+  mode?: "corner" | "tiled";
+  /** tiled 模式：水印密度（相邻水印间距占图宽比例，越小越密）。默认 0.26 */
+  tileDensity?: number;
+  /** tiled 模式：旋转角度（度），默认 -30 斜纹 */
+  tileAngle?: number;
+  /**
+   * v0.18-SHARE7 corner 模式自定义坐标（占图宽/高的百分比 0-1，锚点=水印左上角）。
+   * 二者都给时优先于 position 预设；只给其一时另一轴用 position 推断。
+   */
+  offsetXPct?: number;
+  offsetYPct?: number;
+  /** corner 模式字号占图宽比例（0-1，默认按图宽自适应）。 */
+  fontScale?: number;
 }
 
 export interface ShareLink {
@@ -33,6 +52,8 @@ export interface ShareLink {
   expiresAt: string | null;       // 绝对过期 ISO
   passwordHash: string | null;
   disableDownload: boolean;
+  /** v0.18-SHARE4：客户备注（如"张三-餐饮Logo"），写进水印实现溯源 */
+  clientLabel?: string;
   revoked: boolean;
   createdAt: string;
   lastViewedAt: string | null;
@@ -106,10 +127,23 @@ export type ExpiryReason =
   | "expired"
   | "total_time";
 
-/** 判定当前是否失效, 返回原因。不修改状态。 */
-export function checkExpiry(link: ShareLink): ExpiryReason {
+/**
+ * 判定当前是否失效, 返回原因。不修改状态。
+ *
+ * @param opts.ignoreMaxViews
+ *   true 时跳过 maxViews 检查。给 /image 和 /tick 用 —— 它们服务的是
+ *   "当前这次已经被 /view 授权过的会话"，不该因为 viewCount 自增（一次性
+ *   链接 viewCount=1>=maxViews=1）就把同一次浏览的图片 / 心跳判失效。
+ *   maxViews 的把关只在 /view（决定能不能开新的一次浏览）。
+ */
+export function checkExpiry(
+  link: ShareLink,
+  opts?: { ignoreMaxViews?: boolean },
+): ExpiryReason {
   if (link.revoked) return "revoked";
-  if (link.maxViews !== null && link.viewCount >= link.maxViews) return "max_views";
+  if (!opts?.ignoreMaxViews && link.maxViews !== null && link.viewCount >= link.maxViews) {
+    return "max_views";
+  }
   if (link.expiresAt !== null && Date.now() > new Date(link.expiresAt).getTime()) return "expired";
   if (link.totalSeconds !== null && link.consumedSeconds >= link.totalSeconds) return "total_time";
   return "ok";

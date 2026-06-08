@@ -40,7 +40,7 @@ if (process.env.NODE_ENV !== "production") {
 
 const STARTED_AT = new Date().toISOString();
 const STARTED_AT_MS = Date.now();
-const APP_VERSION = process.env.APP_VERSION || "v0.12";
+const APP_VERSION = process.env.APP_VERSION || "v0.18-DISCUSS2";
 const UPLOADS_DIR = "/app/public/uploads";
 
 export const dynamic = "force-dynamic";

@@ -120,6 +120,17 @@ export default function AnalyticsClient({
 
   return (
     <div className="space-y-6">
+      <header className="command-panel p-5 sm:p-6">
+        <div className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs font-bold text-cyan-200">
+          <span className="pulse-dot" aria-hidden />
+          Analytics Command
+        </div>
+        <h1 className="mt-4 text-3xl font-black leading-tight text-white sm:text-4xl">经营数据看板</h1>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
+          将平台曝光、私信、咨询、成交和收入录入到同一个复盘面板，辅助内容和报价决策。
+        </p>
+      </header>
+
       {/* 统计卡片 */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
         <Stat label="本周总曝光" value={stats.weekImpressions} />
@@ -131,21 +142,21 @@ export default function AnalyticsClient({
 
       {/* 录入 + 列表 */}
       <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-6">
-        <form onSubmit={submit} className="card h-fit">
-          <div className="card-header">
+        <form onSubmit={submit} className="command-glass h-fit">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
             <h2 className="font-semibold">录入数据</h2>
             <a
               href="/analytics/import"
-              className="text-xs text-brand-600 hover:underline"
+              className="btn-secondary h-8 text-xs"
             >
-              📥 批量导入
+              批量导入
             </a>
           </div>
-          <div className="card-body grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:p-5">
             <div>
               <label className="label">平台</label>
               <select
-                className="input"
+                className="input command-input"
                 value={form.platform}
                 onChange={(e) => up('platform', e.target.value)}
               >
@@ -160,7 +171,7 @@ export default function AnalyticsClient({
               <label className="label">日期</label>
               <input
                 type="date"
-                className="input"
+                className="input command-input"
                 value={form.date}
                 onChange={(e) => up('date', e.target.value)}
               />
@@ -168,7 +179,7 @@ export default function AnalyticsClient({
             <div className="col-span-2">
               <label className="label">标题</label>
               <input
-                className="input"
+                className="input command-input"
                 value={form.title}
                 onChange={(e) => up('title', e.target.value)}
                 placeholder="对应笔记或商品标题"
@@ -177,7 +188,7 @@ export default function AnalyticsClient({
             <div className="col-span-2">
               <label className="label">类目</label>
               <select
-                className="input"
+                className="input command-input"
                 value={form.category}
                 onChange={(e) => up('category', e.target.value)}
               >
@@ -203,7 +214,7 @@ export default function AnalyticsClient({
             <div className="col-span-2">
               <label className="label">备注</label>
               <textarea
-                className="input min-h-[60px]"
+                className="input command-input min-h-[60px]"
                 value={form.notes}
                 onChange={(e) => up('notes', e.target.value)}
               />
@@ -218,12 +229,12 @@ export default function AnalyticsClient({
 
         <div className="space-y-4">
           {/* 平台对比 */}
-          <div className="card">
-            <div className="card-header">
+          <div className="command-glass">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
               <h2 className="font-semibold">平台表现对比（近30天）</h2>
             </div>
-            <div className="card-body">
-              <table className="table">
+            <div className="overflow-x-auto p-4 sm:p-5">
+              <table className="table command-table">
                 <thead>
                   <tr>
                     <th>平台</th>
@@ -256,12 +267,12 @@ export default function AnalyticsClient({
           </div>
 
           {/* 类目排行 */}
-          <div className="card">
-            <div className="card-header">
+          <div className="command-glass">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
               <h2 className="font-semibold">类目表现排行（近30天）</h2>
             </div>
-            <div className="card-body">
-              <table className="table">
+            <div className="overflow-x-auto p-4 sm:p-5">
+              <table className="table command-table">
                 <thead>
                   <tr>
                     <th>类目</th>
@@ -300,13 +311,13 @@ export default function AnalyticsClient({
       </div>
 
       {/* 数据列表 */}
-      <div className="card overflow-hidden">
-        <div className="card-header">
+      <div className="command-glass overflow-hidden">
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
           <h2 className="font-semibold">最近数据记录</h2>
           <span className="text-xs text-slate-500">显示最新 200 条</span>
         </div>
-        <div className="card-body overflow-x-auto">
-          <table className="table min-w-[1000px]">
+        <div className="overflow-x-auto p-4 sm:p-5">
+          <table className="table command-table min-w-[1000px]">
             <thead>
               <tr>
                 <th>日期</th>
@@ -374,7 +385,7 @@ function Stat({
   tone?: 'gray' | 'green';
 }) {
   return (
-    <div className="rounded-md bg-white border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
+    <div className="command-stat-card">
       <div className="text-xs text-slate-500 dark:text-slate-400">{label}</div>
       <div
         className={`text-2xl font-semibold mt-1 ${
@@ -406,7 +417,7 @@ function NumField({
       <label className="label">{label}</label>
       <input
         type="number"
-        className="input"
+        className="input command-input"
         value={form[k] as string}
         onChange={(e) => up(k, e.target.value as any)}
       />
@@ -424,11 +435,11 @@ function TitleList({
   tone: 'green' | 'red';
 }) {
   return (
-    <div className="card">
-      <div className="card-header">
+    <div className="command-glass">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800 sm:px-5">
         <h2 className="font-semibold">{title}</h2>
       </div>
-      <div className="card-body">
+      <div className="p-4 sm:p-5">
         <ol className="list-decimal pl-5 space-y-1 text-sm">
           {rows.map((r, i) => (
             <li key={i}>

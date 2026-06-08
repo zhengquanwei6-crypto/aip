@@ -1,27 +1,36 @@
-// v0.11 B11 · 移动端 dashboard 页面
-//
-// 修复 BUG-S5: 桌面 NAV 「dashboard」入口在移动端访问会 404。
-// 复用 buildDashboardSummary() 数据源 + /api/market/trends 三平台快照。
-// 0 LLM/IMAGE 消耗（仅 SSR 读 prisma + Setting 表）。
-
 import Link from 'next/link';
-import { ChevronRight, ExternalLink } from 'lucide-react';
+import type { ReactNode } from 'react';
+import {
+  Activity,
+  ArrowRight,
+  CheckCircle2,
+  ClipboardList,
+  FileText,
+  History,
+  Image as ImageIcon,
+  KeyRound,
+  Layers,
+  Server,
+  TrendingUp,
+  Users,
+} from 'lucide-react';
+
 import { buildDashboardSummary } from '@/app/api/dashboard/summary/aggregate';
 import type {
   DashboardSummary,
   DashboardSummaryKpi,
   DashboardSummaryMarketTrends,
   DashboardSummarySystem,
-  TodayTaskItem,
   RecentAIOutputItem,
+  TodayTaskItem,
 } from '@/app/api/dashboard/summary/aggregate';
 
 export const dynamic = 'force-dynamic';
 
-const PLATFORM_LABELS: Record<string, { name: string; icon: string }> = {
-  xiaohongshu: { name: '小红书', icon: '📕' },
-  xianyu: { name: '闲鱼', icon: '🐟' },
-  qianniu: { name: '千牛', icon: '🐂' },
+const PLATFORM_LABELS: Record<string, string> = {
+  xiaohongshu: '小红书',
+  xianyu: '闲鱼',
+  qianniu: '千牛',
 };
 
 const EMPTY_KPI: DashboardSummaryKpi = {
@@ -33,6 +42,12 @@ const EMPTY_KPI: DashboardSummaryKpi = {
   clients: 0,
 };
 
+const STATUS_LABEL: Record<string, string> = {
+  pending: '待处理',
+  generated: '已生成',
+  published: '已发布',
+};
+
 export default async function MDashboardPage() {
   const summary: DashboardSummary | null = await buildDashboardSummary().catch(() => null);
   const kpi = summary?.kpi ?? EMPTY_KPI;
@@ -42,136 +57,103 @@ export default async function MDashboardPage() {
   const system: DashboardSummarySystem | null = summary?.system ?? null;
 
   return (
-    <div className="space-y-3 pb-20">
-      {/* 顶部条 */}
-      <div className="rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 text-white p-4 shadow">
-        <div className="text-xs opacity-80">📊 工作台 · 移动端</div>
-        <div className="mt-1 font-semibold leading-snug">概览</div>
-        <div className="mt-3 grid grid-cols-3 gap-2 text-center text-sm">
-          <Stat label="待办" value={kpi.pendingTasks} />
-          <Stat label="已生成" value={kpi.generatedTasks} />
-          <Stat label="资产" value={kpi.assets} />
+    <div className="space-y-4">
+      <section className="command-panel p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs text-cyan-200">AIP Mobile Command</div>
+            <h1 className="mt-2 text-2xl font-semibold leading-tight">控制台总览</h1>
+            <p className="mt-2 text-sm leading-5 text-slate-300">
+              任务、资产、输出和系统状态压缩到一个手机屏幕里，适合快速巡检和即时处理。
+            </p>
+          </div>
+          <div className="rounded-lg border border-white/20 bg-white/10 px-2.5 py-1.5 text-xs text-cyan-100">
+            healthy
+          </div>
         </div>
-        <div className="mt-2 grid grid-cols-3 gap-2 text-center text-xs">
-          <Stat label="客户" value={kpi.clients} small />
-          <Stat label="已发布" value={kpi.publishedTasks} small />
-          <Stat label="AI 输出" value={kpi.aioutputs} small />
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <HeroStat label="待办" value={kpi.pendingTasks} />
+          <HeroStat label="资产" value={kpi.assets} />
+          <HeroStat label="输出" value={kpi.aioutputs} />
         </div>
-      </div>
+      </section>
 
-      {/* 快捷入口 */}
-      <div className="grid grid-cols-2 gap-3">
-        <ActionCard href="/m/today" title="📋 今日任务" desc="查看 / 处理" color="bg-rose-50 text-rose-700 border-rose-200" />
-        <ActionCard href="/m/content" title="✍️ 生成文案" desc="一键出稿" color="bg-emerald-50 text-emerald-700 border-emerald-200" />
-        <ActionCard href="/m/image" title="🖼️ 生成图片" desc="i2i / 比例" color="bg-blue-50 text-blue-700 border-blue-200" />
-        <ActionCard href="/m/history" title="📚 历史" desc="AI 输出 / 资产" color="bg-amber-50 text-amber-700 border-amber-200" />
-      </div>
+      <section className="grid grid-cols-2 gap-3">
+        <QuickAction href="/m/today" icon={<ClipboardList className="h-4 w-4" />} title="今日任务" desc="排程与发布" />
+        <QuickAction href="/m/image" icon={<ImageIcon className="h-4 w-4" />} title="图片创作" desc="生成与编辑" />
+        <QuickAction href="/m/history" icon={<History className="h-4 w-4" />} title="历史输出" desc="复用结果" />
+        <QuickAction href="/m/assets" icon={<Layers className="h-4 w-4" />} title="资产库" desc="素材与分享" />
+      </section>
 
-      {/* 市场趋势卡（B10 关键功能在移动端的精简版 · B10 followup #6） */}
-      <div className="rounded-xl bg-white border border-slate-200 p-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold flex items-center gap-1">
-            📊 市场趋势
-            <span className="text-[10px] text-slate-400 font-normal">三平台精选</span>
-          </h3>
-          <Link href="/m/me" className="text-xs text-brand-600 inline-flex items-center gap-0.5">
-            桌面查看 <ExternalLink className="size-3" aria-hidden />
-          </Link>
-        </div>
-        <div className="mt-3 space-y-2">
+      <section className="grid grid-cols-2 gap-3">
+        <Metric icon={<CheckCircle2 className="h-4 w-4" />} label="已生成任务" value={kpi.generatedTasks} />
+        <Metric icon={<Users className="h-4 w-4" />} label="客户数" value={kpi.clients} />
+        <Metric icon={<FileText className="h-4 w-4" />} label="已发布" value={kpi.publishedTasks} />
+        <Metric icon={<Activity className="h-4 w-4" />} label="Agent 路由" value={system?.agentRoutes ?? 0} />
+      </section>
+
+      <Panel title="市场趋势" href="/m/me" icon={<TrendingUp className="h-4 w-4" />}>
+        <div className="space-y-2">
           {(['xiaohongshu', 'xianyu', 'qianniu'] as const).map((slug) => {
             const entry = marketTrends[slug];
-            const info = entry?.info ?? null;
             const latest = entry?.latest ?? null;
-            const labels = PLATFORM_LABELS[slug] ?? { name: slug, icon: '📊' };
-            const top = (latest?.dataPoints ?? []).slice(0, 3);
+            const points = (latest?.dataPoints ?? []).slice(0, 3);
             return (
-              <div key={slug} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <div className="flex items-center justify-between text-sm">
-                  <div className="font-medium">
-                    {labels.icon} {labels.name}
-                  </div>
-                  <div className="text-[11px] text-slate-500">
-                    {latest?.placeholder ? '📝 示例数据' : latest ? '✍️ 已写入' : '— 暂无'}
-                  </div>
+              <div key={slug} className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{PLATFORM_LABELS[slug] ?? slug}</div>
+                  <div className="text-[11px] text-slate-500">{latest?.placeholder ? '示例数据' : latest ? '已同步' : '暂无'}</div>
                 </div>
-                {info?.tagline && (
-                  <div className="mt-1 text-[11px] text-slate-500 leading-relaxed">{info.tagline}</div>
-                )}
-                {top.length > 0 ? (
+                {points.length > 0 ? (
                   <div className="mt-2 grid grid-cols-3 gap-1.5">
-                    {top.map((dp) => (
-                      <div key={dp.key} className="rounded bg-white px-2 py-1.5 text-center">
-                        <div className="text-[10px] text-slate-500 truncate">{dp.label}</div>
-                        <div className="text-[12px] font-semibold mt-0.5">
-                          {dp.value}
-                          {dp.unit ? <span className="text-[9px] text-slate-400 ml-0.5">{dp.unit}</span> : null}
+                    {points.map((point) => (
+                      <div key={point.key} className="rounded-md bg-white px-2 py-1.5 text-center dark:bg-slate-950">
+                        <div className="truncate text-[10px] text-slate-500">{point.label}</div>
+                        <div className="mt-0.5 truncate text-xs font-semibold text-slate-900 dark:text-slate-100">
+                          {point.value}
+                          {point.unit ? <span className="ml-0.5 text-[9px] text-slate-400">{point.unit}</span> : null}
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="mt-2 text-[11px] text-slate-400">— 数据待填 —</div>
+                  <div className="mt-2 text-xs text-slate-400">等待数据写入</div>
                 )}
               </div>
             );
           })}
         </div>
-      </div>
+      </Panel>
 
-      {/* 今日任务摘要 */}
-      <div className="rounded-xl bg-white border border-slate-200 p-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold">📋 今日任务</h3>
-          <Link href="/m/today" className="text-xs text-brand-600 inline-flex items-center">
-            全部 <ChevronRight className="size-3" aria-hidden />
-          </Link>
-        </div>
+      <Panel title="今日任务" href="/m/today" icon={<ClipboardList className="h-4 w-4" />}>
         {todayTasks.length === 0 ? (
-          <div className="mt-2 text-xs text-slate-400">今日没有待办</div>
+          <EmptyText>今日没有待办任务</EmptyText>
         ) : (
-          <ul className="mt-2 space-y-1.5">
-            {todayTasks.slice(0, 4).map((t) => (
-              <li key={t.id} className="text-xs flex items-center justify-between bg-slate-50 rounded px-2 py-1.5">
-                <span className="truncate flex-1 mr-2">
-                  <span className="text-slate-400 mr-1">{t.publishTime}</span>
-                  {t.title || '无主题'}
+          <div className="space-y-2">
+            {todayTasks.slice(0, 4).map((task) => (
+              <div key={task.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-900">
+                <div className="w-11 shrink-0 font-mono text-xs text-slate-400">{task.publishTime}</div>
+                <div className="min-w-0 flex-1 truncate text-sm text-slate-800 dark:text-slate-200">{task.title || '无主题'}</div>
+                <span className="rounded-md bg-white px-2 py-1 text-[11px] text-slate-500 dark:bg-slate-950">
+                  {STATUS_LABEL[task.status] ?? task.status}
                 </span>
-                <span
-                  className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${
-                    t.status === 'pending'
-                      ? 'bg-amber-100 text-amber-700'
-                      : t.status === 'generated'
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'bg-emerald-100 text-emerald-700'
-                  }`}
-                >
-                  {t.status}
-                </span>
-              </li>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
-      </div>
+      </Panel>
 
-      {/* 最近 AI 输出 */}
-      <div className="rounded-xl bg-white border border-slate-200 p-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold">📝 最近 AI 输出</h3>
-          <Link href="/m/history" className="text-xs text-brand-600 inline-flex items-center">
-            全部 <ChevronRight className="size-3" aria-hidden />
-          </Link>
-        </div>
+      <Panel title="最近输出" href="/m/history" icon={<FileText className="h-4 w-4" />}>
         {recentAIOutputs.length === 0 ? (
-          <div className="mt-2 text-xs text-slate-400">暂无</div>
+          <EmptyText>暂无 AI 输出</EmptyText>
         ) : (
-          <ul className="mt-2 space-y-1.5">
-            {recentAIOutputs.slice(0, 4).map((o) => (
-              <li key={o.id} className="text-xs bg-slate-50 rounded px-2 py-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">{o.type}</span>
-                  <span className="text-[10px] text-slate-400">
-                    {new Date(o.createdAt).toLocaleString('zh-CN', {
+          <div className="space-y-2">
+            {recentAIOutputs.slice(0, 4).map((output) => (
+              <div key={output.id} className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-900">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="rounded-md bg-white px-2 py-1 text-[11px] text-slate-500 dark:bg-slate-950">{output.type}</span>
+                  <span className="text-[11px] text-slate-400">
+                    {new Date(output.createdAt).toLocaleString('zh-CN', {
                       month: '2-digit',
                       day: '2-digit',
                       hour: '2-digit',
@@ -179,70 +161,88 @@ export default async function MDashboardPage() {
                     })}
                   </span>
                 </div>
-                <div className="mt-1 truncate text-slate-700">{o.summary || ''}</div>
-              </li>
+                <div className="mt-1 line-clamp-2 text-sm text-slate-700 dark:text-slate-300">{output.summary || '无摘要'}</div>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
-      </div>
+      </Panel>
 
-      {/* 系统状态 */}
-      <div className="rounded-xl bg-white border border-slate-200 p-4">
-        <h3 className="font-semibold">🩺 系统</h3>
-        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-          <SystemRow label="版本" value={system?.version ?? 'v0.11'} />
-          <SystemRow
-            label="apiKey 池"
-            value={
-              system?.apiKeyPool
-                ? `LLM ${system.apiKeyPool.llm?.active ?? 0}/${system.apiKeyPool.llm?.total ?? 0}`
-                : '—'
-            }
-          />
-          <SystemRow label="docker" value={system?.containerStatus ?? 'unknown'} />
-          <SystemRow label="agents" value={String(system?.agentRoutes ?? '—')} />
-        </div>
-      </div>
+      <section className="grid grid-cols-2 gap-3">
+        <SystemTile icon={<Server className="h-4 w-4" />} label="Docker" value={system?.containerStatus ?? 'unknown'} />
+        <SystemTile
+          icon={<KeyRound className="h-4 w-4" />}
+          label="API Key 池"
+          value={system?.apiKeyPool ? `LLM ${system.apiKeyPool.llm?.active ?? 0}/${system.apiKeyPool.llm?.total ?? 0}` : '未读取'}
+        />
+      </section>
     </div>
   );
 }
 
-function Stat({ label, value, small }: { label: string; value: number | string; small?: boolean }) {
+function HeroStat({ label, value }: { label: string; value: number | string }) {
   return (
-    <div>
-      <div className={`font-semibold ${small ? 'text-base' : 'text-xl'}`}>{value}</div>
-      <div className="text-[10px] opacity-80">{label}</div>
+    <div className="rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-center">
+      <div className="text-xl font-semibold tabular-nums">{value}</div>
+      <div className="mt-0.5 text-[11px] text-slate-300">{label}</div>
     </div>
   );
 }
 
-function ActionCard({
-  href,
-  title,
-  desc,
-  color,
-}: {
-  href: string;
-  title: string;
-  desc: string;
-  color: string;
-}) {
+function QuickAction({ href, icon, title, desc }: { href: string; icon: ReactNode; title: string; desc: string }) {
   return (
-    <Link
-      href={href}
-      className={`rounded-xl border p-3 ${color} active:scale-[0.98] transition`}
-    >
-      <div className="font-semibold text-sm leading-tight">{title}</div>
-      <div className="text-[11px] opacity-80 mt-1 leading-tight">{desc}</div>
+    <Link href={href} className="surface flex items-center gap-3 p-3 transition-transform active:scale-[0.98]">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-950 text-white dark:bg-white dark:text-slate-950">{icon}</span>
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-semibold text-slate-950 dark:text-slate-50">{title}</span>
+        <span className="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400">{desc}</span>
+      </span>
     </Link>
   );
 }
 
-function SystemRow({ label, value }: { label: string; value: string }) {
+function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: number | string }) {
   return (
-    <div className="bg-slate-50 rounded px-2 py-1.5">
-      <div className="text-[10px] text-slate-500">{label}</div>
-      <div className="font-medium text-slate-800 truncate">{value}</div>
+    <div className="surface p-3">
+      <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+        {icon}
+        {label}
+      </div>
+      <div className="mt-2 text-xl font-semibold tabular-nums text-slate-950 dark:text-slate-50">{value}</div>
     </div>
   );
+}
+
+function Panel({ title, href, icon, children }: { title: string; href: string; icon: ReactNode; children: ReactNode }) {
+  return (
+    <section className="surface p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-base font-semibold text-slate-950 dark:text-slate-50">
+          {icon}
+          {title}
+        </h2>
+        <Link href={href} className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-900 dark:hover:text-slate-100">
+          查看
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function SystemTile({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <div className="surface p-3">
+      <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+        {icon}
+        {label}
+      </div>
+      <div className="mt-2 truncate text-sm font-semibold text-slate-950 dark:text-slate-50">{value}</div>
+    </div>
+  );
+}
+
+function EmptyText({ children }: { children: ReactNode }) {
+  return <div className="rounded-lg bg-slate-50 px-3 py-6 text-center text-sm text-slate-400 dark:bg-slate-900">{children}</div>;
 }

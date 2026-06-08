@@ -55,6 +55,9 @@ RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# v0.18-SHARE4: jimp 位图字体没被 Next standalone trace 进去，手动补到
+# jimp 运行时查找的 .next/server/fonts 路径（否则 loadFont 全 ENOENT，水印失效）
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@jimp/plugin-print/fonts ./.next/server/fonts
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 # Prisma schema + 编译好的 seed.js + Prisma CLI 用于启动时 db push
